@@ -1,0 +1,1 @@
+Run the command "npm i" to install all dependencies
