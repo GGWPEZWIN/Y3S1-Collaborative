@@ -16,7 +16,7 @@ console.log("Firebase Admin initialized successfully!");
 // 3. Test Function to Write Data
 async function testFirestoreConnection() {
 try {
-    console.log("⏳ Attempting to write test data to Firestore...");
+    console.log("Attempting to write test data to Firestore...");
 
     // This creates a collection called 'trips' and a document called 'test_trip'
     const docRef = db.collection('trips').doc('test_trip');

@@ -1,1 +1,1 @@
-Run the command "npm i" to install all dependencies
+# Y3S1-Collaborative
