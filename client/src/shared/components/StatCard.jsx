@@ -1,10 +1,9 @@
 import React from "react";
 import { Leaf, TrendingUp, Calendar, Award } from "lucide-react";
 
-// Maps a short icon key to the lucide-react component + accent color used
-// on the dashboard's summary row. Keeping this local avoids importing every
-// icon everywhere StatCard is used.
-const ICONS = {
+// Some call sites pass icon as a string key (icon="leaf"); others pass the
+// actual lucide component directly (icon={Leaf}) plus iconColor. Both work.
+const ICON_MAP = {
   leaf: { Icon: Leaf, color: "#16A34A" },
   trend: { Icon: TrendingUp, color: "#2563EB" },
   calendar: { Icon: Calendar, color: "#7C3AED" },
@@ -12,56 +11,58 @@ const ICONS = {
 };
 
 /**
- * StatCard
+ * StatCard — shared across Community and Home dashboards.
  *
- * A single metric tile: icon + label in the header row, a large value,
- * and an optional sublabel (plain text) or progress bar underneath.
- *
- * Props:
- * - icon: "leaf" | "trend" | "calendar" | "award"
- * - label: string — header label next to the icon
- * - value: string | number — the big number
- * - sublabel: string — optional caption under the value (e.g. "Level 8")
- * - trendLabel: string — optional small green/red delta line (e.g. "▲ 12 this week")
- * - trendDirection: "up" | "down" — colors the trendLabel
- * - progress: number (0–1) — optional progress bar under the value
- * - underlineLabel: boolean — underlines the header label (e.g. "Total trips")
+ * icon: "leaf" | "trend" | "calendar" | "award"  OR  a lucide component (pair with iconColor)
+ * label / value: header label + big number
+ * note: bold caption directly under the value (Home)
+ * sub / sublabel: gray caption at the bottom (Community / Home) — aliases of each other
+ * subColor: overrides the sub/sublabel color
+ * trendLabel + trendDirection ("up"|"down"): green/red arrow + delta line (Community)
+ * progress: 0–1, renders a progress bar
+ * underlineLabel: underlines the header label
  */
 export default function StatCard({
   icon = "leaf",
+  iconColor,
   label,
   value,
+  note,
+  sub,
   sublabel,
+  subColor,
   trendLabel,
   trendDirection = "up",
   progress,
   underlineLabel = false,
 }) {
-  const { Icon, color } = ICONS[icon] || ICONS.leaf;
+  let Icon, resolvedColor;
+  if (typeof icon === "string") {
+    const mapped = ICON_MAP[icon] || ICON_MAP.leaf;
+    Icon = mapped.Icon;
+    resolvedColor = iconColor || mapped.color;
+  } else {
+    Icon = icon;
+    resolvedColor = iconColor;
+  }
+
+  const bottomCaption = sub ?? sublabel;
 
   return (
     <div style={styles.card}>
       <div style={styles.header}>
-        <span
-          style={{
-            ...styles.label,
-            ...(underlineLabel ? styles.labelUnderline : null),
-          }}
-        >
+        <span style={{ ...styles.label, ...(underlineLabel ? styles.labelUnderline : null) }}>
           {label}
         </span>
-        <Icon size={18} color={color} strokeWidth={2.25} />
+        {Icon && <Icon size={18} color={resolvedColor} strokeWidth={2.25} />}
       </div>
 
       <div style={styles.value}>{value}</div>
 
+      {note && <div style={styles.note}>{note}</div>}
+
       {trendLabel && (
-        <div
-          style={{
-            ...styles.trend,
-            color: trendDirection === "up" ? "#16a34a" : "#ef4444",
-          }}
-        >
+        <div style={{ ...styles.trend, color: trendDirection === "up" ? "#16a34a" : "#ef4444" }}>
           <span>{trendDirection === "up" ? "▲" : "▼"}</span>
           <span>{trendLabel}</span>
         </div>
@@ -78,10 +79,8 @@ export default function StatCard({
         </div>
       )}
 
-      {sublabel && (
-        <span style={typeof progress === "number" ? styles.sublabelTight : styles.sublabel}>
-          {sublabel}
-        </span>
+      {bottomCaption && (
+        <span style={{ ...styles.sublabel, color: subColor || "#9ca3af" }}>{bottomCaption}</span>
       )}
     </div>
   );
@@ -96,15 +95,11 @@ const styles = {
     padding: 20,
     display: "flex",
     flexDirection: "column",
-    gap: 12,
+    gap: 8,
     minWidth: 0,
     textAlign: "left",
   },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
+  header: { display: "flex", alignItems: "center", justifyContent: "space-between" },
   label: {
     fontSize: 14,
     fontWeight: 500,
@@ -113,43 +108,11 @@ const styles = {
     overflow: "hidden",
     textOverflow: "ellipsis",
   },
-  labelUnderline: {
-    textDecoration: "underline",
-    textUnderlineOffset: 3,
-  },
-  value: {
-    fontSize: 28,
-    fontWeight: 700,
-    color: "#111827",
-    lineHeight: 1,
-  },
-  trend: {
-    fontSize: 12,
-    fontWeight: 600,
-    display: "flex",
-    alignItems: "center",
-    gap: 4,
-  },
-  progressTrack: {
-    width: "100%",
-    height: 6,
-    background: "#f3f4f6",
-    borderRadius: 999,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    background: "#111827",
-    borderRadius: 999,
-    transition: "width 0.3s ease",
-  },
-  sublabel: {
-    fontSize: 12,
-    color: "#9ca3af",
-  },
-  sublabelTight: {
-    fontSize: 12,
-    color: "#9ca3af",
-    marginTop: -4,
-  },
+  labelUnderline: { textDecoration: "underline", textUnderlineOffset: 3 },
+  value: { fontSize: 28, fontWeight: 700, color: "#111827", lineHeight: 1 },
+  note: { fontSize: 13.5, color: "#374151", fontWeight: 600 },
+  trend: { fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 },
+  progressTrack: { width: "100%", height: 6, background: "#f3f4f6", borderRadius: 999, overflow: "hidden" },
+  progressFill: { height: "100%", background: "#111827", borderRadius: 999, transition: "width 0.3s ease" },
+  sublabel: { fontSize: 12 },
 };
