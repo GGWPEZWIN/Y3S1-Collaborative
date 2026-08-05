@@ -1,122 +1,85 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import React, { useState } from "react";
 
-function App() {
-  const [count, setCount] = useState(0)
+import MainDashboard from "./user/Home/pages/MainDashboard";
+import CommunityPage from "./user/EcoJourney/pages/CommunityPage";
+import TravelHistory from "./user/EcoJourney/pages/TravelHistory";
 
+// Placeholder for pages not built yet
+function ComingSoon({ label, onNavigate }) {
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div style={{ padding: 48, textAlign: "center" }}>
+      <h2>{label} is coming soon</h2>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+      <button onClick={() => onNavigate("/dashboard")}>
+        Back to Dashboard
+      </button>
+    </div>
+  );
 }
 
-export default App
+export default function App() {
+  const [route, setRoute] = useState("/dashboard");
+
+  const navigate = (path) => {
+    setRoute(path);
+  };
+
+  switch (route) {
+    case "/dashboard":
+      return <MainDashboard onNavigate={navigate} />;
+
+    case "/community":
+      return <CommunityPage onNavigate={navigate} />;
+
+    case "/community/history":
+      return (
+        <TravelHistory
+          onNavigate={navigate}
+          onBack={() => navigate("/community")}
+        />
+      );
+
+    case "/itinerary":
+      return (
+        <ComingSoon
+          label="Itinerary"
+          onNavigate={navigate}
+        />
+      );
+
+    case "/recommendations":
+      return (
+        <ComingSoon
+          label="Recommendations"
+          onNavigate={navigate}
+        />
+      );
+
+    case "/challenges":
+      return (
+        <ComingSoon
+          label="Challenges"
+          onNavigate={navigate}
+        />
+      );
+
+    case "/certification":
+      return (
+        <ComingSoon
+          label="Certification"
+          onNavigate={navigate}
+        />
+      );
+
+    case "/waste":
+      return (
+        <ComingSoon
+          label="Waste"
+          onNavigate={navigate}
+        />
+      );
+
+    default:
+      return <MainDashboard onNavigate={navigate} />;
+  }
+}
