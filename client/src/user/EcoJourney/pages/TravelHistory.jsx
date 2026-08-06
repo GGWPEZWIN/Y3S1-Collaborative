@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ChevronLeft, Search, Calendar, TrendingDown, Award } from "lucide-react";
+import { ChevronLeft, Search } from "lucide-react";
 import ReportCard from "../components/ReportCard";
 import {
   getCurrentUser,
@@ -10,11 +10,11 @@ import {
 const STATUS_OPTIONS = ["All Trips", "Completed", "Upcoming"];
 const SORT_OPTIONS = ["Newest First", "Oldest First", "Highest Score"];
 
-function MiniStat({ value, label, valueClassName = "text-gray-900" }) {
+function MiniStat({ value, label, valueColor = "#111827" }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-      <div className={`text-2xl font-bold ${valueClassName}`}>{value}</div>
-      <div className="text-sm text-gray-400 mt-1">{label}</div>
+    <div style={styles.miniStat}>
+      <div style={{ ...styles.miniStatValue, color: valueColor }}>{value}</div>
+      <div style={styles.miniStatLabel}>{label}</div>
     </div>
   );
 }
@@ -53,83 +53,64 @@ export default function TravelHistory({ onBack }) {
   }, [status, sortBy, query]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div style={styles.page}>
       {/* Top bar */}
-      <header className="bg-white border-b border-gray-100 px-8 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-green-600 rounded-lg flex items-center justify-center text-white text-lg">
-            🌿
-          </div>
-          <span className="text-xl font-bold text-gray-900">GreenTrip Malaysia</span>
+      <header style={styles.header}>
+        <div style={styles.brand}>
+          <div style={styles.logoMark}>🌿</div>
+          <span style={styles.brandName}>GreenTrip Malaysia</span>
         </div>
         {user && (
-          <div className="flex items-center gap-3">
-            <div className="text-right leading-tight">
-              <div className="font-semibold text-gray-900">{user.name}</div>
-              <div className="text-sm text-gray-400">Eco Score: {user.ecoScore.toLocaleString()}</div>
+          <div style={styles.userChip}>
+            <div style={styles.userText}>
+              <div style={styles.userName}>{user.name}</div>
+              <div style={styles.userScore}>Eco Score: {user.ecoScore.toLocaleString()}</div>
             </div>
-            <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-lg">
-              🐼
-            </div>
+            <div style={styles.avatar}>🐼</div>
           </div>
         )}
       </header>
 
-      <main className="max-w-5xl mx-auto px-8 py-8 flex flex-col gap-6">
+      <main style={styles.main}>
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Travel History</h1>
-          <p className="text-gray-500 mt-1">
+          <h1 style={styles.pageTitle}>Travel History</h1>
+          <p style={styles.pageSubtitle}>
             Review your eco-journeys and download personalized report cards
           </p>
         </div>
 
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-gray-700 font-medium w-fit hover:text-gray-900"
-        >
+        <button type="button" onClick={onBack} style={styles.backBtn}>
           <ChevronLeft size={18} />
           Back
         </button>
 
         {/* Summary stats */}
         {summary && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+          <div style={styles.summaryGrid}>
             <MiniStat value={summary.tripsCompleted} label="Trips Completed" />
-            <MiniStat
-              value={summary.avgEcoScore}
-              label="Avg Eco Score"
-              valueClassName="text-green-600"
-            />
+            <MiniStat value={summary.avgEcoScore} label="Avg Eco Score" valueColor="#16a34a" />
             <MiniStat value={`${summary.totalCarbonKg} kg`} label="Total CO₂" />
-            <MiniStat
-              value={summary.badgesEarned}
-              label="Badges Earned"
-              valueClassName="text-amber-500"
-            />
+            <MiniStat value={summary.badgesEarned} label="Badges Earned" valueColor="#f59e0b" />
           </div>
         )}
 
         {/* Search + filters */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex flex-col gap-5">
-          <div className="relative">
-            <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+        <div style={styles.filterCard}>
+          <div style={styles.searchWrap}>
+            <Search size={18} color="#9ca3af" style={styles.searchIcon} />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search trips..."
-              className="w-full bg-gray-100 rounded-xl pl-11 pr-4 py-3 text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+              style={styles.searchInput}
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium text-gray-700">Status</span>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="bg-gray-100 rounded-xl px-4 py-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500"
-              >
+          <div style={styles.filterGrid}>
+            <label style={styles.filterCol}>
+              <span style={styles.filterLabel}>Status</span>
+              <select value={status} onChange={(e) => setStatus(e.target.value)} style={styles.select}>
                 {STATUS_OPTIONS.map((opt) => (
                   <option key={opt} value={opt}>
                     {opt}
@@ -138,13 +119,9 @@ export default function TravelHistory({ onBack }) {
               </select>
             </label>
 
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium text-gray-700">Sort by</span>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
-                className="bg-gray-100 rounded-xl px-4 py-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500"
-              >
+            <label style={styles.filterCol}>
+              <span style={styles.filterLabel}>Sort by</span>
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={styles.select}>
                 {SORT_OPTIONS.map((opt) => (
                   <option key={opt} value={opt}>
                     {opt}
@@ -157,13 +134,13 @@ export default function TravelHistory({ onBack }) {
 
         {/* Trip list */}
         {loading ? (
-          <div className="text-center text-gray-400 py-12">Loading trips…</div>
+          <div style={styles.emptyState}>Loading trips…</div>
         ) : trips.length === 0 ? (
-          <div className="text-center text-gray-400 py-12">
+          <div style={styles.emptyState}>
             No trips match your search — try a different keyword or filter.
           </div>
         ) : (
-          <div className="flex flex-col gap-6">
+          <div style={styles.tripList}>
             {trips.map((trip) => (
               <ReportCard
                 key={trip.id}
@@ -179,3 +156,112 @@ export default function TravelHistory({ onBack }) {
     </div>
   );
 }
+
+const styles = {
+  page: { minHeight: "100vh", background: "#f9fafb" },
+  header: {
+    background: "#fff",
+    borderBottom: "1px solid #f3f4f6",
+    padding: "16px 32px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  brand: { display: "flex", alignItems: "center", gap: 12 },
+  logoMark: {
+    width: 36,
+    height: 36,
+    background: "#16a34a",
+    borderRadius: 8,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 18,
+  },
+  brandName: { fontSize: 20, fontWeight: 700, color: "#111827" },
+  userChip: { display: "flex", alignItems: "center", gap: 12 },
+  userText: { textAlign: "right", lineHeight: 1.3 },
+  userName: { fontWeight: 600, color: "#111827" },
+  userScore: { fontSize: 13.5, color: "#9ca3af" },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: "50%",
+    background: "#dcfce7",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 18,
+  },
+  main: {
+    maxWidth: 1024,
+    margin: "0 auto",
+    padding: "32px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 24,
+    textAlign: "left",
+  },
+  pageTitle: { fontSize: 28, fontWeight: 800, color: "#111827", margin: 0 },
+  pageSubtitle: { color: "#6b7280", marginTop: 6, fontSize: 14.5 },
+  backBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    background: "transparent",
+    border: "none",
+    color: "#374151",
+    fontWeight: 500,
+    fontSize: 14.5,
+    cursor: "pointer",
+    padding: 0,
+    width: "fit-content",
+  },
+  summaryGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20 },
+  miniStat: {
+    background: "#fff",
+    borderRadius: 16,
+    border: "1px solid #f3f4f6",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+    padding: 20,
+  },
+  miniStatValue: { fontSize: 24, fontWeight: 700 },
+  miniStatLabel: { fontSize: 14, color: "#9ca3af", marginTop: 4 },
+  filterCard: {
+    background: "#fff",
+    borderRadius: 16,
+    border: "1px solid #f3f4f6",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+    padding: 24,
+    display: "flex",
+    flexDirection: "column",
+    gap: 20,
+  },
+  searchWrap: { position: "relative" },
+  searchIcon: { position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)" },
+  searchInput: {
+    width: "100%",
+    background: "#f3f4f6",
+    borderRadius: 12,
+    border: "none",
+    padding: "12px 16px 12px 44px",
+    fontSize: 14,
+    color: "#374151",
+    outline: "none",
+    boxSizing: "border-box",
+  },
+  filterGrid: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 20 },
+  filterCol: { display: "flex", flexDirection: "column", gap: 6 },
+  filterLabel: { fontSize: 14, fontWeight: 500, color: "#374151" },
+  select: {
+    background: "#f3f4f6",
+    borderRadius: 12,
+    border: "none",
+    padding: "12px 16px",
+    fontSize: 14,
+    color: "#374151",
+    outline: "none",
+  },
+  emptyState: { textAlign: "center", color: "#9ca3af", padding: "48px 0" },
+  tripList: { display: "flex", flexDirection: "column", gap: 24, paddingBottom: 32 },
+};
