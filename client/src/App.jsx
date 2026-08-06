@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 
 import MainDashboard from "./user/Home/pages/MainDashboard";
+
 import CommunityPage from "./user/EcoJourney/pages/CommunityPage";
 import TravelHistory from "./user/EcoJourney/pages/TravelHistory";
 import ProgressTracker from "./user/EcoJourney/pages/ProgressTracker";
@@ -8,10 +9,11 @@ import Friends from "./user/EcoJourney/pages/Friends";
 import ChatGroups from "./user/EcoJourney/pages/ChatGroups";
 import ChallengeTeam from "./user/EcoJourney/pages/ChallengeTeam";
 
-// Placeholder for pages not built yet — Itinerary, Recommendations,
-// Challenges, Certification, Waste, and the remaining Community sub-pages
-// (Friends, Chat & Groups, Eco-Report Card, Challenge Team). Swap each in
-// as its own page gets built.
+import ChallengesPage from "./user/Challenges/pages/ChallengesPage";
+import ChallengeDetails from "./user/Challenges/pages/ChallengeDetails";
+import ChallengeLeaderboard from "./user/Challenges/pages/ChallengeLeaderboard";
+
+// Placeholder page
 function ComingSoon({ label, onNavigate, backTo = "/dashboard" }) {
   return (
     <div style={{ padding: 48, textAlign: "center" }}>
@@ -27,23 +29,39 @@ function ComingSoon({ label, onNavigate, backTo = "/dashboard" }) {
  * Simple state-based router (no react-router dependency). "route" is a
  * path string like "/dashboard" or "/community/history"; navigate()
  * updates it and every page receives onNavigate to change it further.
+ *
+ * navigate() also accepts an optional second argument: an id to remember
+ * alongside the route change. Used so that clicking a specific challenge
+ * card carries its id through to the details page, instead of every card
+ * landing on the same hardcoded details view.
  */
 export default function App() {
   const [route, setRoute] = useState("/dashboard");
-  const navigate = (path) => setRoute(path);
+  const [selectedChallengeId, setSelectedChallengeId] = useState(null);
+
+  const navigate = (path, id) => {
+    if (id !== undefined) setSelectedChallengeId(id);
+    setRoute(path);
+  };
 
   switch (route) {
+    // ===========================
+    // Dashboard
+    // ===========================
     case "/dashboard":
       return <MainDashboard onNavigate={navigate} />;
 
+    // ===========================
+    // Community
+    // ===========================
     case "/community":
       return <CommunityPage onNavigate={navigate} />;
 
     case "/community/history":
-      return <TravelHistory onBack={() => navigate("/community")} />;
+      return <TravelHistory onNavigate={navigate} onBack={() => navigate("/community")} />;
 
     case "/community/progress":
-      return <ProgressTracker onBack={() => navigate("/community")} />;
+      return <ProgressTracker onNavigate={navigate} onBack={() => navigate("/community")} />;
 
     case "/community/friends":
       return <Friends onNavigate={navigate} />;
@@ -54,12 +72,25 @@ export default function App() {
     case "/community/challenges":
       return <ChallengeTeam onNavigate={navigate} />;
 
+    // ===========================
+    // Challenges Module
+    // ===========================
+    case "/challenges":
+      return <ChallengesPage onNavigate={navigate} />;
+
+    case "/challenges/details":
+      return <ChallengeDetails onNavigate={navigate} challengeId={selectedChallengeId} />;
+
+    case "/challenges/leaderboard":
+      return <ChallengeLeaderboard onNavigate={navigate} />;
+
+    // ===========================
+    // Other Modules
+    // ===========================
     case "/itinerary":
       return <ComingSoon label="Itinerary" onNavigate={navigate} />;
     case "/recommendations":
       return <ComingSoon label="Recommendations" onNavigate={navigate} />;
-    case "/challenges":
-      return <ComingSoon label="Challenges" onNavigate={navigate} />;
     case "/certification":
       return <ComingSoon label="Certification" onNavigate={navigate} />;
     case "/waste":
