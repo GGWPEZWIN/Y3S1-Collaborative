@@ -25,6 +25,7 @@ export async function registerTourist({ name, email, password }) {
 
   await setDoc(doc(db, "users", user.uid), {
     name,
+    name_lower: name.trim().toLowerCase(),
     email,
     role: "tourist",
     eco_score: 0,
@@ -34,6 +35,20 @@ export async function registerTourist({ name, email, password }) {
   });
 
   return user;
+}
+
+/**
+ * Patches a user doc with a searchable lowercase name if it's missing —
+ * covers accounts created before username search existed.
+ */
+async function ensureSearchFields(userDocRef) {
+  const snap = await getDoc(userDocRef);
+  if (snap.exists()) {
+    const data = snap.data();
+    if (!data.name_lower && data.name) {
+      await setDoc(userDocRef, { name_lower: data.name.trim().toLowerCase() }, { merge: true });
+    }
+  }
 }
 
 export async function loginUser({ email, password }) {
@@ -46,6 +61,7 @@ export async function loginUser({ email, password }) {
   if (!existingDoc.exists()) {
     await setDoc(userDocRef, {
       name: user.displayName || "",
+      name_lower: (user.displayName || "").trim().toLowerCase(),
       email: user.email || "",
       role: "tourist",
       eco_score: 0,
@@ -53,6 +69,8 @@ export async function loginUser({ email, password }) {
       profile_photo_url: "",
       created_at: serverTimestamp(),
     });
+  } else {
+    await ensureSearchFields(userDocRef);
   }
 
   return user;
@@ -65,6 +83,7 @@ async function ensureUserDoc(user) {
   if (!existingDoc.exists()) {
     await setDoc(userDocRef, {
       name: user.displayName || "",
+      name_lower: (user.displayName || "").trim().toLowerCase(),
       email: user.email || "",
       role: "tourist",
       eco_score: 0,
@@ -72,6 +91,8 @@ async function ensureUserDoc(user) {
       profile_photo_url: user.photoURL || "",
       created_at: serverTimestamp(),
     });
+  } else {
+    await ensureSearchFields(userDocRef);
   }
 }
 

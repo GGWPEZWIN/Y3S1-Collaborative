@@ -9,8 +9,10 @@ import MainDashboard from "./user/Home/pages/MainDashboard";
 import CommunityPage from "./user/EcoJourney/pages/CommunityPage";
 import TravelHistory from "./user/EcoJourney/pages/TravelHistory";
 import ProgressTracker from "./user/EcoJourney/pages/ProgressTracker";
-import Friends from "./user/EcoJourney/pages/Friends";
-import ChatGroups from "./user/EcoJourney/pages/ChatGroups";
+import Friends from "./user/EcoJourney/friends/Friends";
+import ChatList from "./user/EcoJourney/chat/ChatList";
+import ChatRoom from "./user/EcoJourney/chat/ChatRoom";
+import GroupInfo from "./user/EcoJourney/chat/GroupInfo";
 import ChallengeTeam from "./user/EcoJourney/pages/ChallengeTeam";
 
 import ChallengesPage from "./user/Challenges/pages/ChallengesPage";
@@ -30,9 +32,15 @@ function ComingSoon({ label, onNavigate, backTo = "/dashboard" }) {
 export default function App() {
   const [route, setRoute] = useState("/login");
   const [selectedChallengeId, setSelectedChallengeId] = useState(null);
+  const [selectedChatId, setSelectedChatId] = useState(null);
 
+  // navigate(path, id) — id is stored into whichever slot the destination
+  // route needs. Harmless to set both; each page only reads the one it uses.
   const navigate = (path, id) => {
-    if (id !== undefined) setSelectedChallengeId(id);
+    if (id !== undefined) {
+      setSelectedChallengeId(id);
+      setSelectedChatId(id);
+    }
     setRoute(path);
   };
 
@@ -67,8 +75,16 @@ export default function App() {
 
     case "/community/friends":
       return <Friends onNavigate={navigate} />;
+
     case "/community/chat":
-      return <ChatGroups onNavigate={navigate} />;
+      return <ChatList onNavigate={navigate} />;
+
+    case "/community/chat/room":
+      return <ChatRoom chatId={selectedChatId} onNavigate={navigate} />;
+
+    case "/community/chat/info":
+      return <GroupInfo chatId={selectedChatId} onNavigate={navigate} />;
+
     case "/community/report":
       return <ComingSoon label="Eco-Report Card" onNavigate={navigate} backTo="/community" />;
     case "/community/challenges":

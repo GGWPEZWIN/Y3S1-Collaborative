@@ -7,9 +7,9 @@ import QuickActionCard from "../components/QuickActionCard";
 import ActiveTripRow from "../components/ActiveTripRow";
 import ChallengeRow from "../components/ChallengeRow";
 import AchievementCard from "../../../shared/components/AchievementCard";
+import { useCurrentUser } from "../../../firebase/useCurrentUser";
 
 import {
-  getUser,
   getSummaryStats,
   getActiveTrips,
   getFeaturedChallenges,
@@ -30,19 +30,42 @@ const STAT_ICONS = {
  * "Community", "Itinerary", etc. can switch pages in the parent app.
  */
 export default function MainDashboard({ onNavigate }) {
-  const [user, setUser] = useState({ name: "Keshi", ecoScore: 0 });
+  const { authUser, profile, loading } = useCurrentUser();
+
   const [stats, setStats] = useState([]);
   const [trips, setTrips] = useState([]);
   const [challenges, setChallenges] = useState([]);
   const [achievements, setAchievements] = useState([]);
 
   useEffect(() => {
-    getUser().then(setUser);
+    // NOTE: these four are still mock data from services/Homedashboard —
+    // only the user's name/eco score below now come from Firestore.
     getSummaryStats().then(setStats);
     getActiveTrips().then(setTrips);
     getFeaturedChallenges().then(setChallenges);
     getRecentAchievements().then(setAchievements);
   }, []);
+
+  if (loading) {
+    return (
+      <div style={styles.loadingPage}>
+        <p style={{ color: "#6b7280" }}>Loading...</p>
+      </div>
+    );
+  }
+
+  if (!authUser || !profile) {
+    return (
+      <div style={styles.loadingPage}>
+        <p style={{ color: "#6b7280", marginBottom: 16 }}>You're not logged in.</p>
+        <button type="button" onClick={() => onNavigate("/login")} style={styles.loginRedirectBtn}>
+          Go to Login
+        </button>
+      </div>
+    );
+  }
+
+  const user = { name: profile.name, ecoScore: profile.eco_score ?? 0 };
 
   // route builder shared by all four quick-action tiles
   const QUICK_ACTIONS = [
@@ -133,6 +156,23 @@ export default function MainDashboard({ onNavigate }) {
 }
 
 const styles = {
+  loadingPage: {
+    minHeight: "100vh",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#f9fafb",
+  },
+  loginRedirectBtn: {
+    background: "#16a34a",
+    color: "#fff",
+    border: "none",
+    borderRadius: 10,
+    padding: "10px 20px",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
   content: { padding: "28px 32px", maxWidth: 1180, width: "100%", margin: "0 auto" },
   pageTitle: { fontSize: 26, fontWeight: 800, margin: 0 },
   pageSubtitle: { color: "#6b7280", marginTop: 6, marginBottom: 20, fontSize: 14.5 },

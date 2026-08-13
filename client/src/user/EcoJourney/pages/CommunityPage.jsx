@@ -16,6 +16,7 @@ import { LineChart, Line, XAxis, ResponsiveContainer } from "recharts";
 import Layout from "../../../shared/components/Layout";
 import StatCard from "../../../shared/components/StatCard";
 import AchievementCard from "../../../shared/components/AchievementCard";
+import { useCurrentUser } from "../../../firebase/useCurrentUser";
 
 const TREND = [
   { name: "T1", score: 78 },
@@ -94,13 +95,44 @@ function FeatureCard({ icon: Icon, iconColor, title, desc, cta, variant, onClick
 }
 
 export default function CommunityPage({ onNavigate }) {
-  const user = { name: "Keshi", ecoScore: 8750 };
+  const { authUser, profile, loading } = useCurrentUser();
 
+  if (loading) {
+    return (
+      <div style={styles.loadingPage}>
+        <p style={{ color: "#6b7280" }}>Loading...</p>
+      </div>
+    );
+  }
+
+  if (!authUser || !profile) {
+    return (
+      <div style={styles.loadingPage}>
+        <p style={{ color: "#6b7280", marginBottom: 16 }}>You're not logged in.</p>
+        <button type="button" onClick={() => onNavigate("/login")} style={styles.loginRedirectBtn}>
+          Go to Login
+        </button>
+      </div>
+    );
+  }
+
+  const user = { name: profile.name, ecoScore: profile.eco_score ?? 0 };
+
+  // TODO: totalTrips, globalRank, and badgesEarned aren't tracked in
+  // Firestore yet — wire these up to real collections/queries once
+  // that data exists. Eco Score and Level below are already live.
   const stats = [
-    { label: "Eco Score", icon: Leaf, iconColor: "#22c55e", value: "8,750", sub: "Level 8", progress: 0.72 },
-    { label: "Global Rank", icon: TrendingUp, iconColor: "#3b82f6", value: "5", trendLabel: "12 this week", trendDirection: "up" },
-    { label: "Total trips", icon: Calendar, iconColor: "#7c3aed", value: "12", sub: "Completed journeys" },
-    { label: "Badges Earned", icon: Award, iconColor: "#f97316", value: "4", sub: "Achievements" },
+    {
+      label: "Eco Score",
+      icon: Leaf,
+      iconColor: "#22c55e",
+      value: (profile.eco_score ?? 0).toLocaleString(),
+      sub: `Level ${profile.level ?? 1}`,
+      progress: 0.72,
+    },
+    { label: "Global Rank", icon: TrendingUp, iconColor: "#3b82f6", value: "—", trendLabel: "Coming soon", trendDirection: "up" },
+    { label: "Total trips", icon: Calendar, iconColor: "#7c3aed", value: "0", sub: "Completed journeys" },
+    { label: "Badges Earned", icon: Award, iconColor: "#f97316", value: "0", sub: "Achievements" },
   ];
 
   const achievements = [
@@ -186,6 +218,23 @@ export default function CommunityPage({ onNavigate }) {
 }
 
 const styles = {
+  loadingPage: {
+    minHeight: "100vh",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#f9fafb",
+  },
+  loginRedirectBtn: {
+    background: "#16a34a",
+    color: "#fff",
+    border: "none",
+    borderRadius: 10,
+    padding: "10px 20px",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
   content: { padding: "28px 32px", maxWidth: 1180, width: "100%", margin: "0 auto" },
   pageTitle: { fontSize: 28, fontWeight: 800, margin: 0 },
   pageSubtitle: { color: "#6b7280", marginTop: 6, marginBottom: 24, fontSize: 14.5 },
