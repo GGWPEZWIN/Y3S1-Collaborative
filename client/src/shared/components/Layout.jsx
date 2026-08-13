@@ -34,13 +34,17 @@ export default function Layout({ active, user, onNavigate, children }) {
           <div style={styles.logoMark}>🌿</div>
           <span style={styles.brandName}>GreenTrip Malaysia</span>
         </div>
-        <div style={styles.userChip}>
+        <button
+          type="button"
+          onClick={() => onNavigate?.("/profile")}
+          style={styles.userChip}
+        >
           <div style={styles.userText}>
             <div style={styles.userName}>{user?.name}</div>
             <div style={styles.userScore}>Eco Score: {user?.ecoScore?.toLocaleString?.() ?? "—"}</div>
           </div>
           <div style={styles.avatar}>🐼</div>
-        </div>
+        </button>
       </header>
 
       <div style={styles.body}>
@@ -88,7 +92,16 @@ const styles = {
     fontSize: 18,
   },
   brandName: { fontSize: 20, fontWeight: 700, color: "#111827" },
-  userChip: { display: "flex", alignItems: "center", gap: 12 },
+  userChip: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+    padding: 4,
+    borderRadius: 10,
+  },
   userText: { textAlign: "right", lineHeight: 1.3 },
   userName: { fontWeight: 600, color: "#111827" },
   userScore: { fontSize: 13.5, color: "#9ca3af" },

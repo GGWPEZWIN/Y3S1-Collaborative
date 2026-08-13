@@ -1,5 +1,9 @@
 import React, { useState } from "react";
 
+import Login from "./user/Home/pages/Login";
+import Register from "./user/Home/pages/Register";
+import Profile from "./user/Home/pages/Profile";
+
 import MainDashboard from "./user/Home/pages/MainDashboard";
 
 import CommunityPage from "./user/EcoJourney/pages/CommunityPage";
@@ -23,20 +27,8 @@ function ComingSoon({ label, onNavigate, backTo = "/dashboard" }) {
   );
 }
 
-/**
- * App
- *
- * Simple state-based router (no react-router dependency). "route" is a
- * path string like "/dashboard" or "/community/history"; navigate()
- * updates it and every page receives onNavigate to change it further.
- *
- * navigate() also accepts an optional second argument: an id to remember
- * alongside the route change. Used so that clicking a specific challenge
- * card carries its id through to the details page, instead of every card
- * landing on the same hardcoded details view.
- */
 export default function App() {
-  const [route, setRoute] = useState("/dashboard");
+  const [route, setRoute] = useState("/login");
   const [selectedChallengeId, setSelectedChallengeId] = useState(null);
 
   const navigate = (path, id) => {
@@ -45,6 +37,16 @@ export default function App() {
   };
 
   switch (route) {
+    // ===========================
+    // Auth
+    // ===========================
+    case "/login":
+      return <Login onNavigate={navigate} />;
+    case "/register":
+      return <Register onNavigate={navigate} />;
+    case "/profile":
+      return <Profile onNavigate={navigate} />;
+
     // ===========================
     // Dashboard
     // ===========================
@@ -97,6 +99,6 @@ export default function App() {
       return <ComingSoon label="Waste" onNavigate={navigate} />;
 
     default:
-      return <MainDashboard onNavigate={navigate} />;
+      return <Login onNavigate={navigate} />;
   }
 }
