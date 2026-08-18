@@ -1,11 +1,9 @@
-import React, { useState } from "react";
-
+import { useCallback, useEffect, useState } from "react";
+import useAuthUser from "./user/Waste&Resources/hooks/useAuthUser";
 import Login from "./user/Home/pages/Login";
 import Register from "./user/Home/pages/Register";
 import Profile from "./user/Home/pages/Profile";
-
 import MainDashboard from "./user/Home/pages/MainDashboard";
-
 import CommunityPage from "./user/EcoJourney/pages/CommunityPage";
 import TravelHistory from "./user/EcoJourney/pages/TravelHistory";
 import ProgressTracker from "./user/EcoJourney/pages/ProgressTracker";
@@ -14,10 +12,24 @@ import ChatList from "./user/EcoJourney/chat/ChatList";
 import ChatRoom from "./user/EcoJourney/chat/ChatRoom";
 import GroupInfo from "./user/EcoJourney/chat/GroupInfo";
 import ChallengeTeam from "./user/EcoJourney/pages/ChallengeTeam";
-
 import ChallengesPage from "./user/Challenges/pages/ChallengesPage";
 import ChallengeDetails from "./user/Challenges/pages/ChallengeDetails";
 import ChallengeLeaderboard from "./user/Challenges/pages/ChallengeLeaderboard";
+import Waste from "./user/Waste&Resources/pages/WastePage";
+
+/* Routes reachable without a signed-in user. Everything else is gated. */
+const PUBLIC_ROUTES = ["/login", "/register"];
+
+/**
+ * Location lives in the URL hash so it survives a refresh and the browser
+ * back button. Format:  #/community/chat/room?id=abc123
+ */
+function parseHash() {
+  const raw = window.location.hash.slice(1) || "/login";
+  const [path, queryString] = raw.split("?");
+  const id = queryString ? new URLSearchParams(queryString).get("id") : null;
+  return { path: path || "/login", id };
+}
 
 // Placeholder page
 function ComingSoon({ label, onNavigate, backTo = "/dashboard" }) {
@@ -30,19 +42,40 @@ function ComingSoon({ label, onNavigate, backTo = "/dashboard" }) {
 }
 
 export default function App() {
-  const [route, setRoute] = useState("/login");
-  const [selectedChallengeId, setSelectedChallengeId] = useState(null);
-  const [selectedChatId, setSelectedChatId] = useState(null);
+  const [location, setLocation] = useState(parseHash);
+  const { status } = useAuthUser();
 
-  // navigate(path, id) — id is stored into whichever slot the destination
-  // route needs. Harmless to set both; each page only reads the one it uses.
-  const navigate = (path, id) => {
-    if (id !== undefined) {
-      setSelectedChallengeId(id);
-      setSelectedChatId(id);
-    }
-    setRoute(path);
-  };
+  const { path: route, id: selectedId } = location;
+
+  // Subscribing to an external system (the browser history) and setting
+  // state from its callback — the correct use of an effect.
+  useEffect(() => {
+    const onHashChange = () => setLocation(parseHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  // navigate(path, id) — the id is written into the hash so a refresh on a
+  // chat room or challenge detail page still knows which record to load.
+  const navigate = useCallback((path, id) => {
+    const next = id !== undefined && id !== null
+      ? `${path}?id=${encodeURIComponent(id)}`
+      : path;
+    // Assigning the hash fires hashchange, which updates state above.
+    // Set state directly too, in case the hash is unchanged.
+    window.location.hash = next;
+    setLocation(parseHash());
+  }, []);
+
+  // Firebase restores the session asynchronously. Rendering routes before it
+  // resolves would bounce a signed-in user to login on every refresh.
+  if (status === "loading") {
+    return <div style={{ padding: 48, textAlign: "center" }}>Loading…</div>;
+  }
+
+  if (status === "signedOut" && !PUBLIC_ROUTES.includes(route)) {
+    return <Login onNavigate={navigate} />;
+  }
 
   switch (route) {
     // ===========================
@@ -80,10 +113,10 @@ export default function App() {
       return <ChatList onNavigate={navigate} />;
 
     case "/community/chat/room":
-      return <ChatRoom chatId={selectedChatId} onNavigate={navigate} />;
+      return <ChatRoom chatId={selectedId} onNavigate={navigate} />;
 
     case "/community/chat/info":
-      return <GroupInfo chatId={selectedChatId} onNavigate={navigate} />;
+      return <GroupInfo chatId={selectedId} onNavigate={navigate} />;
 
     case "/community/report":
       return <ComingSoon label="Eco-Report Card" onNavigate={navigate} backTo="/community" />;
@@ -97,7 +130,7 @@ export default function App() {
       return <ChallengesPage onNavigate={navigate} />;
 
     case "/challenges/details":
-      return <ChallengeDetails onNavigate={navigate} challengeId={selectedChallengeId} />;
+      return <ChallengeDetails onNavigate={navigate} challengeId={selectedId} />;
 
     case "/challenges/leaderboard":
       return <ChallengeLeaderboard onNavigate={navigate} />;
@@ -112,7 +145,7 @@ export default function App() {
     case "/certification":
       return <ComingSoon label="Certification" onNavigate={navigate} />;
     case "/waste":
-      return <ComingSoon label="Waste" onNavigate={navigate} />;
+      return <Waste onNavigate={navigate} />;
 
     default:
       return <Login onNavigate={navigate} />;

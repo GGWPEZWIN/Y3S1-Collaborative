@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Leaf, TrendingDown, Calendar, Award, Navigation, Zap, Users, ChevronRight } from "lucide-react";
 
 import Layout from "../../../shared/components/Layout";

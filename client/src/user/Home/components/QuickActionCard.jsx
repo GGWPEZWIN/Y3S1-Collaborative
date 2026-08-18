@@ -1,14 +1,14 @@
-import React from "react";
-
-export default function QuickActionCard({ icon: Icon, iconColor, title, subtitle, onClick }) {
+export default function QuickActionCard({ icon: Icon, iconColor = "#10b981", title, subtitle, onClick }) {
   return (
     <button onClick={onClick} style={styles.card}>
-      <div style={{ ...styles.iconChip, background: `${iconColor}1A` }}>
-        <Icon size={20} color={iconColor} />
-      </div>
+      {Icon && (
+        <div style={{ ...styles.iconChip, background: `${iconColor}1A` }}>
+          <Icon size={20} color={iconColor} />
+        </div>
+      )}
       <div style={styles.text}>
-        <div style={styles.title}>{title}</div>
-        <div style={styles.subtitle}>{subtitle}</div>
+        {title && <div style={styles.title}>{title}</div>}
+        {subtitle && <div style={styles.subtitle}>{subtitle}</div>}
       </div>
     </button>
   );
@@ -25,6 +25,7 @@ const styles = {
     background: "#fff",
     cursor: "pointer",
     textAlign: "left",
+    width: "100%",
   },
   iconChip: {
     width: 36,

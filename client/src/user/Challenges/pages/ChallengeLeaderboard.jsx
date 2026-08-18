@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { Trophy, ChevronLeft, TrendingDown } from "lucide-react";
 import Layout from "../../../shared/components/Layout";
 

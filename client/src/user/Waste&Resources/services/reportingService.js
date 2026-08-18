@@ -1,0 +1,68 @@
+import { BENCHMARKS, CATEGORY_KEYS, CO2E } from "../constants/waste";
+import { monthKey, monthName } from "../utils/date";
+import { compositeScore, gradeFor, sumRows, variance } from "./benchmarkService";
+
+/* ==================================================================
+   TEMPORAL REPORTING  (F7)
+   ================================================================== */
+
+export function buildMonthlySummaries(rows) {
+  const groups = {};
+  rows.forEach((r) => {
+    const k = monthKey(r.iso);
+    (groups[k] = groups[k] || []).push(r);
+  });
+
+  const keys = Object.keys(groups).sort();
+  return keys.map((key, i) => {
+    const monthRows = groups[key];
+    const days = new Set(monthRows.map((r) => r.iso)).size || 1;
+    const totals = sumRows(monthRows);
+    const score = compositeScore(monthRows);
+
+    const prev = i > 0 ? groups[keys[i - 1]] : null;
+    const prevDays = prev ? new Set(prev.map((r) => r.iso)).size || 1 : 0;
+    const prevTotals = prev ? sumRows(prev) : null;
+
+    const categories = CATEGORY_KEYS.map((k) => {
+      const perDay = totals[k] / days;
+      const prevPerDay = prevTotals ? prevTotals[k] / prevDays : null;
+      const change =
+        prevPerDay && prevPerDay > 0 ? ((perDay - prevPerDay) / prevPerDay) * 100 : null;
+      return {
+        key: k,
+        perDay,
+        benchmark: BENCHMARKS[k],
+        variance: variance(totals[k], days, k),
+        change,
+      };
+    });
+
+    return {
+      key,
+      label: monthName(key),
+      days,
+      totals,
+      score,
+      grade: gradeFor(score),
+      categories,
+    };
+  });
+}
+
+/** Malaysian Conservation Contribution — the annual headline figure. */
+export function computeMCC(rows) {
+  const days = new Set(rows.map((r) => r.iso)).size || 1;
+  const totals = sumRows(rows);
+
+  const avoided = CATEGORY_KEYS.reduce((acc, k) => {
+    const baseline = BENCHMARKS[k] * days;
+    acc[k] = (baseline - totals[k]) * CO2E[k]; // kg CO2e, may be negative
+    return acc;
+  }, {});
+
+  const totalAvoided = CATEGORY_KEYS.reduce((s, k) => s + avoided[k], 0);
+  const score = Math.max(0, Math.min(1000, Math.round(totalAvoided * 10 + days * 1.5)));
+
+  return { days, totals, avoided, totalAvoided, score };
+}
