@@ -17,8 +17,14 @@ import ChallengeDetails from "./user/Challenges/pages/ChallengeDetails";
 import ChallengeLeaderboard from "./user/Challenges/pages/ChallengeLeaderboard";
 import Waste from "./user/Waste&Resources/pages/WastePage";
 
+// Admin module — file is named "Adminlogin.jsx" (lowercase "l") on disk,
+// import name kept capitalized (AdminLogin) purely for readability here.
+import AdminLogin from "./admin/pages/Adminlogin";
+import AdminDashboard from "./admin/AdminDashboard";
+import RequireAdmin from "./admin/RequireAdmin";
+
 /* Routes reachable without a signed-in user. Everything else is gated. */
-const PUBLIC_ROUTES = ["/login", "/register"];
+const PUBLIC_ROUTES = ["/login", "/register", "/admin-login"];
 
 /**
  * Location lives in the URL hash so it survives a refresh and the browser
@@ -73,6 +79,10 @@ export default function App() {
     return <div style={{ padding: 48, textAlign: "center" }}>Loading…</div>;
   }
 
+  // NOTE: this guard runs before the switch below, so any route meant to be
+  // reachable while signed out (admin login included) MUST be listed in
+  // PUBLIC_ROUTES above, or it'll get silently bounced back to <Login>
+  // every time — that was the original bug with /admin-login.
   if (status === "signedOut" && !PUBLIC_ROUTES.includes(route)) {
     return <Login onNavigate={navigate} />;
   }
@@ -87,6 +97,22 @@ export default function App() {
       return <Register onNavigate={navigate} />;
     case "/profile":
       return <Profile onNavigate={navigate} />;
+
+    // ===========================
+    // Admin
+    // ===========================
+    case "/admin-login":
+      return <AdminLogin onNavigate={navigate} />;
+
+    case "/admin":
+      // RequireAdmin re-checks the signed-in user's role === "admin" doc
+      // server-side-of-truth (Firestore), not just "did they pass through
+      // AdminLogin" — someone could type #/admin directly in the URL bar.
+      return (
+        <RequireAdmin onNavigate={navigate}>
+          <AdminDashboard onNavigate={navigate} />
+        </RequireAdmin>
+      );
 
     // ===========================
     // Dashboard

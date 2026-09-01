@@ -3,14 +3,22 @@ import {
   doc,
   addDoc,
   getDoc,
+  getDocs,
   setDoc,
   query,
   where,
   orderBy,
   onSnapshot,
   serverTimestamp,
+  writeBatch,
 } from "firebase/firestore";
-import { db } from "./config";
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage as configuredStorage } from "./config";
+
+// Falls back to a default Storage instance if config.js doesn't export one yet —
+// if you see a Storage-related error, make sure config.js does:
+//   export const storage = getStorage(app);
+const storage = configuredStorage || getStorage();
 
 /** Deterministic ID for a 1:1 chat so re-opening it never creates duplicates. */
 function directChatId(uidA, uidB) {
@@ -39,6 +47,7 @@ export async function createOrGetDirectChat(currentUser, friend) {
       created_at: serverTimestamp(),
       lastMessage: "",
       lastMessageAt: serverTimestamp(),
+      mutedBy: [],
     });
   }
 
@@ -65,6 +74,7 @@ export async function createGroupChat(currentUser, groupName, friends) {
     created_at: serverTimestamp(),
     lastMessage: "",
     lastMessageAt: serverTimestamp(),
+    mutedBy: [],
   });
 
   return docRef.id;
@@ -86,7 +96,7 @@ export function listenToUserChats(uid, callback) {
   });
 }
 
-/** Sends a message and bumps the chat's lastMessage/lastMessageAt preview. */
+/** Sends a plain text message and bumps the chat's lastMessage/lastMessageAt preview. */
 export async function sendMessage(chatId, sender, text) {
   const trimmed = text.trim();
   if (!trimmed) return;
@@ -94,6 +104,7 @@ export async function sendMessage(chatId, sender, text) {
   await addDoc(collection(db, "chats", chatId, "messages"), {
     senderId: sender.uid,
     senderName: sender.displayName || "",
+    type: "text",
     text: trimmed,
     created_at: serverTimestamp(),
   });
@@ -105,6 +116,56 @@ export async function sendMessage(chatId, sender, text) {
   );
 }
 
+/**
+ * Uploads an image to Storage and sends it as a message.
+ * `file` is a File object, typically from an <input type="file"> change event.
+ */
+export async function sendImageMessage(chatId, sender, file) {
+  const path = `chats/${chatId}/images/${Date.now()}_${file.name}`;
+  const fileRef = storageRef(storage, path);
+  await uploadBytes(fileRef, file);
+  const url = await getDownloadURL(fileRef);
+
+  await addDoc(collection(db, "chats", chatId, "messages"), {
+    senderId: sender.uid,
+    senderName: sender.displayName || "",
+    type: "image",
+    imageUrl: url,
+    created_at: serverTimestamp(),
+  });
+
+  await setDoc(
+    doc(db, "chats", chatId),
+    { lastMessage: "📷 Photo", lastMessageAt: serverTimestamp() },
+    { merge: true }
+  );
+}
+
+/**
+ * Uploads a recorded voice clip to Storage and sends it as a message.
+ * `blob` is typically the output of a MediaRecorder's `onstop` handler.
+ */
+export async function sendVoiceMessage(chatId, sender, blob) {
+  const path = `chats/${chatId}/voice/${Date.now()}.webm`;
+  const fileRef = storageRef(storage, path);
+  await uploadBytes(fileRef, blob);
+  const url = await getDownloadURL(fileRef);
+
+  await addDoc(collection(db, "chats", chatId, "messages"), {
+    senderId: sender.uid,
+    senderName: sender.displayName || "",
+    type: "voice",
+    audioUrl: url,
+    created_at: serverTimestamp(),
+  });
+
+  await setDoc(
+    doc(db, "chats", chatId),
+    { lastMessage: "🎤 Voice message", lastMessageAt: serverTimestamp() },
+    { merge: true }
+  );
+}
+
 /** Live subscription to a chat's messages, oldest first. */
 export function listenToMessages(chatId, callback) {
   const q = query(collection(db, "chats", chatId, "messages"), orderBy("created_at", "asc"));
@@ -112,6 +173,35 @@ export function listenToMessages(chatId, callback) {
     const messages = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     callback(messages);
   });
+}
+
+/**
+ * Toggles mute for the given user on this chat. Muted chats are stored
+ * as a `mutedBy` array of uids on the chat doc — check
+ * `chat.mutedBy?.includes(myUid)` to know if the current user has it muted.
+ */
+export async function toggleMuteChat(chatId, uid, currentlyMuted) {
+  const chatRef = doc(db, "chats", chatId);
+  const snap = await getDoc(chatRef);
+  const mutedBy = snap.exists() ? snap.data().mutedBy || [] : [];
+
+  const next = currentlyMuted ? mutedBy.filter((id) => id !== uid) : [...mutedBy, uid];
+
+  await setDoc(chatRef, { mutedBy: next }, { merge: true });
+}
+
+/**
+ * Deletes every message in this conversation and resets its preview.
+ * This clears the conversation for BOTH participants — there's no
+ * per-user "hide for me" concept in this data model, so pair this with
+ * a confirm() prompt in the UI before calling it.
+ */
+export async function deleteConversation(chatId) {
+  const messagesSnap = await getDocs(collection(db, "chats", chatId, "messages"));
+  const batch = writeBatch(db);
+  messagesSnap.docs.forEach((d) => batch.delete(d.ref));
+  batch.set(doc(db, "chats", chatId), { lastMessage: "", lastMessageAt: serverTimestamp() }, { merge: true });
+  await batch.commit();
 }
 
 /** Renames a group chat. */

@@ -1,9 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ChevronLeft, Send, Users } from "lucide-react";
+import { ChevronLeft, Send, Users, MoreVertical, BellOff, Bell, Trash2, Paperclip, Mic, Square } from "lucide-react";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../../../firebase/config";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
-import { listenToMessages, sendMessage } from "../../../firebase/chatService";
+import {
+  listenToMessages,
+  sendMessage,
+  sendImageMessage,
+  sendVoiceMessage,
+  toggleMuteChat,
+  deleteConversation,
+} from "../../../firebase/chatService";
 
 /**
  * chatId is passed in as a prop by your router — wire it up wherever
@@ -17,6 +24,31 @@ export default function ChatRoom({ chatId, onNavigate }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = useRef(null);
+
+  const [showSettings, setShowSettings] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [chatError, setChatError] = useState("");
+  const fileInputRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const timerIntervalRef = useRef(null);
+
+  // Visible in-page error banner — window.alert() can be silently
+  // suppressed in some embedded/iframe browser previews, so surface
+  // failures here too (and always log to console for devtools).
+  const reportError = (err) => {
+    console.error(err);
+    setChatError(err?.message || "Something went wrong.");
+    setTimeout(() => setChatError(""), 6000);
+  };
+
+  const formatDuration = (totalSeconds) => {
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
 
   useEffect(() => {
     if (!chatId) return;
@@ -45,6 +77,89 @@ export default function ChatRoom({ chatId, onNavigate }) {
       alert(err.message);
     } finally {
       setSending(false);
+    }
+  };
+
+  const handlePickImage = () => fileInputRef.current?.click();
+
+  const handleImageChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingImage(true);
+    try {
+      await sendImageMessage(chatId, { uid: authUser.uid, displayName: profile?.name }, file);
+    } catch (err) {
+      reportError(err);
+    } finally {
+      setUploadingImage(false);
+      e.target.value = "";
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        clearInterval(timerIntervalRef.current);
+        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        try {
+          await sendVoiceMessage(chatId, { uid: authUser.uid, displayName: profile?.name }, blob);
+        } catch (err) {
+          reportError(err);
+        }
+      };
+
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setRecording(true);
+      setRecordingSeconds(0);
+      timerIntervalRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      reportError(new Error("Couldn't access your microphone. Check browser permissions and try again."));
+    }
+  };
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop();
+    setRecording(false);
+  };
+
+  // Clean up the timer if the component unmounts mid-recording.
+  useEffect(() => {
+    return () => clearInterval(timerIntervalRef.current);
+  }, []);
+
+  const isMuted = !!chat?.mutedBy?.includes(authUser?.uid);
+
+  const handleToggleMute = async () => {
+    setShowSettings(false);
+    try {
+      await toggleMuteChat(chatId, authUser.uid, isMuted);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleDeleteConversation = async () => {
+    setShowSettings(false);
+    const confirmed = window.confirm(
+      "Delete this conversation? This will permanently remove every message for both people in this chat. This can't be undone."
+    );
+    if (!confirmed) return;
+    try {
+      await deleteConversation(chatId);
+    } catch (err) {
+      alert(err.message);
     }
   };
 
@@ -85,11 +200,42 @@ export default function ChatRoom({ chatId, onNavigate }) {
             {isGroup ? <Users size={16} /> : (title || "?").charAt(0).toUpperCase()}
           </div>
           <div>
-            <div style={styles.headerTitle}>{title}</div>
+            <div style={styles.headerTitle}>
+              {title}
+              {isMuted && <BellOff size={13} color="#9ca3af" style={{ marginLeft: 6, verticalAlign: -1 }} />}
+            </div>
             {isGroup && (
               <div style={styles.headerSubtitle}>{chat.members.length} members · tap for info</div>
             )}
           </div>
+        </div>
+
+        <div style={{ marginLeft: "auto", position: "relative" }}>
+          <button
+            type="button"
+            onClick={() => setShowSettings((prev) => !prev)}
+            style={styles.settingsBtn}
+            title="Chat settings"
+          >
+            <MoreVertical size={18} />
+          </button>
+
+          {showSettings && (
+            <div style={styles.settingsMenu}>
+              <button type="button" onClick={handleToggleMute} style={styles.settingsMenuItem}>
+                {isMuted ? <Bell size={15} /> : <BellOff size={15} />}
+                {isMuted ? "Unmute Notifications" : "Mute Notifications"}
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteConversation}
+                style={{ ...styles.settingsMenuItem, color: "#b91c1c" }}
+              >
+                <Trash2 size={15} />
+                Delete Conversation
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -99,6 +245,8 @@ export default function ChatRoom({ chatId, onNavigate }) {
         ) : (
           messages.map((msg) => {
             const isMe = msg.senderId === authUser.uid;
+            const bubbleStyle = isMe ? styles.bubbleMine : styles.bubbleTheirs;
+
             return (
               <div
                 key={msg.id}
@@ -107,11 +255,18 @@ export default function ChatRoom({ chatId, onNavigate }) {
                   justifyContent: isMe ? "flex-end" : "flex-start",
                 }}
               >
-                <div style={isMe ? styles.bubbleMine : styles.bubbleTheirs}>
-                  {isGroup && !isMe && (
-                    <div style={styles.bubbleSender}>{msg.senderName}</div>
+                <div style={msg.type === "image" ? styles.bubbleImageWrap(isMe) : bubbleStyle}>
+                  {isGroup && !isMe && <div style={styles.bubbleSender}>{msg.senderName}</div>}
+
+                  {msg.type === "image" && msg.imageUrl && (
+                    <img src={msg.imageUrl} alt="Shared" style={styles.chatImage} />
                   )}
-                  <div>{msg.text}</div>
+
+                  {msg.type === "voice" && msg.audioUrl && (
+                    <audio controls src={msg.audioUrl} style={styles.audioPlayer} />
+                  )}
+
+                  {(!msg.type || msg.type === "text") && <div>{msg.text}</div>}
                 </div>
               </div>
             );
@@ -122,16 +277,64 @@ export default function ChatRoom({ chatId, onNavigate }) {
 
       <form onSubmit={handleSend} style={styles.inputRow}>
         <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleImageChange}
+          style={{ display: "none" }}
+        />
+
+        <button
+          type="button"
+          onClick={handlePickImage}
+          disabled={uploadingImage || recording}
+          style={styles.iconBtn}
+          title="Send an image"
+        >
+          <Paperclip size={19} color="#6b7280" />
+        </button>
+
+        {recording ? (
+          <button
+            type="button"
+            onClick={stopRecording}
+            style={{ ...styles.iconBtn, background: "#fee2e2" }}
+            title="Stop recording"
+          >
+            <Square size={17} color="#dc2626" fill="#dc2626" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={startRecording}
+            disabled={uploadingImage}
+            style={styles.iconBtn}
+            title="Record a voice message"
+          >
+            <Mic size={19} color="#6b7280" />
+          </button>
+        )}
+
+        <input
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Type a message..."
+          placeholder={recording ? "Recording voice message..." : "Type a message..."}
+          disabled={recording}
           style={styles.input}
         />
-        <button type="submit" disabled={sending || !text.trim()} style={styles.sendBtn}>
+        <button type="submit" disabled={sending || !text.trim() || recording} style={styles.sendBtn}>
           <Send size={18} />
         </button>
       </form>
+
+      {recording && (
+        <div style={styles.recordingBanner}>
+          🔴 Recording {formatDuration(recordingSeconds)} — tap the square to stop and send
+        </div>
+      )}
+
+      {chatError && <div style={styles.errorBanner}>⚠️ {chatError}</div>}
     </div>
   );
 }
@@ -204,6 +407,45 @@ const styles = {
   headerClickable: { display: "flex", alignItems: "center", gap: 12, cursor: "pointer" },
   headerTitle: { fontSize: 15.5, fontWeight: 700, color: "#111827" },
   headerSubtitle: { fontSize: 12, color: "#9ca3af" },
+  settingsBtn: {
+    border: "none",
+    background: "#f3f4f6",
+    color: "#374151",
+    borderRadius: 10,
+    width: 36,
+    height: 36,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
+  settingsMenu: {
+    position: "absolute",
+    top: 42,
+    right: 0,
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+    padding: 6,
+    zIndex: 20,
+    minWidth: 200,
+  },
+  settingsMenuItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    width: "100%",
+    border: "none",
+    background: "transparent",
+    color: "#374151",
+    borderRadius: 8,
+    padding: "9px 10px",
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: "pointer",
+    textAlign: "left",
+  },
   messagesArea: {
     flex: 1,
     overflowY: "auto",
@@ -231,13 +473,35 @@ const styles = {
     maxWidth: "70%",
     fontSize: 14.5,
   },
+  bubbleImageWrap: (isMe) => ({
+    background: "transparent",
+    padding: 4,
+    borderRadius: 16,
+    maxWidth: "60%",
+    border: isMe ? "none" : "1px solid #e5e7eb",
+  }),
+  chatImage: { width: "100%", borderRadius: 12, display: "block" },
+  audioPlayer: { maxWidth: 240 },
   bubbleSender: { fontSize: 11.5, fontWeight: 700, color: "#16a34a", marginBottom: 3 },
   inputRow: {
     display: "flex",
-    gap: 10,
+    alignItems: "center",
+    gap: 8,
     padding: 16,
     background: "#fff",
     borderTop: "1px solid #e5e7eb",
+  },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: "50%",
+    border: "none",
+    background: "#f3f4f6",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    flexShrink: 0,
   },
   input: {
     flex: 1,
@@ -259,5 +523,22 @@ const styles = {
     justifyContent: "center",
     cursor: "pointer",
     flexShrink: 0,
+  },
+  recordingBanner: {
+    textAlign: "center",
+    fontSize: 12.5,
+    color: "#dc2626",
+    fontWeight: 600,
+    padding: "6px 0 14px",
+    background: "#fff",
+  },
+  errorBanner: {
+    textAlign: "center",
+    fontSize: 13,
+    color: "#b91c1c",
+    fontWeight: 600,
+    padding: "10px 16px",
+    background: "#fee2e2",
+    borderTop: "1px solid #fecaca",
   },
 };

@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { Search, UserPlus, Check, X, MessageCircle, Trash2, Users } from "lucide-react";
+import React, { useEffect, useState, useRef } from "react";
+import { Search, UserPlus, Check, X, MessageCircle, Trash2, Users, MoreVertical } from "lucide-react";
 import Layout from "../../../shared/components/Layout";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
 import {
@@ -28,6 +28,13 @@ export default function Friends({ onNavigate }) {
   const [searching, setSearching] = useState(false);
   const [actionBusy, setActionBusy] = useState("");
 
+  // "You and X are now friends!" banner, shown briefly after accepting a request.
+  const [toast, setToast] = useState("");
+  const toastTimerRef = useRef(null);
+
+  // Which friend's settings (⋮) menu is currently open, if any.
+  const [openSettingsFor, setOpenSettingsFor] = useState(null);
+
   useEffect(() => {
     if (!authUser) return;
     const unsubFriends = listenToFriends(authUser.uid, setFriends);
@@ -39,6 +46,19 @@ export default function Friends({ onNavigate }) {
       unsubOutgoing();
     };
   }, [authUser]);
+
+  // Clear any pending toast timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  const showToast = (message) => {
+    setToast(message);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(""), 3500);
+  };
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -82,6 +102,7 @@ export default function Friends({ onNavigate }) {
     setActionBusy(request.id);
     try {
       await acceptFriendRequest(request);
+      showToast(`You and ${request.fromName || "this traveler"} are now friends! 🎉`);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -114,6 +135,7 @@ export default function Friends({ onNavigate }) {
   const handleRemoveFriend = async (friend) => {
     if (!window.confirm(`Remove ${friend.name || "this friend"}?`)) return;
     setActionBusy(friend.uid);
+    setOpenSettingsFor(null);
     try {
       await removeFriend(authUser.uid, friend.uid);
     } catch (err) {
@@ -162,6 +184,13 @@ export default function Friends({ onNavigate }) {
   return (
     <Layout active="friends" user={layoutUser} onNavigate={onNavigate}>
       <div style={styles.content}>
+        {toast && (
+          <div style={styles.toast}>
+            <Check size={16} />
+            <span>{toast}</span>
+          </div>
+        )}
+
         <h1 style={styles.title}>Friends</h1>
         <p style={styles.subtitle}>Find travelers and grow your eco-community</p>
 
@@ -296,23 +325,42 @@ export default function Friends({ onNavigate }) {
                     <div style={styles.resultEmail}>{friend.email}</div>
                   </div>
                 </div>
-                <div style={styles.requestActions}>
+                <div style={{ ...styles.requestActions, position: "relative" }}>
                   <button
                     type="button"
                     onClick={() => handleMessage(friend)}
                     disabled={actionBusy === friend.uid}
                     style={styles.messageBtn}
+                    title="Message"
                   >
                     <MessageCircle size={16} />
                   </button>
+
+                  {/* Settings menu — Remove Friend now lives in here instead of a bare row button */}
                   <button
                     type="button"
-                    onClick={() => handleRemoveFriend(friend)}
-                    disabled={actionBusy === friend.uid}
-                    style={styles.removeBtn}
+                    onClick={() =>
+                      setOpenSettingsFor((prev) => (prev === friend.uid ? null : friend.uid))
+                    }
+                    style={styles.settingsBtn}
+                    title="Friend settings"
                   >
-                    <Trash2 size={16} />
+                    <MoreVertical size={16} />
                   </button>
+
+                  {openSettingsFor === friend.uid && (
+                    <div style={styles.settingsMenu}>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveFriend(friend)}
+                        disabled={actionBusy === friend.uid}
+                        style={styles.settingsMenuItem}
+                      >
+                        <Trash2 size={15} />
+                        Remove Friend
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))
@@ -342,6 +390,19 @@ const styles = {
     cursor: "pointer",
   },
   content: { padding: "28px 32px", maxWidth: 640, width: "100%", margin: "0 auto", textAlign: "left" },
+  toast: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    background: "#dcfce7",
+    color: "#15803d",
+    border: "1px solid #86efac",
+    borderRadius: 12,
+    padding: "12px 16px",
+    fontSize: 14,
+    fontWeight: 600,
+    marginBottom: 20,
+  },
   title: { fontSize: 28, fontWeight: 800, color: "#111827", margin: 0 },
   subtitle: { color: "#6b7280", marginTop: 6, marginBottom: 24, fontSize: 14.5 },
   card: {
@@ -457,10 +518,10 @@ const styles = {
     justifyContent: "center",
     cursor: "pointer",
   },
-  removeBtn: {
+  settingsBtn: {
     border: "none",
-    background: "#fee2e2",
-    color: "#b91c1c",
+    background: "#f3f4f6",
+    color: "#6b7280",
     borderRadius: 10,
     width: 36,
     height: 36,
@@ -468,6 +529,33 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     cursor: "pointer",
+  },
+  settingsMenu: {
+    position: "absolute",
+    top: 42,
+    right: 0,
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+    padding: 6,
+    zIndex: 10,
+    minWidth: 160,
+  },
+  settingsMenuItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    width: "100%",
+    border: "none",
+    background: "transparent",
+    color: "#b91c1c",
+    borderRadius: 8,
+    padding: "8px 10px",
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: "pointer",
+    textAlign: "left",
   },
   cancelBtn: {
     border: "1px solid #e5e7eb",

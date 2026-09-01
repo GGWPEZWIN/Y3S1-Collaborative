@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Leaf, Mail, Lock, Eye, EyeOff } from "lucide-react";
+import { Leaf, Mail, Lock, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { loginUser, loginWithGoogle, resetPassword, friendlyAuthError } from "../../../firebase/authService";
 
 export default function Login({ onNavigate }) {
@@ -146,6 +146,18 @@ export default function Login({ onNavigate }) {
             Sign Up
           </span>
         </p>
+
+        {/* Admin entry point — deliberately understated (small, gray, icon-led)
+            so it doesn't compete with the primary tourist flow above, but is
+            still easy to find for the people who actually need it. */}
+        <button
+          type="button"
+          onClick={() => onNavigate("/admin-login")}
+          style={styles.adminSwitchBtn}
+        >
+          <ShieldCheck size={14} />
+          Switch to Admin Login
+        </button>
       </div>
     </div>
   );
@@ -278,4 +290,18 @@ const styles = {
   },
   switchText: { fontSize: 13.5, color: "#6b7280", marginTop: 24 },
   switchLink: { color: "#16a34a", fontWeight: 700, cursor: "pointer" },
+  adminSwitchBtn: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    margin: "18px auto 0",
+    border: "none",
+    background: "transparent",
+    color: "#9ca3af",
+    fontSize: 12.5,
+    fontWeight: 600,
+    cursor: "pointer",
+    padding: "6px 10px",
+  },
 };
