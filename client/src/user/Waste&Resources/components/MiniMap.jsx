@@ -1,40 +1,59 @@
-/** Schematic radial map. Swap for Leaflet / Google Maps in production. */
-export default function MiniMap({ pois }) {
-  const max = Math.max(...pois.map((p) => p.km), 1);
+import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+
+/* ==================================================================
+   NEARBY MAP  (F6)
+   ------------------------------------------------------------------
+   OpenStreetMap tiles via Leaflet. No API key and no billing account.
+
+   CircleMarker is used rather than Marker deliberately: Leaflet's
+   default marker loads its icon from a relative image path, which
+   bundlers rewrite and break. Circles are drawn as SVG, so there is
+   no asset to resolve.
+   ================================================================== */
+
+const ZOOM = 14;
+
+export default function MiniMap({ centre, pois }) {
+  if (!centre) return null;
+
   return (
-    <div className="relative rounded-lg bg-slate-50 border border-slate-200 h-48 overflow-hidden">
-      <svg viewBox="0 0 200 120" className="w-full h-full">
-        {[0.33, 0.66, 1].map((r, i) => (
-          <circle
-            key={i}
-            cx="100"
-            cy="60"
-            r={r * 52}
-            fill="none"
-            stroke="#E2E8F0"
-            strokeWidth="1"
-          />
+    <div className="rounded-lg overflow-hidden border border-slate-200 h-64">
+      <MapContainer
+        center={[centre.lat, centre.lng]}
+        zoom={ZOOM}
+        scrollWheelZoom={false}
+        style={{ height: "100%", width: "100%" }}
+      >
+        {/* Attribution is a licence requirement for OSM data, not decoration. */}
+        <TileLayer
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        />
+
+        <CircleMarker
+          center={[centre.lat, centre.lng]}
+          radius={8}
+          pathOptions={{ color: "#16A34A", fillColor: "#16A34A", fillOpacity: 0.9 }}
+        >
+          <Popup>You are here</Popup>
+        </CircleMarker>
+
+        {pois.map((p) => (
+          <CircleMarker
+            key={p.id}
+            center={[p.lat, p.lng]}
+            radius={7}
+            pathOptions={{ color: "#0EA5E9", fillColor: "#0EA5E9", fillOpacity: 0.85 }}
+          >
+            <Popup>
+              <span className="font-semibold">{p.name}</span>
+              <br />
+              {p.km} km away
+            </Popup>
+          </CircleMarker>
         ))}
-        <circle cx="100" cy="60" r="5" fill="#16A34A" />
-        <text x="100" y="78" textAnchor="middle" fontSize="7" fill="#64748B">
-          You
-        </text>
-        {pois.map((p, i) => {
-          const angle = (i / pois.length) * Math.PI * 2 - Math.PI / 3;
-          const r = (p.km / max) * 48;
-          const x = 100 + Math.cos(angle) * r;
-          const y = 60 + Math.sin(angle) * r * 0.75;
-          return (
-            <g key={p.name}>
-              <line x1="100" y1="60" x2={x} y2={y} stroke="#CBD5E1" strokeDasharray="2 2" />
-              <circle cx={x} cy={y} r="4" fill="#0EA5E9" />
-              <text x={x} y={y - 7} textAnchor="middle" fontSize="6.5" fill="#334155">
-                {p.km}km
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+      </MapContainer>
     </div>
   );
 }

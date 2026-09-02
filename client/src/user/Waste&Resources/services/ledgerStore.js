@@ -2,6 +2,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  updateDoc,
   onSnapshot,
   orderBy,
   query,
@@ -29,6 +30,7 @@ function logsCollection(uid) {
   return collection(db, "users", uid, LOGS);
 }
 
+/** Strips `id` — it is the document id, not part of the body. */
 function toDocumentBody(entry) {
   const body = { ...entry };
   delete body.id;
@@ -73,6 +75,38 @@ export async function saveLog(uid, entry) {
   return ref.id;
 }
 
+/**
+ * Applies a user correction to an existing log.
+ *
+ * The first edit snapshots the pre-edit figures into `original`. For a CV
+ * scan that preserves the model's estimate alongside the user's correction —
+ * the (predicted, actual) pair needed to evaluate and retrain the mass
+ * regressor. Later edits do not overwrite that snapshot.
+ *
+ * @param {string} uid
+ * @param {string} logId
+ * @param {object} patch    fields the user changed
+ * @param {object} current  the log as it stands, for the snapshot
+ */
+export async function updateLog(uid, logId, patch, current) {
+  const body = {
+    ...patch,
+    editedAt: serverTimestamp(),
+    editedAtMs: Date.now(),
+  };
+
+  if (!current.original) {
+    body.original = {
+      foodWaste: Number(current.foodWaste) || 0,
+      plastic: Number(current.plastic) || 0,
+      water: Number(current.water) || 0,
+      disposables: Number(current.disposables) || 0,
+    };
+  }
+
+  await updateDoc(doc(logsCollection(uid), logId), body);
+}
+
 export async function deleteLog(uid, logId) {
   await deleteDoc(doc(logsCollection(uid), logId));
 }
@@ -84,19 +118,16 @@ export async function deleteLog(uid, logId) {
  */
 export async function seedLedger(uid) {
   const rows = buildHistory();
-  const chunkSize = 500;
+  const chunkSize = 500; // Firestore caps a batch at 500 operations
 
   for (let i = 0; i < rows.length; i += chunkSize) {
     const batch = writeBatch(db);
-    const chunk = rows.slice(i, i + chunkSize);
-
-    chunk.forEach((row) => {
+    rows.slice(i, i + chunkSize).forEach((row) => {
       batch.set(doc(logsCollection(uid)), {
         ...toDocumentBody(row),
         createdAtMs: Date.now(),
       });
     });
-
     await batch.commit();
   }
 

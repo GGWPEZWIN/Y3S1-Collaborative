@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { saveLog, subscribeToLedger } from "../services/ledgerStore";
+import { saveLog, subscribeToLedger, updateLog } from "../services/ledgerStore";
 import { sumRows } from "../services/benchmarkService";
 import { buildMonthlySummaries, computeMCC } from "../services/reportingService";
 import { evaluateNudges } from "../services/nudgeService";
+import { getBenchmarks, refreshBenchmarks } from "../services/baselineService";
 import { displayDate, isoDate } from "../utils/date";
 
 const EMPTY = { rows: [], days: 0, totals: sumRows([]) };
@@ -42,6 +43,16 @@ export default function useWasteLedger(uid) {
 
   const rows = useMemo(() => logs ?? [], [logs]);
 
+  // Pull the live water baseline from data.gov.my once. `stamp` only ever
+  // changes from the async callback, so the derived figures recompute after
+  // the fetch resolves without any setState in the effect body.
+  const [benchmarks, setBenchmarks] = useState(getBenchmarks);
+  useEffect(() => {
+    const controller = new AbortController();
+    refreshBenchmarks({ signal: controller.signal }).then(setBenchmarks);
+    return () => controller.abort();
+  }, []);
+
   const todayIso = isoDate(new Date());
   const hasLoggedToday = useMemo(
     () => rows.some((l) => l.iso === todayIso),
@@ -56,9 +67,14 @@ export default function useWasteLedger(uid) {
     return { rows: picked, days: days.length, totals: sumRows(picked) };
   }, [rows]);
 
-  const nudges = useMemo(() => evaluateNudges(rows), [rows]);
-  const monthlies = useMemo(() => buildMonthlySummaries(rows), [rows]);
-  const mcc = useMemo(() => computeMCC(rows), [rows]);
+  // `benchmarks` is a real dependency: the service functions below read the
+  // baseline through getBenchmarks(), so a refreshed figure must invalidate
+  // these memos. ESLint cannot see through the module boundary.
+  /* eslint-disable react-hooks/exhaustive-deps */
+  const nudges = useMemo(() => evaluateNudges(rows), [rows, benchmarks]);
+  const monthlies = useMemo(() => buildMonthlySummaries(rows), [rows, benchmarks]);
+  const mcc = useMemo(() => computeMCC(rows), [rows, benchmarks]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   /**
    * Writes to Firestore. No local state update is needed — the onSnapshot
@@ -83,15 +99,30 @@ export default function useWasteLedger(uid) {
     [uid]
   );
 
+  /** Applies a user correction to an existing log. */
+  const editLog = useCallback(
+    async (log, patch) => {
+      if (!uid) return;
+      try {
+        await updateLog(uid, log.id, patch, log);
+      } catch (err) {
+        setError(err);
+      }
+    },
+    [uid]
+  );
+
   return {
     logs: rows,
     loading: logs === null,
     error,
     addLog,
+    editLog,
     hasLoggedToday,
     recent,
     nudges,
     monthlies,
     mcc,
+    benchmarks,
   };
 }

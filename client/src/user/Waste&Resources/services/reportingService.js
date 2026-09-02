@@ -1,4 +1,5 @@
-import { BENCHMARKS, CATEGORY_KEYS, CO2E } from "../constants/waste";
+import { CATEGORY_KEYS, CO2E } from "../constants/waste";
+import { getBenchmarks } from "./baselineService";
 import { monthKey, monthName } from "../utils/date";
 import { compositeScore, gradeFor, sumRows, variance } from "./benchmarkService";
 
@@ -32,7 +33,7 @@ export function buildMonthlySummaries(rows) {
       return {
         key: k,
         perDay,
-        benchmark: BENCHMARKS[k],
+        benchmark: getBenchmarks()[k],
         variance: variance(totals[k], days, k),
         change,
       };
@@ -52,11 +53,22 @@ export function buildMonthlySummaries(rows) {
 
 /** Malaysian Conservation Contribution — the annual headline figure. */
 export function computeMCC(rows) {
-  const days = new Set(rows.map((r) => r.iso)).size || 1;
   const totals = sumRows(rows);
 
+  // No logs means no contribution. Without this guard the `|| 1` below would
+  // credit a full day of avoided baseline to an account that has logged nothing.
+  if (rows.length === 0) {
+    const avoided = CATEGORY_KEYS.reduce((acc, k) => {
+      acc[k] = 0;
+      return acc;
+    }, {});
+    return { days: 0, totals, avoided, totalAvoided: 0, score: 0 };
+  }
+
+  const days = new Set(rows.map((r) => r.iso)).size || 1;
+
   const avoided = CATEGORY_KEYS.reduce((acc, k) => {
-    const baseline = BENCHMARKS[k] * days;
+    const baseline = getBenchmarks()[k] * days;
     acc[k] = (baseline - totals[k]) * CO2E[k]; // kg CO2e, may be negative
     return acc;
   }, {});

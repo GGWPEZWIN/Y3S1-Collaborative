@@ -66,3 +66,22 @@ export function watchPosition(onPosition, onError) {
 export function clearWatch(id) {
   if (id !== null && id !== undefined) navigator.geolocation.clearWatch(id);
 }
+
+/**
+ * One-shot position read, used to centre the nudge map. Resolves to null
+ * rather than rejecting, so callers can fall back to the lodging without
+ * treating a declined permission as an error.
+ */
+export function getCurrentPosition({ timeout = 8000 } = {}) {
+  return new Promise((resolve) => {
+    if (!isGeolocationSupported()) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: false, maximumAge: 300000, timeout }
+    );
+  });
+}

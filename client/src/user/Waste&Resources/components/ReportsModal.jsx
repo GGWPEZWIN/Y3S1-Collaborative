@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { BarChart3, ChevronLeft, ChevronRight } from "lucide-react";
 import Modal from "./Modal";
 import { CATEGORY_KEYS, CATEGORY_LABELS, CATEGORY_UNITS } from "../constants/waste";
 import { gradeTone, varianceLabel } from "../services/benchmarkService";
@@ -15,8 +15,23 @@ const TABS = [
 
 export default function ReportsModal({ monthlies, mcc, onClose }) {
   const [tab, setTab] = useState("monthly");
-  const [idx, setIdx] = useState(monthlies.length - 1);
+  const [idx, setIdx] = useState(() => Math.max(0, monthlies.length - 1));
   const m = monthlies[idx];
+
+  if (monthlies.length === 0) {
+    return (
+      <Modal title="Eco Reports" onClose={onClose} wide>
+        <div className="rounded-lg border border-dashed border-slate-300 px-6 py-12 text-center">
+          <BarChart3 size={28} className="mx-auto text-slate-400" aria-hidden="true" />
+          <p className="mt-3 text-lg font-medium">No reports yet</p>
+          <p className="mt-1 text-slate-500">
+            Monthly summaries and your conservation contribution appear once you have
+            logged a few days.
+          </p>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal title="Eco Reports" onClose={onClose} wide>
@@ -106,7 +121,7 @@ export default function ReportsModal({ monthlies, mcc, onClose }) {
                   </div>
                   <div className="mt-1.5 flex items-center justify-between text-sm">
                     <span className={better ? "text-green-600" : "text-orange-600"}>
-                      {varianceLabel(c.variance)}
+                      {varianceLabel(c.variance, c.key)}
                     </span>
                     {c.change !== null && (
                       <span className={c.change < 0 ? "text-green-600" : "text-slate-500"}>

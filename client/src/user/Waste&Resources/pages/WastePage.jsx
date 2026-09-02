@@ -14,9 +14,10 @@ import ReminderSettings from "../components/ReminderSettings";
 import useGeofenceReminder from "../hooks/useGeofenceReminder";
 
 import ScannerModal from "../components/ScannerModal";
-import ResourceLoggerModal from "../components/ResourceLoggerModal";
+import ResourceLoggerView from "../components/ResourceLoggerView";
 import ReportsModal from "../components/ReportsModal";
 import DetectionModal from "../components/DetectionModal";
+import EditLogView from "../components/EditLogView";
 
 /* ==================================================================
    MODULE 4 — WASTE & RESOURCE FOOTPRINT MANAGEMENT
@@ -36,15 +37,17 @@ function Shell({ children }) {
 
 export default function WastePage({ onNavigate = () => {} }) {
   const [active, setActive] = useState("waste");
-  const [modal, setModal] = useState(null); // scan | logger | reports
+  const [modal, setModal] = useState(null); // scan | reports
+  const [view, setView] = useState("dashboard"); // dashboard | logger | edit
   const [inspecting, setInspecting] = useState(null);
+  const [editing, setEditing] = useState(null);
   const [remindersOn, setRemindersOn] = useState(false);
   const [reminderBanner, setReminderBanner] = useState(false);
 
   const { status, user: authUser } = useAuthUser();
   const uid = authUser ? authUser.uid : null;
 
-  const { logs, loading, error, addLog, hasLoggedToday, recent, nudges, monthlies, mcc } =
+  const { logs, loading, error, addLog, editLog, hasLoggedToday, recent, nudges, monthlies, mcc } =
     useWasteLedger(uid);
 
   const handleGeofenceTrigger = useCallback(() => setReminderBanner(true), []);
@@ -57,6 +60,7 @@ export default function WastePage({ onNavigate = () => {} }) {
   const commit = useCallback(
     async (entry) => {
       setModal(null);
+      setView("dashboard");
       setReminderBanner(false);
       await addLog(entry);
     },
@@ -108,6 +112,22 @@ export default function WastePage({ onNavigate = () => {} }) {
       <div className="flex">
         <Sidebar active={active} onSelect={navigate} />
 
+        {view === "logger" ? (
+          <ResourceLoggerView onBack={() => setView("dashboard")} onCommit={commit} />
+        ) : view === "edit" && editing ? (
+          <EditLogView
+            log={editing}
+            onBack={() => {
+              setEditing(null);
+              setView("dashboard");
+            }}
+            onSave={async (log, patch) => {
+              await editLog(log, patch);
+              setEditing(null);
+              setView("dashboard");
+            }}
+          />
+        ) : (
         <main className="flex-1 px-6 lg:px-8 py-8 max-w-6xl">
           <h1 className="text-4xl font-bold tracking-tight">Waste &amp; Resource Footprint</h1>
           <p className="mt-2 text-lg text-slate-500">
@@ -145,7 +165,7 @@ export default function WastePage({ onNavigate = () => {} }) {
             <WasteStats recent={recent} />
           )}
 
-          <EntryPoints onScan={() => setModal("scan")} onLog={() => setModal("logger")} />
+          <EntryPoints onScan={() => setModal("scan")} onLog={() => setView("logger")} />
 
           {nudges.map((n) => (
             <EcoNudge key={n.id} nudge={n} />
@@ -156,6 +176,10 @@ export default function WastePage({ onNavigate = () => {} }) {
               logs={logs.slice(0, 3)}
               onOpenReports={() => setModal("reports")}
               onInspect={setInspecting}
+              onEdit={(log) => {
+                setEditing(log);
+                setView("edit");
+              }}
             />
           )}
 
@@ -166,19 +190,17 @@ export default function WastePage({ onNavigate = () => {} }) {
             distance={geofence.distance}
           />
         </main>
+        )}
       </div>
 
       {modal === "scan" && <ScannerModal onClose={() => setModal(null)} onCommit={commit} />}
-
-      {modal === "logger" && (
-        <ResourceLoggerModal onClose={() => setModal(null)} onCommit={commit} />
-      )}
 
       {modal === "reports" && (
         <ReportsModal monthlies={monthlies} mcc={mcc} onClose={() => setModal(null)} />
       )}
 
       {inspecting && <DetectionModal log={inspecting} onClose={() => setInspecting(null)} />}
+
     </div>
   );
 }

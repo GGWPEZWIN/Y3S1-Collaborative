@@ -8,14 +8,9 @@ import {
   Award,
 } from "lucide-react";
 
-/* F5 — National baseline. Per tourist, per day. */
-export const BENCHMARKS = {
-  foodWaste: 100, // g
-  plastic: 3.65, // single-use items
-  water: 90, // L
-  disposables: 2.5, // amenity items
-  showerMin: 8, // minutes
-};
+/* F5 — Baselines now live in constants/nationalBaseline.js with full
+   source attribution, and are read through services/baselineService.js
+   so the water figure can come from the data.gov.my Open API. */
 
 /* Carbon equivalence used by the MCC calculation (kg CO2e per unit). */
 export const CO2E = {
@@ -81,19 +76,8 @@ export const LODGING = {
   radiusM: 120,
 };
 
-/* F6 — Hyper-local points of interest surfaced by the nudge engine. */
-export const NUDGE_POIS = {
-  refill: [
-    { name: "Public Refill Point, Chulia Street", km: 0.6, lat: 5.4172, lng: 100.3354 },
-    { name: "Komtar Water Station", km: 1.4, lat: 5.4141, lng: 100.3299 },
-    { name: "Lobby Refill, Batu Ferringhi", km: 2.1, lat: 5.4752, lng: 100.2469 },
-  ],
-  zeroWaste: [
-    { name: "Bulk & Refill Penang, Jalan Burma", km: 1.1, lat: 5.4283, lng: 100.3181 },
-    { name: "Zero Waste Hub, Gurney Drive", km: 2.7, lat: 5.4374, lng: 100.3095 },
-    { name: "Pasar Awam Chowrasta (loose produce)", km: 0.9, lat: 5.4159, lng: 100.3312 },
-  ],
-};
+/* F6 — Nearby points of interest are now fetched live from OpenStreetMap;
+   see services/poiService.js. The former hardcoded list is gone. */
 
 export const NAV_ITEMS = [
   { id: "dashboard", path: "/dashboard", label: "Dashboard", icon: Home },
