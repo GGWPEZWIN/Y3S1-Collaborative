@@ -19,7 +19,6 @@ import Waste from "./user/Waste&Resources/pages/WastePage";
 
 // Admin module — file is named "Adminlogin.jsx" (lowercase "l") on disk,
 // import name kept capitalized (AdminLogin) purely for readability here.
-import AdminLogin from "./admin/pages/Adminlogin";
 import AdminDashboard from "./admin/AdminDashboard";
 import RequireAdmin from "./admin/RequireAdmin";
 
