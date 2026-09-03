@@ -1,256 +1,1147 @@
 import React, { useEffect, useState } from "react";
+
 import {
-  Recycle, Sprout, Bus, Droplet, Zap, Leaf, Award, TreePine,
-  Plus, Pencil, Trash2, X, ChevronLeft,
+  Plus,
+  Edit3,
+  Trash2,
+  Save,
+  Send,
+  Image as ImageIcon,
+  X,
+  Award,
+  Recycle,
+  Sprout,
+  Bus,
+  Droplet,
+  Zap,
+  Leaf,
+  TreePine,
+  Eye,
+  FileText,
 } from "lucide-react";
+
 import { useCurrentUser } from "../../firebase/useCurrentUser";
+
 import {
   listenToAchievements,
   createAchievement,
   updateAchievement,
   deleteAchievement,
+  publishAchievement,
+  uploadAchievementImage,
   CATEGORY_OPTIONS,
-  ICON_OPTIONS,
+  RULE_OPTIONS,
+  DEFAULT_ICON_OPTIONS,
+  getRandomDefaultIcon,
 } from "../../firebase/achievementService";
 
-// Maps the icon key stored in Firestore to an actual lucide-react component.
+// ============================================================
+// ICON MAP
+// ============================================================
+
 const ICON_MAP = {
-  Recycle, Sprout, Bus, Droplet, Zap, Leaf, Award, TreePine,
+  Recycle,
+  Sprout,
+  Bus,
+  Droplet,
+  Zap,
+  Leaf,
+  Award,
+  TreePine,
 };
 
-const emptyForm = { title: "", description: "", category: CATEGORY_OPTIONS[0], icon: ICON_OPTIONS[0], points: 100 };
+// ============================================================
+// DEFAULT FORM
+// ============================================================
 
-/**
- * Admin CRUD page for the achievement catalog (definitions), not per-user
- * earned records. Wire this up behind your admin route/guard, e.g.:
- *   <AdminAchievementsPage onNavigate={onNavigate} />
- *
- * If you have a `role` field on the user's profile doc, gate this route
- * with something like `profile?.role === "admin"` before rendering it —
- * this component itself does not check that.
- */
-export default function AdminAchievementsPage({ onNavigate }) {
-  const { profile } = useCurrentUser();
+const EMPTY_FORM = {
+  title: "",
+  description: "",
+  category: "Eco Travel",
+  points: 100,
+  ruleType: "trips_completed",
+  ruleTarget: 1,
+  ruleUnit: "trips",
+  icon: "",
+  iconUrl: "",
+};
+
+// ============================================================
+// COMPONENT
+// ============================================================
+
+export default function AdminAchievementsPage() {
+  const { authUser } = useCurrentUser();
+
   const [achievements, setAchievements] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState(emptyForm);
-  const [saving, setSaving] = useState(false);
-  const [pageError, setPageError] = useState("");
 
-  const reportError = (err) => {
-    console.error(err);
-    setPageError(err?.message || "Something went wrong.");
-    setTimeout(() => setPageError(""), 6000);
-  };
+  const [showForm, setShowForm] = useState(false);
+
+  const [editingId, setEditingId] = useState(null);
+
+  const [form, setForm] = useState(EMPTY_FORM);
+
+  const [selectedFile, setSelectedFile] =
+    useState(null);
+
+  const [previewUrl, setPreviewUrl] =
+    useState("");
+
+  const [saving, setSaving] = useState(false);
+
+  const [message, setMessage] = useState("");
+
+  // ============================================================
+  // LISTEN
+  // ============================================================
 
   useEffect(() => {
-    const unsub = listenToAchievements((list) => {
-      setAchievements(list);
-      setLoading(false);
-    });
-    return unsub;
+    const unsubscribe =
+      listenToAchievements((list) => {
+        setAchievements(list);
+      });
+
+    return () => {
+      unsubscribe?.();
+    };
   }, []);
 
-  const openCreateForm = () => {
+  // ============================================================
+  // FORM CHANGE
+  // ============================================================
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+
+    setForm((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
+
+    // Automatically change unit based on rule
+    if (name === "ruleType") {
+      const selectedRule = RULE_OPTIONS.find(
+        (rule) => rule.value === value
+      );
+
+      setForm((previous) => ({
+        ...previous,
+        ruleType: value,
+        ruleUnit:
+          selectedRule?.unit || "",
+      }));
+    }
+  };
+
+  // ============================================================
+  // IMAGE SELECT
+  // ============================================================
+
+  const handleImageChange = (event) => {
+    const file =
+      event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      setMessage(
+        "Please select an image file."
+      );
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setMessage(
+        "Image must be smaller than 5 MB."
+      );
+      return;
+    }
+
+    setSelectedFile(file);
+
+    const localPreview =
+      URL.createObjectURL(file);
+
+    setPreviewUrl(localPreview);
+
+    setMessage("");
+  };
+
+  // ============================================================
+  // OPEN CREATE FORM
+  // ============================================================
+
+  const handleCreate = () => {
+    const randomIcon =
+      getRandomDefaultIcon();
+
     setEditingId(null);
-    setForm(emptyForm);
-    setShowForm(true);
-  };
 
-  const openEditForm = (achievement) => {
-    setEditingId(achievement.id);
     setForm({
-      title: achievement.title,
-      description: achievement.description || "",
-      category: achievement.category,
-      icon: achievement.icon,
-      points: achievement.points,
+      ...EMPTY_FORM,
+      icon: randomIcon,
     });
+
+    setSelectedFile(null);
+    setPreviewUrl("");
+    setMessage("");
+
     setShowForm(true);
   };
 
-  const closeForm = () => {
+  // ============================================================
+  // OPEN EDIT FORM
+  // ============================================================
+
+  const handleEdit = (achievement) => {
+    setEditingId(achievement.id);
+
+    setForm({
+      title: achievement.title || "",
+
+      description:
+        achievement.description || "",
+
+      category:
+        achievement.category ||
+        "Eco Travel",
+
+      points:
+        achievement.points ?? 100,
+
+      ruleType:
+        achievement.ruleType ||
+        "trips_completed",
+
+      ruleTarget:
+        achievement.ruleTarget ?? 1,
+
+      ruleUnit:
+        achievement.ruleUnit || "trips",
+
+      icon:
+        achievement.icon ||
+        getRandomDefaultIcon(),
+
+      iconUrl:
+        achievement.iconUrl || "",
+    });
+
+    setSelectedFile(null);
+
+    setPreviewUrl(
+      achievement.iconUrl || ""
+    );
+
+    setMessage("");
+
+    setShowForm(true);
+  };
+
+  // ============================================================
+  // CLOSE FORM
+  // ============================================================
+
+  const handleClose = () => {
+    if (saving) {
+      return;
+    }
+
     setShowForm(false);
     setEditingId(null);
-    setForm(emptyForm);
+    setSelectedFile(null);
+    setPreviewUrl("");
+    setMessage("");
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSaving(true);
+  // ============================================================
+  // SAVE
+  // ============================================================
+
+  const handleSave = async (status) => {
+    if (!form.title.trim()) {
+      setMessage(
+        "Please enter an achievement title."
+      );
+      return;
+    }
+
+    if (!form.description.trim()) {
+      setMessage(
+        "Please enter an achievement description."
+      );
+      return;
+    }
+
+    if (
+      !form.ruleTarget ||
+      Number(form.ruleTarget) < 1
+    ) {
+      setMessage(
+        "Rule target must be at least 1."
+      );
+      return;
+    }
+
     try {
-      if (editingId) {
-        await updateAchievement(editingId, form);
-      } else {
-        await createAchievement(form);
+      setSaving(true);
+      setMessage("");
+
+      let finalIconUrl =
+        form.iconUrl || "";
+
+      // Upload new image if selected
+      if (selectedFile) {
+        finalIconUrl =
+          await uploadAchievementImage(
+            selectedFile
+          );
       }
-      closeForm();
-    } catch (err) {
-      reportError(err);
+
+      const data = {
+        title: form.title,
+        description: form.description,
+        category: form.category,
+        points: Number(form.points) || 0,
+        ruleType: form.ruleType,
+        ruleTarget:
+          Number(form.ruleTarget) || 1,
+        ruleUnit: form.ruleUnit,
+        icon:
+          form.icon ||
+          getRandomDefaultIcon(),
+        iconUrl: finalIconUrl,
+        status,
+      };
+
+      if (editingId) {
+        await updateAchievement(
+          editingId,
+          data
+        );
+      } else {
+        await createAchievement({
+          ...data,
+          createdBy:
+            authUser?.uid || null,
+        });
+      }
+
+      setMessage(
+        status === "published"
+          ? "Achievement published successfully."
+          : "Achievement saved as draft."
+      );
+
+      setShowForm(false);
+      setEditingId(null);
+      setSelectedFile(null);
+      setPreviewUrl("");
+    } catch (error) {
+      console.error(
+        "Failed to save achievement:",
+        error
+      );
+
+      setMessage(
+        error?.message ||
+          "Failed to save achievement."
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (achievement) => {
-    const confirmed = window.confirm(`Delete "${achievement.title}"? This can't be undone.`);
-    if (!confirmed) return;
+  // ============================================================
+  // PUBLISH
+  // ============================================================
+
+  const handlePublish = async (
+    achievement
+  ) => {
+    const confirmed = window.confirm(
+      `Publish "${achievement.title}"?\n\nOnce published, users will be able to see this achievement.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
     try {
-      await deleteAchievement(achievement.id);
-    } catch (err) {
-      reportError(err);
+      await publishAchievement(
+        achievement.id
+      );
+
+      setMessage(
+        "Achievement published successfully."
+      );
+    } catch (error) {
+      console.error(error);
+
+      setMessage(
+        "Failed to publish achievement."
+      );
     }
   };
 
+  // ============================================================
+  // DELETE
+  // ============================================================
+
+  const handleDelete = async (
+    achievement
+  ) => {
+    const confirmed = window.confirm(
+      `Delete "${achievement.title}"?\n\nThis action cannot be undone.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await deleteAchievement(
+        achievement.id,
+        achievement.iconUrl || ""
+      );
+
+      setMessage(
+        "Achievement deleted."
+      );
+    } catch (error) {
+      console.error(error);
+
+      setMessage(
+        "Failed to delete achievement."
+      );
+    }
+  };
+
+  // ============================================================
+  // RENDER
+  // ============================================================
+
   return (
     <div style={styles.page}>
+      {/* HEADER */}
+
       <div style={styles.header}>
-        {onNavigate && (
-          <button type="button" onClick={() => onNavigate(-1)} style={styles.backBtn}>
-            <ChevronLeft size={20} />
-          </button>
-        )}
         <div>
-          <div style={styles.headerTitle}>Manage Achievements</div>
-          <div style={styles.headerSubtitle}>{achievements.length} achievement{achievements.length !== 1 ? "s" : ""} in catalog</div>
+          <h1 style={styles.title}>
+            Achievements
+          </h1>
+
+          <p style={styles.subtitle}>
+            Create, manage and publish
+            achievements for users.
+          </p>
         </div>
-        <button type="button" onClick={openCreateForm} style={styles.addBtn}>
-          <Plus size={16} />
-          New Achievement
+
+        <button
+          type="button"
+          onClick={handleCreate}
+          style={styles.addButton}
+        >
+          <Plus size={17} />
+          Create Achievement
         </button>
       </div>
 
-      {pageError && <div style={styles.errorBanner}>⚠️ {pageError}</div>}
+      {/* MESSAGE */}
 
-      {loading ? (
-        <p style={styles.emptyText}>Loading achievements...</p>
-      ) : achievements.length === 0 ? (
-        <p style={styles.emptyText}>No achievements yet — create one to get started.</p>
-      ) : (
-        <div style={styles.grid}>
-          {achievements.map((a) => {
-            const Icon = ICON_MAP[a.icon] || Award;
-            return (
-              <div key={a.id} style={styles.card}>
-                <div style={styles.cardIconWrap}>
-                  <Icon size={28} color="#16a34a" />
-                </div>
-                <div style={styles.cardTitle}>{a.title}</div>
-                <div style={styles.cardCategory}>{a.category}</div>
-                {a.description && <div style={styles.cardDescription}>{a.description}</div>}
-                <div style={styles.cardPoints}>+{a.points} pts</div>
-                <div style={styles.cardActions}>
-                  <button type="button" onClick={() => openEditForm(a)} style={styles.cardActionBtn}>
-                    <Pencil size={14} />
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(a)}
-                    style={{ ...styles.cardActionBtn, color: "#b91c1c" }}
-                  >
-                    <Trash2 size={14} />
-                    Delete
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+      {message && (
+        <div style={styles.message}>
+          {message}
         </div>
       )}
 
+      {/* ACHIEVEMENT LIST */}
+
+      <div style={styles.list}>
+        {achievements.length === 0 ? (
+          <div style={styles.empty}>
+            <Award
+              size={40}
+              color="#9ca3af"
+            />
+
+            <div style={styles.emptyTitle}>
+              No achievements yet
+            </div>
+
+            <div style={styles.emptyText}>
+              Create your first achievement.
+            </div>
+          </div>
+        ) : (
+          achievements.map(
+            (achievement) => {
+              const Icon =
+                ICON_MAP[
+                  achievement.icon
+                ] || Award;
+
+              const isDraft =
+                achievement.status !==
+                "published";
+
+              return (
+                <div
+                  key={achievement.id}
+                  style={styles.achievementCard}
+                >
+                  {/* ICON */}
+
+                  <div style={styles.imageWrap}>
+                    {achievement.iconUrl ? (
+                      <img
+                        src={
+                          achievement.iconUrl
+                        }
+                        alt={
+                          achievement.title
+                        }
+                        style={styles.image}
+                      />
+                    ) : (
+                      <Icon
+                        size={30}
+                        color="#16a34a"
+                      />
+                    )}
+                  </div>
+
+                  {/* CONTENT */}
+
+                  <div
+                    style={
+                      styles.achievementContent
+                    }
+                  >
+                    <div
+                      style={
+                        styles.achievementTop
+                      }
+                    >
+                      <div>
+                        <div
+                          style={
+                            styles.achievementTitle
+                          }
+                        >
+                          {achievement.title}
+                        </div>
+
+                        <div
+                          style={
+                            styles.achievementCategory
+                          }
+                        >
+                          {achievement.category}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          ...styles.status,
+                          ...(isDraft
+                            ? styles.draftStatus
+                            : styles.publishedStatus),
+                        }}
+                      >
+                        {isDraft ? (
+                          <>
+                            <FileText
+                              size={12}
+                            />
+                            Draft
+                          </>
+                        ) : (
+                          <>
+                            <Eye
+                              size={12}
+                            />
+                            Published
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <p
+                      style={
+                        styles.description
+                      }
+                    >
+                      {
+                        achievement.description
+                      }
+                    </p>
+
+                    {/* RULE */}
+
+                    <div
+                      style={
+                        styles.ruleBox
+                      }
+                    >
+                      <strong>
+                        Requirement:
+                      </strong>{" "}
+                      {getRuleText(
+                        achievement
+                      )}
+                    </div>
+
+                    <div
+                      style={
+                        styles.pointsText
+                      }
+                    >
+                      +{achievement.points || 0}{" "}
+                      points
+                    </div>
+                  </div>
+
+                  {/* ACTIONS */}
+
+                  <div
+                    style={
+                      styles.actions
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleEdit(
+                          achievement
+                        )
+                      }
+                      style={
+                        styles.editButton
+                      }
+                    >
+                      <Edit3
+                        size={15}
+                      />
+                      Edit
+                    </button>
+
+                    {isDraft && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handlePublish(
+                            achievement
+                          )
+                        }
+                        style={
+                          styles.publishButton
+                        }
+                      >
+                        <Send
+                          size={15}
+                        />
+                        Publish
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleDelete(
+                          achievement
+                        )
+                      }
+                      style={
+                        styles.deleteButton
+                      }
+                    >
+                      <Trash2
+                        size={15}
+                      />
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+          )
+        )}
+      </div>
+
+      {/* CREATE / EDIT MODAL */}
+
       {showForm && (
-        <div style={styles.modalOverlay} onClick={closeForm}>
-          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.modalHeader}>
-              <div style={styles.modalTitle}>{editingId ? "Edit Achievement" : "New Achievement"}</div>
-              <button type="button" onClick={closeForm} style={styles.modalCloseBtn}>
-                <X size={18} />
+        <div
+          style={styles.overlay}
+          onMouseDown={(event) => {
+            if (
+              event.target ===
+              event.currentTarget
+            ) {
+              handleClose();
+            }
+          }}
+        >
+          <div style={styles.modal}>
+            {/* MODAL HEADER */}
+
+            <div
+              style={
+                styles.modalHeader
+              }
+            >
+              <div>
+                <div
+                  style={
+                    styles.modalTitle
+                  }
+                >
+                  {editingId
+                    ? "Edit Achievement"
+                    : "Create Achievement"}
+                </div>
+
+                <div
+                  style={
+                    styles.modalSubtitle
+                  }
+                >
+                  Configure the achievement
+                  and its unlock rule.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleClose}
+                style={
+                  styles.closeButton
+                }
+              >
+                <X size={19} />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} style={styles.form}>
+            {/* FORM */}
+
+            <div style={styles.form}>
+              {/* TITLE */}
+
               <label style={styles.label}>
-                Title
+                Achievement Name
+
                 <input
-                  type="text"
+                  name="title"
                   value={form.title}
-                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                  onChange={handleChange}
+                  placeholder="e.g. First Eco Trip"
                   style={styles.input}
-                  required
                 />
               </label>
+
+              {/* DESCRIPTION */}
 
               <label style={styles.label}>
                 Description
+
                 <textarea
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  style={{ ...styles.input, minHeight: 70, resize: "vertical" }}
+                  name="description"
+                  value={
+                    form.description
+                  }
+                  onChange={handleChange}
+                  placeholder="e.g. Complete your first sustainable trip."
+                  rows={3}
+                  style={
+                    styles.textarea
+                  }
                 />
               </label>
+
+              {/* CATEGORY */}
 
               <label style={styles.label}>
                 Category
+
                 <select
+                  name="category"
                   value={form.category}
-                  onChange={(e) => setForm({ ...form, category: e.target.value })}
+                  onChange={handleChange}
                   style={styles.input}
                 >
-                  {CATEGORY_OPTIONS.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
+                  {CATEGORY_OPTIONS.map(
+                    (category) => (
+                      <option
+                        key={category}
+                        value={category}
+                      >
+                        {category}
+                      </option>
+                    )
+                  )}
                 </select>
               </label>
 
-              <label style={styles.label}>
-                Icon
-                <div style={styles.iconGrid}>
-                  {ICON_OPTIONS.map((key) => {
-                    const Icon = ICON_MAP[key];
-                    const selected = form.icon === key;
-                    return (
-                      <button
-                        type="button"
-                        key={key}
-                        onClick={() => setForm({ ...form, icon: key })}
-                        style={{
-                          ...styles.iconOption,
-                          borderColor: selected ? "#16a34a" : "#e5e7eb",
-                          background: selected ? "#dcfce7" : "#fff",
-                        }}
-                        title={key}
-                      >
-                        <Icon size={20} color={selected ? "#15803d" : "#6b7280"} />
-                      </button>
-                    );
-                  })}
+              {/* RULE */}
+
+              <div style={styles.ruleSection}>
+                <div
+                  style={
+                    styles.ruleTitle
+                  }
+                >
+                  Unlock Rule
                 </div>
-              </label>
+
+                <div
+                  style={
+                    styles.ruleGrid
+                  }
+                >
+                  <label
+                    style={styles.label}
+                  >
+                    Rule
+
+                    <select
+                      name="ruleType"
+                      value={
+                        form.ruleType
+                      }
+                      onChange={
+                        handleChange
+                      }
+                      style={
+                        styles.input
+                      }
+                    >
+                      {RULE_OPTIONS.map(
+                        (rule) => (
+                          <option
+                            key={
+                              rule.value
+                            }
+                            value={
+                              rule.value
+                            }
+                          >
+                            {rule.label}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </label>
+
+                  <label
+                    style={styles.label}
+                  >
+                    Target
+
+                    <input
+                      type="number"
+                      name="ruleTarget"
+                      min="1"
+                      value={
+                        form.ruleTarget
+                      }
+                      onChange={
+                        handleChange
+                      }
+                      style={
+                        styles.input
+                      }
+                    />
+                  </label>
+
+                  <label
+                    style={styles.label}
+                  >
+                    Unit
+
+                    <input
+                      name="ruleUnit"
+                      value={
+                        form.ruleUnit
+                      }
+                      onChange={
+                        handleChange
+                      }
+                      style={
+                        styles.input
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div
+                  style={
+                    styles.ruleExample
+                  }
+                >
+                  Example:{" "}
+                  <strong>
+                    {getRuleText({
+                      ruleType:
+                        form.ruleType,
+                      ruleTarget:
+                        form.ruleTarget,
+                      ruleUnit:
+                        form.ruleUnit,
+                    })}
+                  </strong>
+                </div>
+              </div>
+
+              {/* POINTS */}
 
               <label style={styles.label}>
-                Points
+                Reward Points
+
                 <input
                   type="number"
+                  name="points"
                   min="0"
                   value={form.points}
-                  onChange={(e) => setForm({ ...form, points: e.target.value })}
+                  onChange={handleChange}
                   style={styles.input}
-                  required
                 />
               </label>
 
-              <div style={styles.formActions}>
-                <button type="button" onClick={closeForm} style={styles.cancelBtn}>
-                  Cancel
+              {/* ICON */}
+
+              <div style={styles.iconSection}>
+                <div
+                  style={
+                    styles.iconSectionTitle
+                  }
+                >
+                  Achievement Icon
+                </div>
+
+                <div
+                  style={
+                    styles.iconUploadRow
+                  }
+                >
+                  {/* PREVIEW */}
+
+                  <div
+                    style={
+                      styles.largePreview
+                    }
+                  >
+                    {previewUrl ? (
+                      <img
+                        src={previewUrl}
+                        alt="Preview"
+                        style={
+                          styles.previewImage
+                        }
+                      />
+                    ) : (
+                      (() => {
+                        const Icon =
+                          ICON_MAP[
+                            form.icon
+                          ] || Award;
+
+                        return (
+                          <Icon
+                            size={34}
+                            color="#16a34a"
+                          />
+                        );
+                      })()
+                    )}
+                  </div>
+
+                  {/* UPLOAD */}
+
+                  <div
+                    style={
+                      styles.uploadControls
+                    }
+                  >
+                    <label
+                      htmlFor="achievement-image"
+                      style={
+                        styles.uploadButton
+                      }
+                    >
+                      <ImageIcon
+                        size={16}
+                      />
+                      Upload Image
+                    </label>
+
+                    <input
+                      id="achievement-image"
+                      type="file"
+                      accept="image/*"
+                      onChange={
+                        handleImageChange
+                      }
+                      style={
+                        styles.hiddenInput
+                      }
+                    />
+
+                    <div
+                      style={
+                        styles.uploadHint
+                      }
+                    >
+                      JPG, PNG, WEBP
+                      <br />
+                      Maximum 5 MB
+                    </div>
+
+                    {selectedFile && (
+                      <div
+                        style={
+                          styles.fileName
+                        }
+                      >
+                        {selectedFile.name}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* DEFAULT ICON */}
+
+                <div
+                  style={
+                    styles.defaultIconTitle
+                  }
+                >
+                  Or use a default icon
+                </div>
+
+                <div
+                  style={
+                    styles.iconGrid
+                  }
+                >
+                  {DEFAULT_ICON_OPTIONS.map(
+                    (iconName) => {
+                      const Icon =
+                        ICON_MAP[
+                          iconName
+                        ];
+
+                      const selected =
+                        !selectedFile &&
+                        form.icon ===
+                          iconName &&
+                        !form.iconUrl;
+
+                      return (
+                        <button
+                          type="button"
+                          key={iconName}
+                          onClick={() => {
+                            setSelectedFile(
+                              null
+                            );
+
+                            setPreviewUrl(
+                              ""
+                            );
+
+                            setForm(
+                              (
+                                previous
+                              ) => ({
+                                ...previous,
+                                icon: iconName,
+                                iconUrl:
+                                  "",
+                              })
+                            );
+                          }}
+                          style={{
+                            ...styles.iconButton,
+                            ...(selected
+                              ? styles.selectedIconButton
+                              : {}),
+                          }}
+                        >
+                          <Icon
+                            size={20}
+                          />
+                        </button>
+                      );
+                    }
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* FOOTER */}
+
+            <div
+              style={
+                styles.modalFooter
+              }
+            >
+              <button
+                type="button"
+                onClick={handleClose}
+                disabled={saving}
+                style={
+                  styles.cancelButton
+                }
+              >
+                Cancel
+              </button>
+
+              <div
+                style={
+                  styles.footerRight
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSave(
+                      "draft"
+                    )
+                  }
+                  disabled={saving}
+                  style={
+                    styles.draftButton
+                  }
+                >
+                  <Save size={15} />
+
+                  {saving
+                    ? "Saving..."
+                    : "Save Draft"}
                 </button>
-                <button type="submit" disabled={saving} style={styles.saveBtn}>
-                  {saving ? "Saving..." : editingId ? "Save Changes" : "Create Achievement"}
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSave(
+                      "published"
+                    )
+                  }
+                  disabled={saving}
+                  style={
+                    styles.publishMainButton
+                  }
+                >
+                  <Send size={15} />
+
+                  {saving
+                    ? "Publishing..."
+                    : "Publish"}
                 </button>
               </div>
-            </form>
+            </div>
           </div>
         </div>
       )}
@@ -258,174 +1149,553 @@ export default function AdminAchievementsPage({ onNavigate }) {
   );
 }
 
+// ============================================================
+// RULE TEXT
+// ============================================================
+
+function getRuleText(achievement) {
+  const target =
+    Number(
+      achievement.ruleTarget
+    ) || 1;
+
+  const unit =
+    achievement.ruleUnit || "";
+
+  switch (
+    achievement.ruleType
+  ) {
+    case "trips_completed":
+      if (target === 1) {
+        return "Complete your first trip";
+      }
+
+      return `Complete ${target} ${unit}`;
+
+    case "eco_score":
+      return `Reach ${target} ${unit}`;
+
+    case "challenges_completed":
+      return `Complete ${target} ${unit}`;
+
+    default:
+      return `Reach ${target} ${unit}`;
+  }
+}
+
+// ============================================================
+// STYLES
+// ============================================================
+
 const styles = {
   page: {
-    minHeight: "100vh",
-    background: "#f9fafb",
-    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-    padding: "20px 24px 60px",
+    width: "100%",
   },
+
   header: {
     display: "flex",
+    justifyContent: "space-between",
     alignItems: "center",
-    gap: 14,
     marginBottom: 24,
   },
-  backBtn: {
+
+  title: {
+    margin: 0,
+    fontSize: 24,
+    fontWeight: 800,
+    color: "#111827",
+  },
+
+  subtitle: {
+    margin: "5px 0 0",
+    color: "#6b7280",
+    fontSize: 13.5,
+  },
+
+  addButton: {
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
     border: "none",
-    background: "#f3f4f6",
     borderRadius: 10,
-    width: 36,
-    height: 36,
+    padding: "10px 15px",
+    background: "#16a34a",
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
+  message: {
+    marginBottom: 16,
+    padding: "11px 14px",
+    borderRadius: 10,
+    background: "#f0fdf4",
+    border: "1px solid #bbf7d0",
+    color: "#166534",
+    fontSize: 13,
+    fontWeight: 600,
+  },
+
+  list: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+
+  empty: {
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 15,
+    padding: 50,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  emptyTitle: {
+    marginTop: 12,
+    fontWeight: 800,
+    color: "#374151",
+  },
+
+  emptyText: {
+    marginTop: 5,
+    fontSize: 13,
+    color: "#9ca3af",
+  },
+
+  achievementCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 16,
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 15,
+    padding: 16,
+  },
+
+  imageWrap: {
+    width: 58,
+    height: 58,
+    flexShrink: 0,
+    borderRadius: 14,
+    background: "#dcfce7",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+
+  image: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+  },
+
+  achievementContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  achievementTop: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    justifyContent: "space-between",
+  },
+
+  achievementTitle: {
+    fontSize: 15,
+    fontWeight: 800,
+    color: "#111827",
+  },
+
+  achievementCategory: {
+    marginTop: 3,
+    color: "#16a34a",
+    fontSize: 10.5,
+    fontWeight: 800,
+    textTransform: "uppercase",
+  },
+
+  status: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "5px 9px",
+    borderRadius: 999,
+    fontSize: 10.5,
+    fontWeight: 800,
+    flexShrink: 0,
+  },
+
+  draftStatus: {
+    background: "#fef3c7",
+    color: "#92400e",
+  },
+
+  publishedStatus: {
+    background: "#dcfce7",
+    color: "#15803d",
+  },
+
+  description: {
+    margin: "7px 0",
+    color: "#6b7280",
+    fontSize: 12.5,
+  },
+
+  ruleBox: {
+    display: "inline-block",
+    padding: "5px 8px",
+    borderRadius: 7,
+    background: "#f9fafb",
+    border: "1px solid #f3f4f6",
+    color: "#6b7280",
+    fontSize: 11.5,
+  },
+
+  pointsText: {
+    marginTop: 6,
+    color: "#111827",
+    fontSize: 11.5,
+    fontWeight: 800,
+  },
+
+  actions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    flexShrink: 0,
+  },
+
+  editButton: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    color: "#374151",
+    borderRadius: 8,
+    padding: "8px 10px",
+    fontSize: 11.5,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
+  publishButton: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    border: "none",
+    background: "#16a34a",
+    color: "#fff",
+    borderRadius: 8,
+    padding: "8px 10px",
+    fontSize: 11.5,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
+  deleteButton: {
+    width: 34,
+    height: 34,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #fecaca",
+    background: "#fff",
+    color: "#dc2626",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+
+  overlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+    zIndex: 1000,
+  },
+
+  modal: {
+    width: "100%",
+    maxWidth: 720,
+    maxHeight: "90vh",
+    overflowY: "auto",
+    background: "#fff",
+    borderRadius: 18,
+    boxShadow:
+      "0 25px 60px rgba(0,0,0,0.2)",
+  },
+
+  modalHeader: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    padding: "20px 22px",
+    borderBottom: "1px solid #f3f4f6",
+  },
+
+  modalTitle: {
+    fontSize: 19,
+    fontWeight: 800,
+    color: "#111827",
+  },
+
+  modalSubtitle: {
+    marginTop: 4,
+    fontSize: 12.5,
+    color: "#9ca3af",
+  },
+
+  closeButton: {
+    width: 34,
+    height: 34,
+    border: "none",
+    borderRadius: 8,
+    background: "#f3f4f6",
+    color: "#6b7280",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     cursor: "pointer",
-    color: "#374151",
   },
-  headerTitle: { fontSize: 20, fontWeight: 800, color: "#111827" },
-  headerSubtitle: { fontSize: 13, color: "#9ca3af" },
-  addBtn: {
-    marginLeft: "auto",
+
+  form: {
+    padding: 22,
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+  },
+
+  label: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    color: "#374151",
+    fontSize: 12,
+    fontWeight: 700,
+  },
+
+  input: {
+    width: "100%",
+    boxSizing: "border-box",
+    border: "1px solid #d1d5db",
+    borderRadius: 9,
+    padding: "10px 11px",
+    outline: "none",
+    color: "#111827",
+    background: "#fff",
+    fontSize: 13,
+  },
+
+  textarea: {
+    width: "100%",
+    boxSizing: "border-box",
+    border: "1px solid #d1d5db",
+    borderRadius: 9,
+    padding: "10px 11px",
+    outline: "none",
+    color: "#111827",
+    resize: "vertical",
+    fontSize: 13,
+    fontFamily: "inherit",
+  },
+
+  ruleSection: {
+    padding: 14,
+    borderRadius: 12,
+    background: "#f9fafb",
+    border: "1px solid #e5e7eb",
+  },
+
+  ruleTitle: {
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#111827",
+    marginBottom: 10,
+  },
+
+  ruleGrid: {
+    display: "grid",
+    gridTemplateColumns:
+      "1.5fr 0.7fr 1fr",
+    gap: 10,
+  },
+
+  ruleExample: {
+    marginTop: 10,
+    padding: "8px 10px",
+    borderRadius: 8,
+    background: "#f0fdf4",
+    color: "#166534",
+    fontSize: 11.5,
+  },
+
+  iconSection: {
+    borderTop: "1px solid #f3f4f6",
+    paddingTop: 16,
+  },
+
+  iconSectionTitle: {
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#111827",
+    marginBottom: 10,
+  },
+
+  iconUploadRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+  },
+
+  largePreview: {
+    width: 72,
+    height: 72,
+    borderRadius: 16,
+    background: "#dcfce7",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    flexShrink: 0,
+  },
+
+  previewImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+  },
+
+  uploadControls: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 5,
+  },
+
+  uploadButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    width: "fit-content",
+    padding: "9px 12px",
+    borderRadius: 8,
+    background: "#111827",
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
+  hiddenInput: {
+    display: "none",
+  },
+
+  uploadHint: {
+    color: "#9ca3af",
+    fontSize: 10.5,
+    lineHeight: 1.4,
+  },
+
+  fileName: {
+    color: "#16a34a",
+    fontSize: 10.5,
+    maxWidth: 350,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
+  defaultIconTitle: {
+    marginTop: 15,
+    marginBottom: 8,
+    color: "#6b7280",
+    fontSize: 11.5,
+    fontWeight: 700,
+  },
+
+  iconGrid: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 9,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    color: "#6b7280",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
+
+  selectedIconButton: {
+    background: "#dcfce7",
+    border:
+      "2px solid #22c55e",
+    color: "#15803d",
+  },
+
+  modalFooter: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "16px 22px",
+    borderTop: "1px solid #f3f4f6",
+  },
+
+  cancelButton: {
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    color: "#6b7280",
+    borderRadius: 9,
+    padding: "9px 13px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
+  footerRight: {
+    display: "flex",
+    gap: 8,
+  },
+
+  draftButton: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    border: "1px solid #d1d5db",
+    background: "#fff",
+    color: "#374151",
+    borderRadius: 9,
+    padding: "9px 13px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
+  publishMainButton: {
     display: "flex",
     alignItems: "center",
     gap: 6,
     border: "none",
     background: "#16a34a",
     color: "#fff",
-    fontWeight: 700,
-    fontSize: 13.5,
-    borderRadius: 10,
-    padding: "10px 16px",
-    cursor: "pointer",
-  },
-  emptyText: { textAlign: "center", color: "#9ca3af", fontSize: 14, marginTop: 60 },
-  errorBanner: {
-    textAlign: "center",
-    fontSize: 13,
-    color: "#b91c1c",
-    fontWeight: 600,
-    padding: "10px 16px",
-    background: "#fee2e2",
-    borderRadius: 10,
-    marginBottom: 20,
-  },
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
-    gap: 16,
-  },
-  card: {
-    background: "#fff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 16,
-    padding: 18,
-    display: "flex",
-    flexDirection: "column",
-    gap: 4,
-  },
-  cardIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    background: "#f0fdf4",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 8,
-  },
-  cardTitle: { fontSize: 15.5, fontWeight: 800, color: "#111827" },
-  cardCategory: { fontSize: 12, fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: 0.4 },
-  cardDescription: { fontSize: 13, color: "#6b7280", marginTop: 4, lineHeight: 1.4 },
-  cardPoints: { fontSize: 13, fontWeight: 700, color: "#111827", marginTop: 8 },
-  cardActions: { display: "flex", gap: 8, marginTop: 12 },
-  cardActionBtn: {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    border: "1px solid #e5e7eb",
-    background: "#fff",
-    borderRadius: 8,
-    padding: "6px 10px",
-    fontSize: 12.5,
-    fontWeight: 600,
-    color: "#374151",
-    cursor: "pointer",
-  },
-  modalOverlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(0,0,0,0.4)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 50,
-    padding: 20,
-  },
-  modal: {
-    background: "#fff",
-    borderRadius: 16,
-    width: "100%",
-    maxWidth: 440,
-    maxHeight: "90vh",
-    overflowY: "auto",
-    padding: 22,
-  },
-  modalHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
-  modalTitle: { fontSize: 17, fontWeight: 800, color: "#111827" },
-  modalCloseBtn: {
-    border: "none",
-    background: "#f3f4f6",
-    borderRadius: 8,
-    width: 30,
-    height: 30,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-    color: "#374151",
-  },
-  form: { display: "flex", flexDirection: "column", gap: 14 },
-  label: { display: "flex", flexDirection: "column", gap: 6, fontSize: 13, fontWeight: 700, color: "#374151" },
-  input: {
-    border: "1px solid #e5e7eb",
-    borderRadius: 10,
-    padding: "10px 12px",
-    fontSize: 14,
-    fontWeight: 500,
-    color: "#111827",
-    outline: "none",
-    fontFamily: "inherit",
-  },
-  iconGrid: { display: "flex", flexWrap: "wrap", gap: 8 },
-  iconOption: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
-    border: "2px solid #e5e7eb",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-  },
-  formActions: { display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 },
-  cancelBtn: {
-    border: "1px solid #e5e7eb",
-    background: "#fff",
-    borderRadius: 10,
-    padding: "10px 18px",
-    fontSize: 13.5,
-    fontWeight: 700,
-    color: "#374151",
-    cursor: "pointer",
-  },
-  saveBtn: {
-    border: "none",
-    background: "#16a34a",
-    color: "#fff",
-    borderRadius: 10,
-    padding: "10px 18px",
-    fontSize: 13.5,
+    borderRadius: 9,
+    padding: "9px 14px",
+    fontSize: 12,
     fontWeight: 700,
     cursor: "pointer",
   },

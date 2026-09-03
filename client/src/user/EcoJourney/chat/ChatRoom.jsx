@@ -10,6 +10,7 @@ import {
   sendVoiceMessage,
   toggleMuteChat,
   deleteConversation,
+  markChatAsRead,
 } from "../../../firebase/chatService";
 
 /**
@@ -65,6 +66,23 @@ export default function ChatRoom({ chatId, onNavigate }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+  if (!chatId || !authUser?.uid) return;
+
+  markChatAsRead(
+    chatId,
+    authUser.uid
+  ).catch((err) => {
+    console.error(
+      "Failed to mark chat as read:",
+      err
+    );
+  });
+}, [
+  chatId,
+  authUser?.uid,
+]);
 
   const handleSend = async (e) => {
     e.preventDefault();

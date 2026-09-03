@@ -1,7 +1,24 @@
 import React, { useState } from "react";
-import { ChevronLeft, LogOut, Leaf, Award, Calendar, Mail, Lock, Pencil, X, Check, Trash2, AlertTriangle } from "lucide-react";
+
+import {
+  ChevronLeft,
+  LogOut,
+  Leaf,
+  Award,
+  Calendar,
+  Mail,
+  Lock,
+  Pencil,
+  X,
+  Check,
+  Trash2,
+  AlertTriangle,
+} from "lucide-react";
+
 import Layout from "../../../shared/components/Layout";
+
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
+
 import {
   logoutUser,
   updateUserName,
@@ -16,416 +33,1013 @@ const DELETE_PHRASE = "DELETE";
 
 function formatDate(timestamp) {
   if (!timestamp?.toDate) return "—";
-  return timestamp.toDate().toLocaleDateString("en-MY", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
+
+  return timestamp.toDate().toLocaleDateString(
+    "en-MY",
+    {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }
+  );
 }
 
-// Which field is currently being edited: null | "name" | "email" | "password"
 export default function Profile({ onNavigate }) {
-  const { authUser, profile, loading } = useCurrentUser();
-  const [loggingOut, setLoggingOut] = useState(false);
 
-  const [editing, setEditing] = useState(null);
-  const [nameInput, setNameInput] = useState("");
-  const [emailInput, setEmailInput] = useState("");
-  const [passwordInput, setPasswordInput] = useState("");
-  const [currentPasswordInput, setCurrentPasswordInput] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [fieldError, setFieldError] = useState("");
-  const [successToast, setSuccessToast] = useState("");
+  const {
+    authUser,
+    profile,
+    loading,
+  } = useCurrentUser();
 
-  // Delete-account modal state, kept separate from the edit-field state
-  // above since it's a standalone destructive flow, not another field.
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [deleteConfirmText, setDeleteConfirmText] = useState("");
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState("");
+  const [loggingOut, setLoggingOut] =
+    useState(false);
 
-  const openEdit = (field) => {
-    setFieldError("");
+  /*
+   * ONE EDIT MODE
+   *
+   * Instead of having 3 pencil buttons,
+   * the user clicks one "Edit Profile" button.
+   */
+  const [editingProfile, setEditingProfile] =
+    useState(false);
+
+  const [nameInput, setNameInput] =
+    useState("");
+
+  const [emailInput, setEmailInput] =
+    useState("");
+
+  const [passwordInput, setPasswordInput] =
+    useState("");
+
+  const [currentPasswordInput, setCurrentPasswordInput] =
+    useState("");
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [fieldError, setFieldError] =
+    useState("");
+
+  const [successToast, setSuccessToast] =
+    useState("");
+
+  /*
+   * DELETE MODAL
+   */
+  const [deleteModalOpen, setDeleteModalOpen] =
+    useState(false);
+
+  const [deleteConfirmText, setDeleteConfirmText] =
+    useState("");
+
+  const [deleting, setDeleting] =
+    useState(false);
+
+  const [deleteError, setDeleteError] =
+    useState("");
+
+  /*
+   * ------------------------------------------------------------
+   * OPEN EDIT PROFILE
+   * ------------------------------------------------------------
+   */
+  const openEditProfile = () => {
+
+    setNameInput(profile?.name || "");
+
+    setEmailInput(profile?.email || "");
+
+    setPasswordInput("");
+
     setCurrentPasswordInput("");
-    if (field === "name") setNameInput(profile?.name || "");
-    if (field === "email") setEmailInput(profile?.email || "");
-    if (field === "password") setPasswordInput("");
-    setEditing(field);
-  };
 
-  const closeEdit = () => {
-    setEditing(null);
     setFieldError("");
+
+    setEditingProfile(true);
   };
 
+  /*
+   * ------------------------------------------------------------
+   * CLOSE EDIT PROFILE
+   * ------------------------------------------------------------
+   */
+  const closeEditProfile = () => {
+
+    if (saving) return;
+
+    setEditingProfile(false);
+
+    setFieldError("");
+
+    setPasswordInput("");
+
+    setCurrentPasswordInput("");
+  };
+
+  /*
+   * ------------------------------------------------------------
+   * SUCCESS MESSAGE
+   * ------------------------------------------------------------
+   */
   const showSuccess = (message) => {
+
     setSuccessToast(message);
-    setTimeout(() => setSuccessToast(""), 3000);
+
+    setTimeout(() => {
+      setSuccessToast("");
+    }, 3000);
   };
 
-  const handleSaveName = async () => {
+  /*
+   * ------------------------------------------------------------
+   * SAVE PROFILE
+   * ------------------------------------------------------------
+   *
+   * Name:
+   *   no reauthentication
+   *
+   * Email:
+   *   requires current password
+   *
+   * Password:
+   *   requires current password
+   */
+  const handleSaveProfile = async () => {
+
     setFieldError("");
-    if (!nameInput.trim()) {
-      setFieldError("Name can't be empty.");
+
+    const newName =
+      nameInput.trim();
+
+    const newEmail =
+      emailInput.trim();
+
+    if (!newName) {
+      setFieldError(
+        "Name can't be empty."
+      );
       return;
     }
+
+    if (!newEmail) {
+      setFieldError(
+        "Email can't be empty."
+      );
+      return;
+    }
+
+    /*
+     * Determine whether email/password
+     * actually changed.
+     */
+    const emailChanged =
+      newEmail !==
+      (profile?.email || "");
+
+    const passwordChanged =
+      passwordInput.length > 0;
+
+    /*
+     * Email/password require current password.
+     */
+    if (
+      (emailChanged || passwordChanged) &&
+      !currentPasswordInput
+    ) {
+      setFieldError(
+        "Enter your current password to confirm email or password changes."
+      );
+      return;
+    }
+
     setSaving(true);
+
     try {
-      await updateUserName(nameInput);
-      showSuccess("Name updated.");
-      closeEdit();
+
+      /*
+       * NAME
+       */
+      if (
+        newName !==
+        (profile?.name || "")
+      ) {
+        await updateUserName(
+          newName
+        );
+      }
+
+      /*
+       * EMAIL
+       */
+      if (emailChanged) {
+
+        await reauthenticate(
+          currentPasswordInput
+        );
+
+        await updateUserEmail(
+          newEmail
+        );
+      }
+
+      /*
+       * PASSWORD
+       */
+      if (passwordChanged) {
+
+        /*
+         * If email wasn't changed,
+         * we still need to reauthenticate.
+         */
+        if (!emailChanged) {
+          await reauthenticate(
+            currentPasswordInput
+          );
+        }
+
+        await updateUserPassword(
+          passwordInput
+        );
+      }
+
+      showSuccess(
+        "Profile updated successfully."
+      );
+
+      setEditingProfile(false);
+
+      setPasswordInput("");
+
+      setCurrentPasswordInput("");
+
     } catch (err) {
-      setFieldError(friendlyAuthError(err));
+
+      setFieldError(
+        friendlyAuthError(err)
+      );
+
     } finally {
+
       setSaving(false);
     }
   };
 
-  // Email and password both require re-authentication first — Firebase
-  // rejects these changes with "auth/requires-recent-login" otherwise.
-  const handleSaveEmail = async () => {
-    setFieldError("");
-    if (!emailInput.trim()) {
-      setFieldError("Email can't be empty.");
-      return;
-    }
-    if (!currentPasswordInput) {
-      setFieldError("Enter your current password to confirm this change.");
-      return;
-    }
-    setSaving(true);
-    try {
-      await reauthenticate(currentPasswordInput);
-      await updateUserEmail(emailInput);
-      showSuccess("Email updated.");
-      closeEdit();
-    } catch (err) {
-      setFieldError(friendlyAuthError(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSavePassword = async () => {
-    setFieldError("");
-    if (!passwordInput || passwordInput.length < 6) {
-      setFieldError("New password must be at least 6 characters.");
-      return;
-    }
-    if (!currentPasswordInput) {
-      setFieldError("Enter your current password to confirm this change.");
-      return;
-    }
-    setSaving(true);
-    try {
-      await reauthenticate(currentPasswordInput);
-      await updateUserPassword(passwordInput);
-      showSuccess("Password updated.");
-      closeEdit();
-    } catch (err) {
-      setFieldError(friendlyAuthError(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
+  /*
+   * ------------------------------------------------------------
+   * LOG OUT
+   * ------------------------------------------------------------
+   */
   const handleLogout = async () => {
+
     setLoggingOut(true);
+
     try {
+
       await logoutUser();
+
       onNavigate("/login");
+
     } catch (err) {
-      alert("Failed to log out: " + err.message);
+
+      alert(
+        "Failed to log out: " +
+        err.message
+      );
+
       setLoggingOut(false);
     }
   };
 
+  /*
+   * ------------------------------------------------------------
+   * DELETE ACCOUNT MODAL
+   * ------------------------------------------------------------
+   */
   const openDeleteModal = () => {
+
     setDeleteConfirmText("");
+
     setDeleteError("");
+
     setDeleteModalOpen(true);
   };
 
   const closeDeleteModal = () => {
-    if (deleting) return; // don't let them dismiss mid-request
+
+    if (deleting) return;
+
     setDeleteModalOpen(false);
   };
 
-  // Only requires the typed confirmation phrase — no password re-auth.
-  // Note: Firebase itself may still reject deleteUser() with
-  // "auth/requires-recent-login" if the session is old, regardless of what
-  // this UI asks for; friendlyAuthError() surfaces that case with a clear
-  // message rather than failing silently.
+  /*
+   * ------------------------------------------------------------
+   * DELETE ACCOUNT
+   * ------------------------------------------------------------
+   */
   const handleDeleteAccount = async () => {
+
     setDeleteError("");
-    if (deleteConfirmText.trim().toUpperCase() !== DELETE_PHRASE) {
-      setDeleteError(`Type "${DELETE_PHRASE}" exactly to confirm.`);
+
+    if (
+      deleteConfirmText
+        .trim()
+        .toUpperCase() !==
+      DELETE_PHRASE
+    ) {
+      setDeleteError(
+        `Type "${DELETE_PHRASE}" exactly to confirm.`
+      );
+
       return;
     }
 
     setDeleting(true);
+
     try {
+
       await deleteAccount();
+
       onNavigate("/login");
+
     } catch (err) {
-      setDeleteError(friendlyAuthError(err));
+
+      setDeleteError(
+        friendlyAuthError(err)
+      );
+
       setDeleting(false);
     }
   };
 
+  /*
+   * ------------------------------------------------------------
+   * LOADING
+   * ------------------------------------------------------------
+   */
   if (loading) {
+
     return (
       <div style={styles.loadingPage}>
-        <p style={{ color: "#6b7280" }}>Loading profile...</p>
+        <p style={styles.loadingText}>
+          Loading profile...
+        </p>
       </div>
     );
   }
 
+  /*
+   * ------------------------------------------------------------
+   * NOT LOGGED IN
+   * ------------------------------------------------------------
+   */
   if (!authUser || !profile) {
+
     return (
       <div style={styles.loadingPage}>
-        <p style={{ color: "#6b7280", marginBottom: 16 }}>You're not logged in.</p>
-        <button type="button" onClick={() => onNavigate("/login")} style={styles.loginRedirectBtn}>
+
+        <p style={styles.notLoggedText}>
+          You're not logged in.
+        </p>
+
+        <button
+          type="button"
+          onClick={() =>
+            onNavigate("/login")
+          }
+          style={styles.loginRedirectBtn}
+        >
           Go to Login
         </button>
+
       </div>
     );
   }
 
-  const layoutUser = { name: profile.name, ecoScore: profile.eco_score ?? 0 };
-  const deleteConfirmValid = deleteConfirmText.trim().toUpperCase() === DELETE_PHRASE;
+  /*
+   * Layout receives these as fallback values.
+   * Layout itself also listens directly to
+   * users/{uid}, so the profile picture stays live.
+   */
+  const layoutUser = {
+    name: profile.name,
+    ecoScore:
+      profile.eco_score ?? 0,
+    profile_photo_url:
+      profile.profile_photo_url || "",
+  };
+
+  const profilePhoto =
+    profile.profile_photo_url ||
+    authUser.photoURL ||
+    "";
+
+  const avatarLetter =
+    (profile.name || "?")
+      .charAt(0)
+      .toUpperCase();
+
+  const deleteConfirmValid =
+    deleteConfirmText
+      .trim()
+      .toUpperCase() ===
+    DELETE_PHRASE;
 
   return (
-    <Layout active="" user={layoutUser} onNavigate={onNavigate}>
-      <div style={styles.content}>
-        <button type="button" onClick={() => onNavigate("/dashboard")} style={styles.backBtn}>
+    <Layout
+      active=""
+      user={layoutUser}
+      onNavigate={onNavigate}
+    >
+
+      <div style={styles.pageContent}>
+
+        {/* ==================================================
+            BACK
+        ================================================== */}
+
+        <button
+          type="button"
+          onClick={() =>
+            onNavigate("/dashboard")
+          }
+          style={styles.backBtn}
+        >
           <ChevronLeft size={16} />
           Back to Dashboard
         </button>
 
-        <h1 style={styles.title}>Profile</h1>
-        <p style={styles.subtitle}>Your account details</p>
+        {/* ==================================================
+            PAGE HEADER
+        ================================================== */}
+
+        <div style={styles.pageHeader}>
+
+          <div>
+            <h1 style={styles.title}>
+              Profile
+            </h1>
+
+            <p style={styles.subtitle}>
+              Manage your account details
+            </p>
+          </div>
+
+        </div>
+
+        {/* ==================================================
+            SUCCESS MESSAGE
+        ================================================== */}
 
         {successToast && (
-          <div style={styles.toast}>
-            <Check size={16} />
-            <span>{successToast}</span>
+          <div style={styles.successToast}>
+
+            <Check size={17} />
+
+            <span>
+              {successToast}
+            </span>
+
           </div>
         )}
 
+        {/* ==================================================
+            PROFILE CARD
+        ================================================== */}
+
         <div style={styles.card}>
-          <div style={styles.avatarRow}>
-            {profile.profile_photo_url ? (
-              <img src={profile.profile_photo_url} alt={profile.name} style={styles.avatarImg} />
+
+          {/* ----------------------------------------------
+              PROFILE HEADER
+          ---------------------------------------------- */}
+
+          <div style={styles.profileHeader}>
+
+            {profilePhoto ? (
+
+              <img
+                src={profilePhoto}
+                alt={profile.name || "Profile"}
+                style={styles.profileAvatar}
+              />
+
             ) : (
-              <div style={styles.avatarFallback}>{(profile.name || "?").charAt(0).toUpperCase()}</div>
+
+              <div
+                style={styles.profileAvatarFallback}
+              >
+                {avatarLetter}
+              </div>
+
             )}
-            <div style={{ flex: 1 }}>
-              {editing === "name" ? (
-                <div style={styles.editRow}>
-                  <input
-                    type="text"
-                    value={nameInput}
-                    onChange={(e) => setNameInput(e.target.value)}
-                    style={styles.editInput}
-                    autoFocus
-                  />
-                  <button type="button" onClick={handleSaveName} disabled={saving} style={styles.saveBtn}>
-                    <Check size={16} />
-                  </button>
-                  <button type="button" onClick={closeEdit} style={styles.cancelIconBtn}>
-                    <X size={16} />
-                  </button>
-                </div>
-              ) : (
-                <div style={styles.editableLine}>
-                  <div>
-                    <div style={styles.name}>{profile.name || "Unnamed traveler"}</div>
-                    <div style={styles.role}>{profile.role === "tourist" ? "Traveler" : profile.role}</div>
-                  </div>
-                  <button type="button" onClick={() => openEdit("name")} style={styles.editIconBtn} title="Edit name">
-                    <Pencil size={14} />
-                  </button>
-                </div>
-              )}
-              {editing === "name" && fieldError && <p style={styles.fieldError}>{fieldError}</p>}
+
+            <div style={styles.profileIdentity}>
+
+              <h2 style={styles.profileName}>
+                {profile.name ||
+                  "Unnamed traveler"}
+              </h2>
+
+              <p style={styles.profileRole}>
+                {profile.role === "tourist"
+                  ? "Traveler"
+                  : profile.role || "Traveler"}
+              </p>
+
             </div>
+
+            {/* ONE EDIT BUTTON */}
+            <button
+              type="button"
+              onClick={openEditProfile}
+              style={styles.editProfileBtn}
+              disabled={editingProfile}
+            >
+              <Pencil size={15} />
+              Edit Profile
+            </button>
+
           </div>
 
-          <div style={styles.infoGrid}>
-            {/* Email row */}
-            <div style={styles.infoBlock}>
-              <div style={styles.infoRow}>
-                <Mail size={16} color="#9ca3af" />
-                <span style={styles.infoLabel}>Email</span>
-                {editing !== "email" && (
-                  <>
-                    <span style={styles.infoValue}>{profile.email}</span>
-                    <button type="button" onClick={() => openEdit("email")} style={styles.editIconBtnInline} title="Edit email">
-                      <Pencil size={13} />
-                    </button>
-                  </>
-                )}
-              </div>
-              {editing === "email" && (
-                <div style={styles.editPanel}>
-                  <label style={styles.editLabel}>New email</label>
-                  <input
-                    type="email"
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    style={styles.editInputFull}
-                  />
-                  <label style={styles.editLabel}>Current password (to confirm)</label>
-                  <input
-                    type="password"
-                    value={currentPasswordInput}
-                    onChange={(e) => setCurrentPasswordInput(e.target.value)}
-                    style={styles.editInputFull}
-                  />
-                  {fieldError && <p style={styles.fieldError}>{fieldError}</p>}
-                  <div style={styles.editActions}>
-                    <button type="button" onClick={handleSaveEmail} disabled={saving} style={styles.saveTextBtn}>
-                      {saving ? "Saving..." : "Save Email"}
-                    </button>
-                    <button type="button" onClick={closeEdit} style={styles.cancelTextBtn}>
-                      Cancel
-                    </button>
-                  </div>
+          {/* ==================================================
+              EDIT PROFILE PANEL
+          ================================================== */}
+
+          {editingProfile && (
+
+            <div style={styles.editPanel}>
+
+              <div style={styles.editPanelHeader}>
+
+                <div>
+                  <h3 style={styles.editPanelTitle}>
+                    Edit Profile
+                  </h3>
+
+                  <p style={styles.editPanelSubtitle}>
+                    Update your account information
+                  </p>
                 </div>
-              )}
-            </div>
 
-            {/* Password row — same pattern as Email: label + value placeholder + edit icon */}
-            <div style={styles.infoBlock}>
-              <div style={styles.infoRow}>
-                <Lock size={16} color="#9ca3af" />
-                <span style={styles.infoLabel}>Password</span>
-                {editing !== "password" && (
-                  <>
-                    <span style={styles.infoValue}>••••••••</span>
-                    <button type="button" onClick={() => openEdit("password")} style={styles.editIconBtnInline} title="Change password">
-                      <Pencil size={13} />
-                    </button>
-                  </>
-                )}
+                <button
+                  type="button"
+                  onClick={closeEditProfile}
+                  style={styles.closeBtn}
+                  disabled={saving}
+                  title="Close"
+                >
+                  <X size={17} />
+                </button>
+
               </div>
-              {editing === "password" && (
-                <div style={styles.editPanel}>
-                  <label style={styles.editLabel}>New password</label>
-                  <input
-                    type="password"
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    style={styles.editInputFull}
-                    placeholder="At least 6 characters"
-                  />
-                  <label style={styles.editLabel}>Current password (to confirm)</label>
-                  <input
-                    type="password"
-                    value={currentPasswordInput}
-                    onChange={(e) => setCurrentPasswordInput(e.target.value)}
-                    style={styles.editInputFull}
-                  />
-                  {fieldError && <p style={styles.fieldError}>{fieldError}</p>}
-                  <div style={styles.editActions}>
-                    <button type="button" onClick={handleSavePassword} disabled={saving} style={styles.saveTextBtn}>
-                      {saving ? "Saving..." : "Save Password"}
-                    </button>
-                    <button type="button" onClick={closeEdit} style={styles.cancelTextBtn}>
-                      Cancel
-                    </button>
-                  </div>
+
+              {/* NAME */}
+
+              <div style={styles.formGroup}>
+
+                <label style={styles.formLabel}>
+                  Name
+                </label>
+
+                <input
+                  type="text"
+                  value={nameInput}
+                  onChange={(e) =>
+                    setNameInput(
+                      e.target.value
+                    )
+                  }
+                  style={styles.formInput}
+                  disabled={saving}
+                  autoFocus
+                />
+
+              </div>
+
+              {/* EMAIL */}
+
+              <div style={styles.formGroup}>
+
+                <label style={styles.formLabel}>
+                  Email
+                </label>
+
+                <input
+                  type="email"
+                  value={emailInput}
+                  onChange={(e) =>
+                    setEmailInput(
+                      e.target.value
+                    )
+                  }
+                  style={styles.formInput}
+                  disabled={saving}
+                />
+
+              </div>
+
+              {/* NEW PASSWORD */}
+
+              <div style={styles.formGroup}>
+
+                <label style={styles.formLabel}>
+                  New Password
+                  <span style={styles.optionalText}>
+                    Optional
+                  </span>
+                </label>
+
+                <input
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) =>
+                    setPasswordInput(
+                      e.target.value
+                    )
+                  }
+                  placeholder="Leave blank to keep current password"
+                  style={styles.formInput}
+                  disabled={saving}
+                />
+
+              </div>
+
+              {/* CURRENT PASSWORD */}
+
+              <div style={styles.formGroup}>
+
+                <label style={styles.formLabel}>
+                  Current Password
+                  <span style={styles.requiredHint}>
+                    Required for email/password changes
+                  </span>
+                </label>
+
+                <input
+                  type="password"
+                  value={currentPasswordInput}
+                  onChange={(e) =>
+                    setCurrentPasswordInput(
+                      e.target.value
+                    )
+                  }
+                  placeholder="Enter current password"
+                  style={styles.formInput}
+                  disabled={saving}
+                />
+
+              </div>
+
+              {/* ERROR */}
+
+              {fieldError && (
+
+                <div style={styles.errorBox}>
+                  {fieldError}
                 </div>
+
               )}
-            </div>
 
-            <div style={styles.infoRow}>
-              <Leaf size={16} color="#16a34a" />
-              <span style={styles.infoLabel}>Eco Score</span>
-              <span style={styles.infoValue}>{(profile.eco_score ?? 0).toLocaleString()}</span>
-            </div>
-            <div style={styles.infoRow}>
-              <Award size={16} color="#f97316" />
-              <span style={styles.infoLabel}>Level</span>
-              <span style={styles.infoValue}>{profile.level ?? 1}</span>
-            </div>
-            <div style={styles.infoRow}>
-              <Calendar size={16} color="#7c3aed" />
-              <span style={styles.infoLabel}>Member since</span>
-              <span style={styles.infoValue}>{formatDate(profile.created_at)}</span>
-            </div>
-          </div>
+              {/* ACTIONS */}
 
-          {/* Neutral, not red — logging out isn't destructive */}
-          <button type="button" onClick={handleLogout} disabled={loggingOut} style={styles.logoutBtn}>
-            <LogOut size={16} />
-            {loggingOut ? "Logging out..." : "Log Out"}
+              <div style={styles.editActions}>
+
+                <button
+                  type="button"
+                  onClick={closeEditProfile}
+                  style={styles.cancelBtn}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSaveProfile}
+                  style={styles.saveBtn}
+                  disabled={saving}
+                >
+                  <Check size={16} />
+
+                  {saving
+                    ? "Saving..."
+                    : "Save Changes"}
+                </button>
+
+              </div>
+
+            </div>
+          )}
+
+          {/* ==================================================
+              ACCOUNT INFORMATION
+          ================================================== */}
+
+          {!editingProfile && (
+
+            <div style={styles.infoSection}>
+
+              {/* EMAIL */}
+
+              <div style={styles.infoRow}>
+
+                <div style={styles.infoIcon}>
+                  <Mail
+                    size={18}
+                    color="#6b7280"
+                  />
+                </div>
+
+                <div style={styles.infoText}>
+
+                  <span style={styles.infoLabel}>
+                    Email
+                  </span>
+
+                  <span style={styles.infoValue}>
+                    {profile.email || "—"}
+                  </span>
+
+                </div>
+
+              </div>
+
+              {/* PASSWORD */}
+
+              <div style={styles.infoRow}>
+
+                <div style={styles.infoIcon}>
+                  <Lock
+                    size={18}
+                    color="#6b7280"
+                  />
+                </div>
+
+                <div style={styles.infoText}>
+
+                  <span style={styles.infoLabel}>
+                    Password
+                  </span>
+
+                  <span style={styles.infoValue}>
+                    ••••••••
+                  </span>
+
+                </div>
+
+              </div>
+
+              {/* ECO SCORE */}
+
+              <div style={styles.infoRow}>
+
+                <div style={styles.infoIcon}>
+                  <Leaf
+                    size={18}
+                    color="#16a34a"
+                  />
+                </div>
+
+                <div style={styles.infoText}>
+
+                  <span style={styles.infoLabel}>
+                    Eco Score
+                  </span>
+
+                  <span style={styles.infoValue}>
+                    {(
+                      profile.eco_score ??
+                      0
+                    ).toLocaleString()}
+                  </span>
+
+                </div>
+
+              </div>
+
+              {/* LEVEL */}
+
+              <div style={styles.infoRow}>
+
+                <div style={styles.infoIcon}>
+                  <Award
+                    size={18}
+                    color="#f97316"
+                  />
+                </div>
+
+                <div style={styles.infoText}>
+
+                  <span style={styles.infoLabel}>
+                    Level
+                  </span>
+
+                  <span style={styles.infoValue}>
+                    {profile.level ?? 1}
+                  </span>
+
+                </div>
+
+              </div>
+
+              {/* MEMBER SINCE */}
+
+              <div style={styles.infoRow}>
+
+                <div style={styles.infoIcon}>
+                  <Calendar
+                    size={18}
+                    color="#7c3aed"
+                  />
+                </div>
+
+                <div style={styles.infoText}>
+
+                  <span style={styles.infoLabel}>
+                    Member since
+                  </span>
+
+                  <span style={styles.infoValue}>
+                    {formatDate(
+                      profile.created_at
+                    )}
+                  </span>
+
+                </div>
+
+              </div>
+
+            </div>
+          )}
+
+          {/* ==================================================
+              LOGOUT
+          ================================================== */}
+
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            style={styles.logoutBtn}
+          >
+
+            <LogOut size={17} />
+
+            {loggingOut
+              ? "Logging out..."
+              : "Log Out"}
+
           </button>
 
-          {/* Danger Zone — just opens the confirmation modal, no inline password field */}
+          {/* ==================================================
+              DANGER ZONE
+          ================================================== */}
+
           <div style={styles.dangerZone}>
-            <p style={styles.dangerTitle}>Danger Zone</p>
-            <p style={styles.dangerSubtitle}>Deleting your account is permanent and can't be undone.</p>
-            <button type="button" onClick={openDeleteModal} style={styles.deleteBtn}>
+
+            <div>
+
+              <h3 style={styles.dangerTitle}>
+                Danger Zone
+              </h3>
+
+              <p style={styles.dangerSubtitle}>
+                Permanently delete your account
+                and associated profile data.
+              </p>
+
+            </div>
+
+            <button
+              type="button"
+              onClick={openDeleteModal}
+              style={styles.deleteBtn}
+            >
               <Trash2 size={16} />
               Delete Account
             </button>
+
           </div>
+
         </div>
       </div>
 
-      {/* Delete account confirmation modal */}
+      {/* ======================================================
+          DELETE MODAL
+      ====================================================== */}
+
       {deleteModalOpen && (
-        <div style={styles.modalOverlay} onClick={closeDeleteModal}>
-          <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+
+        <div
+          style={styles.modalOverlay}
+          onClick={closeDeleteModal}
+        >
+
+          <div
+            style={styles.modalCard}
+            onClick={(e) =>
+              e.stopPropagation()
+            }
+          >
+
             <div style={styles.modalIconWrap}>
-              <AlertTriangle size={22} color="#b91c1c" />
+
+              <AlertTriangle
+                size={22}
+                color="#b91c1c"
+              />
+
             </div>
-            <h2 style={styles.modalTitle}>Delete your account?</h2>
+
+            <h2 style={styles.modalTitle}>
+              Delete your account?
+            </h2>
+
             <p style={styles.modalBody}>
-              This permanently deletes your profile, eco-score, and all saved trips. This action can't be undone.
+              This permanently deletes your
+              account and profile data. This
+              action cannot be undone.
             </p>
 
-            <label style={styles.editLabel}>
-              Type <strong>{DELETE_PHRASE}</strong> to confirm
+            <label style={styles.formLabel}>
+              Type{" "}
+              <strong>
+                {DELETE_PHRASE}
+              </strong>{" "}
+              to confirm
             </label>
+
             <input
               type="text"
               value={deleteConfirmText}
-              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              onChange={(e) =>
+                setDeleteConfirmText(
+                  e.target.value
+                )
+              }
               placeholder={DELETE_PHRASE}
-              style={styles.editInputFull}
+              style={styles.formInput}
               autoFocus
+              disabled={deleting}
             />
 
-            {deleteError && <p style={styles.fieldError}>{deleteError}</p>}
+            {deleteError && (
+
+              <div style={styles.errorBox}>
+                {deleteError}
+              </div>
+
+            )}
 
             <div style={styles.modalActions}>
-              <button type="button" onClick={closeDeleteModal} disabled={deleting} style={styles.cancelTextBtn}>
+
+              <button
+                type="button"
+                onClick={closeDeleteModal}
+                disabled={deleting}
+                style={styles.cancelBtn}
+              >
                 Cancel
               </button>
+
               <button
                 type="button"
                 onClick={handleDeleteAccount}
-                disabled={deleting || !deleteConfirmValid}
+                disabled={
+                  deleting ||
+                  !deleteConfirmValid
+                }
                 style={{
                   ...styles.modalDeleteBtn,
-                  ...(deleting || !deleteConfirmValid ? styles.modalDeleteBtnDisabled : {}),
+                  ...(deleting ||
+                  !deleteConfirmValid
+                    ? styles.disabledDeleteBtn
+                    : {}),
                 }}
               >
+
                 <Trash2 size={16} />
-                {deleting ? "Deleting..." : "Permanently Delete"}
+
+                {deleting
+                  ? "Deleting..."
+                  : "Permanently Delete"}
+
               </button>
+
             </div>
+
           </div>
+
         </div>
       )}
+
     </Layout>
   );
 }
 
 const styles = {
+
   loadingPage: {
     minHeight: "100vh",
     display: "flex",
@@ -434,6 +1048,16 @@ const styles = {
     justifyContent: "center",
     background: "#f9fafb",
   },
+
+  loadingText: {
+    color: "#6b7280",
+  },
+
+  notLoggedText: {
+    color: "#6b7280",
+    marginBottom: 16,
+  },
+
   loginRedirectBtn: {
     background: "#16a34a",
     color: "#fff",
@@ -443,207 +1067,363 @@ const styles = {
     fontWeight: 600,
     cursor: "pointer",
   },
-  content: { padding: "28px 32px", maxWidth: 640, width: "100%", margin: "0 auto", textAlign: "left" },
+
+  pageContent: {
+    padding: "28px 32px 40px",
+    maxWidth: 760,
+    width: "100%",
+    margin: "0 auto",
+    boxSizing: "border-box",
+  },
+
   backBtn: {
     display: "flex",
     alignItems: "center",
     gap: 4,
     background: "transparent",
     border: "none",
-    color: "#374151",
-    fontSize: 14.5,
+    color: "#6b7280",
+    fontSize: 14,
     fontWeight: 500,
     cursor: "pointer",
     padding: 0,
-    marginBottom: 20,
+    marginBottom: 22,
   },
-  title: { fontSize: 28, fontWeight: 800, color: "#111827", margin: 0 },
-  subtitle: { color: "#6b7280", marginTop: 6, marginBottom: 24, fontSize: 14.5 },
-  toast: {
+
+  pageHeader: {
+    marginBottom: 24,
+  },
+
+  title: {
+    fontSize: 30,
+    fontWeight: 800,
+    color: "#111827",
+    margin: 0,
+    letterSpacing: "-0.5px",
+  },
+
+  subtitle: {
+    color: "#6b7280",
+    margin: "6px 0 0",
+    fontSize: 14.5,
+  },
+
+  successToast: {
     display: "flex",
     alignItems: "center",
     gap: 8,
-    background: "#dcfce7",
+    background: "#ecfdf5",
     color: "#15803d",
-    border: "1px solid #86efac",
-    borderRadius: 12,
-    padding: "12px 16px",
-    fontSize: 14,
+    border: "1px solid #bbf7d0",
+    borderRadius: 10,
+    padding: "11px 14px",
+    fontSize: 13.5,
     fontWeight: 600,
-    marginBottom: 20,
+    marginBottom: 18,
   },
+
   card: {
     background: "#fff",
     border: "1px solid #e5e7eb",
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 28,
+    boxShadow:
+      "0 2px 8px rgba(15, 23, 42, 0.03)",
   },
-  avatarRow: { display: "flex", alignItems: "center", gap: 16, marginBottom: 28 },
-  avatarImg: { width: 64, height: 64, borderRadius: "50%", objectFit: "cover" },
-  avatarFallback: {
-    width: 64,
-    height: 64,
+
+  profileHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: 16,
+    paddingBottom: 24,
+    borderBottom: "1px solid #f3f4f6",
+  },
+
+  profileAvatar: {
+    width: 76,
+    height: 76,
+    borderRadius: "50%",
+    objectFit: "cover",
+    flexShrink: 0,
+    border: "2px solid #dcfce7",
+  },
+
+  profileAvatarFallback: {
+    width: 76,
+    height: 76,
     borderRadius: "50%",
     background: "#dcfce7",
     color: "#15803d",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 24,
+    fontSize: 27,
     fontWeight: 700,
     flexShrink: 0,
   },
-  editableLine: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  name: { fontSize: 20, fontWeight: 700, color: "#111827" },
-  role: { fontSize: 13.5, color: "#9ca3af", marginTop: 2 },
-  editIconBtn: {
-    border: "1px solid #e5e7eb",
-    background: "#fff",
-    color: "#6b7280",
-    borderRadius: 8,
-    width: 30,
-    height: 30,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-    flexShrink: 0,
-  },
-  editIconBtnInline: {
-    border: "none",
-    background: "transparent",
-    color: "#9ca3af",
-    cursor: "pointer",
-    display: "flex",
-    padding: 0,
-    marginLeft: 4,
-  },
-  editRow: { display: "flex", alignItems: "center", gap: 8 },
-  editInput: {
+
+  profileIdentity: {
     flex: 1,
-    border: "1px solid #e5e7eb",
-    borderRadius: 8,
-    padding: "8px 10px",
-    fontSize: 16,
-    fontWeight: 700,
-    outline: "none",
+    minWidth: 0,
   },
-  saveBtn: {
-    border: "none",
-    background: "#dcfce7",
-    color: "#16a34a",
-    borderRadius: 8,
-    width: 32,
-    height: 32,
+
+  profileName: {
+    fontSize: 22,
+    fontWeight: 800,
+    color: "#111827",
+    margin: 0,
+  },
+
+  profileRole: {
+    fontSize: 14,
+    color: "#9ca3af",
+    margin: "5px 0 0",
+  },
+
+  editProfileBtn: {
     display: "flex",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 7,
+    border: "1px solid #d1d5db",
+    background: "#fff",
+    color: "#374151",
+    borderRadius: 9,
+    padding: "9px 13px",
+    fontSize: 13.5,
+    fontWeight: 600,
     cursor: "pointer",
+    flexShrink: 0,
   },
-  cancelIconBtn: {
-    border: "none",
-    background: "#fee2e2",
-    color: "#b91c1c",
-    borderRadius: 8,
-    width: 32,
-    height: 32,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-  },
-  infoGrid: { display: "flex", flexDirection: "column", gap: 16, marginBottom: 28 },
-  infoBlock: { display: "flex", flexDirection: "column", gap: 8 },
-  infoRow: { display: "flex", alignItems: "center", gap: 10, fontSize: 14.5 },
-  infoLabel: { color: "#6b7280", minWidth: 100 },
-  infoValue: { color: "#111827", fontWeight: 600 },
-  editPanel: {
-    background: "#f9fafb",
-    border: "1px solid #e5e7eb",
-    borderRadius: 12,
-    padding: 16,
+
+  infoSection: {
+    padding: "22px 0",
     display: "flex",
     flexDirection: "column",
-    gap: 6,
+    gap: 19,
   },
-  editLabel: { fontSize: 12.5, fontWeight: 600, color: "#374151", marginTop: 6 },
-  editInputFull: {
-    width: "100%",
-    border: "1px solid #e5e7eb",
-    borderRadius: 8,
-    padding: "9px 12px",
+
+  infoRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 13,
+  },
+
+  infoIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    background: "#f9fafb",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+
+  infoText: {
+    display: "flex",
+    alignItems: "center",
+    gap: 24,
+    minWidth: 0,
+  },
+
+  infoLabel: {
+    color: "#6b7280",
     fontSize: 14,
-    outline: "none",
-    boxSizing: "border-box",
+    width: 105,
+    flexShrink: 0,
   },
-  editActions: { display: "flex", gap: 8, marginTop: 10 },
-  saveTextBtn: {
-    border: "none",
-    background: "#16a34a",
-    color: "#fff",
+
+  infoValue: {
+    color: "#111827",
+    fontSize: 14.5,
+    fontWeight: 600,
+    overflowWrap: "anywhere",
+  },
+
+  /*
+   * EDIT PANEL
+   */
+
+  editPanel: {
+    marginTop: 22,
+    background: "#f9fafb",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: 20,
+  },
+
+  editPanelHeader: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 18,
+  },
+
+  editPanelTitle: {
+    fontSize: 16,
+    fontWeight: 800,
+    color: "#111827",
+    margin: 0,
+  },
+
+  editPanelSubtitle: {
+    color: "#6b7280",
+    fontSize: 12.5,
+    margin: "4px 0 0",
+  },
+
+  closeBtn: {
+    width: 32,
+    height: 32,
     borderRadius: 8,
-    padding: "8px 16px",
-    fontSize: 13.5,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  cancelTextBtn: {
     border: "1px solid #e5e7eb",
     background: "#fff",
     color: "#6b7280",
-    borderRadius: 8,
-    padding: "8px 16px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
+
+  formGroup: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 7,
+    marginBottom: 15,
+  },
+
+  formLabel: {
+    fontSize: 12.5,
+    fontWeight: 700,
+    color: "#374151",
+  },
+
+  optionalText: {
+    color: "#9ca3af",
+    fontWeight: 500,
+    marginLeft: 6,
+  },
+
+  requiredHint: {
+    color: "#9ca3af",
+    fontWeight: 500,
+    marginLeft: 6,
+  },
+
+  formInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    border: "1px solid #d1d5db",
+    borderRadius: 9,
+    padding: "10px 12px",
+    background: "#fff",
+    color: "#111827",
+    fontSize: 14,
+    outline: "none",
+  },
+
+  editActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 9,
+    marginTop: 18,
+  },
+
+  cancelBtn: {
+    border: "1px solid #d1d5db",
+    background: "#fff",
+    color: "#374151",
+    borderRadius: 9,
+    padding: "9px 15px",
     fontSize: 13.5,
     fontWeight: 600,
     cursor: "pointer",
   },
-  fieldError: { fontSize: 12.5, color: "#b91c1c", margin: "4px 0 0" },
-  // Neutral gray — logging out is a routine action, not destructive, so it
-  // shouldn't compete visually with the red Danger Zone below it.
+
+  saveBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    border: "none",
+    background: "#16a34a",
+    color: "#fff",
+    borderRadius: 9,
+    padding: "9px 15px",
+    fontSize: 13.5,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
+  errorBox: {
+    background: "#fef2f2",
+    border: "1px solid #fecaca",
+    color: "#b91c1c",
+    borderRadius: 9,
+    padding: "9px 11px",
+    fontSize: 12.5,
+    lineHeight: 1.4,
+    marginTop: 8,
+  },
+
   logoutBtn: {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
     width: "100%",
-    background: "#f3f4f6",
+    background: "#f8fafc",
     color: "#374151",
     border: "1px solid #e5e7eb",
-    borderRadius: 12,
+    borderRadius: 11,
     padding: "12px 0",
-    fontSize: 14.5,
+    fontSize: 14,
     fontWeight: 700,
     cursor: "pointer",
   },
+
   dangerZone: {
     marginTop: 20,
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
-    borderRadius: 12,
-    padding: 16,
+    paddingTop: 20,
+    borderTop: "1px solid #f3f4f6",
     display: "flex",
-    flexDirection: "column",
-    gap: 6,
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
   },
-  dangerTitle: { fontSize: 13, fontWeight: 700, color: "#b91c1c", margin: 0 },
-  dangerSubtitle: { fontSize: 12.5, color: "#7f1d1d", margin: "2px 0 6px" },
+
+  dangerTitle: {
+    fontSize: 13.5,
+    fontWeight: 700,
+    color: "#b91c1c",
+    margin: 0,
+  },
+
+  dangerSubtitle: {
+    fontSize: 12.5,
+    color: "#7f1d1d",
+    margin: "4px 0 0",
+  },
+
   deleteBtn: {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    width: "100%",
-    background: "#b91c1c",
-    color: "#fff",
-    border: "none",
-    borderRadius: 10,
-    padding: "11px 0",
-    fontSize: 14,
+    gap: 7,
+    background: "#fff",
+    color: "#b91c1c",
+    border: "1px solid #fecaca",
+    borderRadius: 9,
+    padding: "9px 13px",
+    fontSize: 13,
     fontWeight: 700,
     cursor: "pointer",
-    marginTop: 6,
+    flexShrink: 0,
   },
-  // Modal
+
+  /*
+   * DELETE MODAL
+   */
+
   modalOverlay: {
     position: "fixed",
     inset: 0,
@@ -654,14 +1434,18 @@ const styles = {
     padding: 20,
     zIndex: 1000,
   },
+
   modalCard: {
     background: "#fff",
     borderRadius: 16,
-    padding: 28,
+    padding: 26,
     width: "100%",
     maxWidth: 420,
-    boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
+    boxShadow:
+      "0 20px 50px rgba(0, 0, 0, 0.18)",
+    boxSizing: "border-box",
   },
+
   modalIconWrap: {
     width: 44,
     height: 44,
@@ -670,25 +1454,45 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 12,
+    marginBottom: 13,
   },
-  modalTitle: { fontSize: 18, fontWeight: 800, color: "#111827", margin: "0 0 6px" },
-  modalBody: { fontSize: 13.5, color: "#6b7280", margin: "0 0 18px", lineHeight: 1.5 },
-  modalActions: { display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" },
+
+  modalTitle: {
+    fontSize: 19,
+    fontWeight: 800,
+    color: "#111827",
+    margin: "0 0 7px",
+  },
+
+  modalBody: {
+    fontSize: 13.5,
+    color: "#6b7280",
+    lineHeight: 1.5,
+    margin: "0 0 18px",
+  },
+
+  modalActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 9,
+    marginTop: 18,
+  },
+
   modalDeleteBtn: {
     display: "flex",
     alignItems: "center",
-    gap: 6,
+    gap: 7,
     border: "none",
     background: "#b91c1c",
     color: "#fff",
-    borderRadius: 8,
-    padding: "8px 16px",
+    borderRadius: 9,
+    padding: "9px 14px",
     fontSize: 13.5,
     fontWeight: 700,
     cursor: "pointer",
   },
-  modalDeleteBtnDisabled: {
+
+  disabledDeleteBtn: {
     background: "#fca5a5",
     cursor: "not-allowed",
   },

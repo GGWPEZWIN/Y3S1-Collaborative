@@ -3,7 +3,6 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
-
 const firebaseConfig = {
   apiKey: "AIzaSyBdWZNDebQyqnsHzYpete9j9q4Jmx8rFuU",
   authDomain: "greentrip-malaysia.firebaseapp.com",

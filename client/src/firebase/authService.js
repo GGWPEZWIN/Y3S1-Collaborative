@@ -14,19 +14,45 @@ import {
   EmailAuthProvider,
   deleteUser,
 } from "firebase/auth";
-import { doc, setDoc, getDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
+
+import {
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  deleteDoc,
+  query,
+  where,
+  serverTimestamp,
+  writeBatch,
+} from "firebase/firestore";
+
 import { auth, db } from "./config";
 
 const googleProvider = new GoogleAuthProvider();
 
-/**
- * Registers a new tourist account.
- **/
-export async function registerTourist({ name, email, password }) {
-  const credential = await createUserWithEmailAndPassword(auth, email, password);
+/* =========================================================
+   REGISTER
+========================================================= */
+
+export async function registerTourist({
+  name,
+  email,
+  password,
+}) {
+  const credential =
+    await createUserWithEmailAndPassword(
+      auth,
+      email,
+      password
+    );
+
   const user = credential.user;
 
-  await updateProfile(user, { displayName: name });
+  await updateProfile(user, {
+    displayName: name,
+  });
 
   await setDoc(doc(db, "users", user.uid), {
     name,
@@ -35,221 +61,600 @@ export async function registerTourist({ name, email, password }) {
     role: "tourist",
     eco_score: 0,
     level: 1,
+
+    // Profile photo starts empty.
     profile_photo_url: "",
+
     created_at: serverTimestamp(),
   });
 
   return user;
 }
 
-/**
- * Patches a user doc with a searchable lowercase name if it's missing —
- * covers accounts created before username search existed.
- */
+/* =========================================================
+   ENSURE SEARCH FIELDS
+========================================================= */
+
 async function ensureSearchFields(userDocRef) {
   const snap = await getDoc(userDocRef);
+
   if (snap.exists()) {
     const data = snap.data();
+
     if (!data.name_lower && data.name) {
-      await setDoc(userDocRef, { name_lower: data.name.trim().toLowerCase() }, { merge: true });
+      await setDoc(
+        userDocRef,
+        {
+          name_lower: data.name
+            .trim()
+            .toLowerCase(),
+        },
+        {
+          merge: true,
+        }
+      );
     }
   }
 }
 
-export async function loginUser({ email, password }) {
-  const credential = await signInWithEmailAndPassword(auth, email, password);
-  const user = credential.user;
+/* =========================================================
+   ENSURE USER DOCUMENT
+========================================================= */
 
-  const userDocRef = doc(db, "users", user.uid);
-  const existingDoc = await getDoc(userDocRef);
+async function ensureUserDoc(user) {
+  const userDocRef = doc(
+    db,
+    "users",
+    user.uid
+  );
+
+  const existingDoc =
+    await getDoc(userDocRef);
 
   if (!existingDoc.exists()) {
     await setDoc(userDocRef, {
       name: user.displayName || "",
-      name_lower: (user.displayName || "").trim().toLowerCase(),
+      name_lower: (user.displayName || "")
+        .trim()
+        .toLowerCase(),
+
       email: user.email || "",
+
       role: "tourist",
+
       eco_score: 0,
+
       level: 1,
-      profile_photo_url: "",
+
+      /*
+       * Keep Firebase Auth photoURL when
+       * creating the Firestore profile.
+       */
+      profile_photo_url:
+        user.photoURL || "",
+
       created_at: serverTimestamp(),
     });
   } else {
-    await ensureSearchFields(userDocRef);
+    const existingData =
+      existingDoc.data();
+
+    const updates = {};
+
+    if (
+      !existingData.name_lower &&
+      existingData.name
+    ) {
+      updates.name_lower =
+        existingData.name
+          .trim()
+          .toLowerCase();
+    }
+
+    /*
+     * If Auth has a photo and Firestore
+     * doesn't have one, sync it.
+     */
+    if (
+      user.photoURL &&
+      !existingData.profile_photo_url
+    ) {
+      updates.profile_photo_url =
+        user.photoURL;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await setDoc(
+        userDocRef,
+        updates,
+        {
+          merge: true,
+        }
+      );
+    }
   }
+}
+
+/* =========================================================
+   EMAIL LOGIN
+========================================================= */
+
+export async function loginUser({
+  email,
+  password,
+}) {
+  const credential =
+    await signInWithEmailAndPassword(
+      auth,
+      email,
+      password
+    );
+
+  const user = credential.user;
+
+  await ensureUserDoc(user);
 
   return user;
 }
 
-async function ensureUserDoc(user) {
-  const userDocRef = doc(db, "users", user.uid);
-  const existingDoc = await getDoc(userDocRef);
-
-  if (!existingDoc.exists()) {
-    await setDoc(userDocRef, {
-      name: user.displayName || "",
-      name_lower: (user.displayName || "").trim().toLowerCase(),
-      email: user.email || "",
-      role: "tourist",
-      eco_score: 0,
-      level: 1,
-      profile_photo_url: user.photoURL || "",
-      created_at: serverTimestamp(),
-    });
-  } else {
-    await ensureSearchFields(userDocRef);
-  }
-}
+/* =========================================================
+   GOOGLE LOGIN
+========================================================= */
 
 export async function loginWithGoogle() {
   try {
-    const credential = await signInWithPopup(auth, googleProvider);
+    const credential =
+      await signInWithPopup(
+        auth,
+        googleProvider
+      );
+
     const user = credential.user;
+
     await ensureUserDoc(user);
+
     return user;
   } catch (err) {
-    // Popup blocked or unavailable (common inside iframes/embedded previews) —
-    // fall back to a full-page redirect flow instead.
-    if (err?.code === "auth/popup-blocked" || err?.code === "auth/operation-not-supported-in-this-environment") {
-      await signInWithRedirect(auth, googleProvider);
-      return null; // page will navigate away; result is picked up by handleGoogleRedirectResult on return
+    if (
+      err?.code === "auth/popup-blocked" ||
+      err?.code ===
+        "auth/operation-not-supported-in-this-environment"
+    ) {
+      await signInWithRedirect(
+        auth,
+        googleProvider
+      );
+
+      return null;
     }
+
     throw err;
   }
 }
 
-/**
- * Call this once on app startup (e.g. in your top-level App component's
- * useEffect) to pick up the result after a redirect-based Google login.
- * Returns the user if a redirect sign-in just completed, otherwise null.
- */
+/* =========================================================
+   GOOGLE REDIRECT RESULT
+========================================================= */
+
 export async function handleGoogleRedirectResult() {
-  const result = await getRedirectResult(auth);
+  const result =
+    await getRedirectResult(auth);
+
   if (result?.user) {
     await ensureUserDoc(result.user);
+
     return result.user;
   }
+
   return null;
 }
+
+/* =========================================================
+   LOGOUT
+========================================================= */
 
 export function logoutUser() {
   return signOut(auth);
 }
 
-// Alias — some parts of the codebase (admin module) import this same
-// function as "signOutUser" instead of "logoutUser". Both names point to
-// the exact same function so either import works.
 export const signOutUser = logoutUser;
 
+/* =========================================================
+   RESET PASSWORD
+========================================================= */
+
 export function resetPassword(email) {
-  return sendPasswordResetEmail(auth, email);
-}
-
-/**
- * Re-authenticates the current user with their password. Firebase requires
- * this to have happened "recently" before allowing email, password, or
- * account-deletion changes — call this right before updateUserEmail,
- * updateUserPassword, or deleteAccount.
- */
-export async function reauthenticate(currentPassword) {
-  const user = auth.currentUser;
-  if (!user || !user.email) throw new Error("No signed-in user to re-authenticate.");
-
-  const credential = EmailAuthProvider.credential(user.email, currentPassword);
-  await reauthenticateWithCredential(user, credential);
-}
-
-/**
- * Updates the user's display name, in both Firebase Auth and their
- * Firestore user doc (keeping name_lower in sync for friend search).
- * Does NOT require re-authentication.
- */
-export async function updateUserName(newName) {
-  const trimmed = newName.trim();
-  if (!trimmed) throw new Error("Name can't be empty.");
-
-  const user = auth.currentUser;
-  if (!user) throw new Error("No signed-in user.");
-
-  await updateProfile(user, { displayName: trimmed });
-  await setDoc(
-    doc(db, "users", user.uid),
-    { name: trimmed, name_lower: trimmed.toLowerCase() },
-    { merge: true }
+  return sendPasswordResetEmail(
+    auth,
+    email
   );
 }
 
-/**
- * Updates the user's email address. Requires the caller to have just
- * called reauthenticate(currentPassword) first — Firebase will throw
- * "auth/requires-recent-login" otherwise.
- */
-export async function updateUserEmail(newEmail) {
-  const trimmed = newEmail.trim();
-  if (!trimmed) throw new Error("Email can't be empty.");
+/* =========================================================
+   RE-AUTHENTICATE
+========================================================= */
 
+export async function reauthenticate(
+  currentPassword
+) {
   const user = auth.currentUser;
-  if (!user) throw new Error("No signed-in user.");
 
-  await updateEmail(user, trimmed);
-  await setDoc(doc(db, "users", user.uid), { email: trimmed }, { merge: true });
+  if (!user || !user.email) {
+    throw new Error(
+      "No signed-in user to re-authenticate."
+    );
+  }
+
+  const credential =
+    EmailAuthProvider.credential(
+      user.email,
+      currentPassword
+    );
+
+  await reauthenticateWithCredential(
+    user,
+    credential
+  );
 }
 
-/**
- * Updates the user's password. Requires the caller to have just called
- * reauthenticate(currentPassword) first.
- */
-export async function updateUserPassword(newPassword) {
-  if (!newPassword || newPassword.length < 6) {
-    throw new Error("Password must be at least 6 characters.");
+/* =========================================================
+   UPDATE NAME
+========================================================= */
+
+export async function updateUserName(
+  newName
+) {
+  const trimmed = newName.trim();
+
+  if (!trimmed) {
+    throw new Error("Name can't be empty.");
   }
 
   const user = auth.currentUser;
-  if (!user) throw new Error("No signed-in user.");
 
-  await updatePassword(user, newPassword);
+  if (!user) {
+    throw new Error("No signed-in user.");
+  }
+
+  await updateProfile(user, {
+    displayName: trimmed,
+  });
+
+  await setDoc(
+    doc(db, "users", user.uid),
+    {
+      name: trimmed,
+      name_lower: trimmed.toLowerCase(),
+    },
+    {
+      merge: true,
+    }
+  );
 }
 
-/**
- * Permanently deletes the signed-in user's account: their Firestore
- * users/{uid} doc first, then the Firebase Auth user itself. Requires
- * the caller to have just called reauthenticate(currentPassword) first —
- * Firebase throws "auth/requires-recent-login" otherwise, same as
- * updateUserEmail/updateUserPassword.
+/* =========================================================
+   UPDATE PROFILE PHOTO
+========================================================= */
+
+export async function updateUserPhoto(
+  photoURL
+) {
+  const user = auth.currentUser;
+
+  if (!user) {
+    throw new Error("No signed-in user.");
+  }
+
+  await updateProfile(user, {
+    photoURL: photoURL || null,
+  });
+
+  await setDoc(
+    doc(db, "users", user.uid),
+    {
+      profile_photo_url: photoURL || "",
+    },
+    {
+      merge: true,
+    }
+  );
+}
+
+/* =========================================================
+   UPDATE EMAIL
+========================================================= */
+
+export async function updateUserEmail(
+  newEmail
+) {
+  const trimmed = newEmail.trim();
+
+  if (!trimmed) {
+    throw new Error("Email can't be empty.");
+  }
+
+  const user = auth.currentUser;
+
+  if (!user) {
+    throw new Error("No signed-in user.");
+  }
+
+  await updateEmail(user, trimmed);
+
+  await setDoc(
+    doc(db, "users", user.uid),
+    {
+      email: trimmed,
+    },
+    {
+      merge: true,
+    }
+  );
+}
+
+/* =========================================================
+   UPDATE PASSWORD
+========================================================= */
+
+export async function updateUserPassword(
+  newPassword
+) {
+  if (
+    !newPassword ||
+    newPassword.length < 6
+  ) {
+    throw new Error(
+      "Password must be at least 6 characters."
+    );
+  }
+
+  const user = auth.currentUser;
+
+  if (!user) {
+    throw new Error("No signed-in user.");
+  }
+
+  await updatePassword(
+    user,
+    newPassword
+  );
+}
+
+/* =========================================================
+   DELETE ACCOUNT
+========================================================= */
+
+/*
+ * IMPORTANT:
  *
- * Deletes the Firestore doc before the Auth user on purpose: if the
- * Auth user were deleted first and the Firestore delete then failed,
- * you'd be left with an orphaned Firestore doc and no way to
- * re-authenticate to clean it up. Doing the Firestore delete first means
- * a failure there just leaves the account intact and the error surfaces
- * to the caller normally.
+ * This removes:
+ *
+ * 1. users/{uid}/friends/*
+ * 2. incoming friend requests
+ * 3. outgoing friend requests
+ * 4. reciprocal friend documents
+ * 5. removes the user from chat members
+ * 6. users/{uid}
+ * 7. Firebase Authentication account
+ *
+ * Firestore does NOT automatically delete
+ * subcollections when the parent document is deleted.
  */
+
 export async function deleteAccount() {
   const user = auth.currentUser;
-  if (!user) throw new Error("No signed-in user.");
 
-  await deleteDoc(doc(db, "users", user.uid));
+  if (!user) {
+    throw new Error("No signed-in user.");
+  }
+
+  const uid = user.uid;
+
+  /*
+   * ==========================================
+   * 1. DELETE MY FRIEND SUBCOLLECTION
+   * ==========================================
+   */
+
+  const myFriendsSnap = await getDocs(
+    collection(
+      db,
+      "users",
+      uid,
+      "friends"
+    )
+  );
+
+  /*
+   * We also delete the reciprocal friend
+   * documents from other users.
+   */
+  for (const friendDoc of myFriendsSnap.docs) {
+    const friendUid = friendDoc.id;
+
+    try {
+      await deleteDoc(
+        doc(
+          db,
+          "users",
+          friendUid,
+          "friends",
+          uid
+        )
+      );
+    } catch (err) {
+      console.warn(
+        "Could not delete reciprocal friend:",
+        friendUid,
+        err
+      );
+    }
+
+    await deleteDoc(friendDoc.ref);
+  }
+
+  /*
+   * ==========================================
+   * 2. DELETE FRIEND REQUESTS
+   * ==========================================
+   */
+
+  const incomingQuery = query(
+    collection(db, "friendRequests"),
+    where("toUid", "==", uid)
+  );
+
+  const outgoingQuery = query(
+    collection(db, "friendRequests"),
+    where("fromUid", "==", uid)
+  );
+
+  const [
+    incomingSnap,
+    outgoingSnap,
+  ] = await Promise.all([
+    getDocs(incomingQuery),
+    getDocs(outgoingQuery),
+  ]);
+
+  const requestBatch = writeBatch(db);
+
+  incomingSnap.docs.forEach((d) => {
+    requestBatch.delete(d.ref);
+  });
+
+  outgoingSnap.docs.forEach((d) => {
+    requestBatch.delete(d.ref);
+  });
+
+  await requestBatch.commit();
+
+  /*
+   * ==========================================
+   * 3. REMOVE USER FROM CHATS
+   * ==========================================
+   *
+   * We DO NOT delete the entire chat because
+   * other users may still need the conversation.
+   */
+
+  const chatsQuery = query(
+    collection(db, "chats"),
+    where("members", "array-contains", uid)
+  );
+
+  const chatsSnap = await getDocs(chatsQuery);
+
+  for (const chatDoc of chatsSnap.docs) {
+    const chat = chatDoc.data();
+
+    const newMembers = (
+      chat.members || []
+    ).filter(
+      (memberUid) => memberUid !== uid
+    );
+
+    const newMemberNames = {
+      ...(chat.memberNames || {}),
+    };
+
+    delete newMemberNames[uid];
+
+    const newUnreadCounts = {
+      ...(chat.unreadCounts || {}),
+    };
+
+    delete newUnreadCounts[uid];
+
+    /*
+     * If this was a direct chat and there
+     * is nobody left, delete the chat.
+     *
+     * Otherwise keep the chat for the
+     * remaining members.
+     */
+    if (newMembers.length === 0) {
+      await deleteDoc(chatDoc.ref);
+    } else {
+      await setDoc(
+        chatDoc.ref,
+        {
+          members: newMembers,
+          memberNames: newMemberNames,
+          unreadCounts: newUnreadCounts,
+        },
+        {
+          merge: true,
+        }
+      );
+    }
+  }
+
+  /*
+   * ==========================================
+   * 4. DELETE FIRESTORE USER DOCUMENT
+   * ==========================================
+   */
+
+  await deleteDoc(
+    doc(db, "users", uid)
+  );
+
+  /*
+   * ==========================================
+   * 5. DELETE FIREBASE AUTH ACCOUNT
+   * ==========================================
+   */
+
   await deleteUser(user);
 }
 
-/**
- * Turns a Firebase error code into the kind of plain-language message
- * you'd want to show in the UI, instead of "Firebase: Error (auth/...)".
- */
+/* =========================================================
+   FRIENDLY AUTH ERRORS
+========================================================= */
+
 export function friendlyAuthError(error) {
   const map = {
-    "auth/email-already-in-use": "This email is already registered.",
-    "auth/weak-password": "Password must be at least 6 characters.",
-    "auth/invalid-email": "Please enter a valid email address.",
-    "auth/user-not-found": "No account found with this email.",
-    "auth/wrong-password": "Incorrect password.",
-    "auth/invalid-credential": "Invalid email or password.",
-    "auth/too-many-requests": "Too many attempts. Please try again later.",
-    "auth/popup-closed-by-user": "Sign-in was cancelled.",
-    "auth/popup-blocked": "Your browser blocked the Google sign-in popup. Please allow popups for this site and try again.",
-    "auth/cancelled-popup-request": "Sign-in was cancelled.",
-    "auth/configuration-not-found": "Sign-in method isn't enabled yet in Firebase Console.",
-    "auth/requires-recent-login": "For security, please re-enter your password to confirm this change.",
+    "auth/email-already-in-use":
+      "This email is already registered.",
+
+    "auth/weak-password":
+      "Password must be at least 6 characters.",
+
+    "auth/invalid-email":
+      "Please enter a valid email address.",
+
+    "auth/user-not-found":
+      "No account found with this email.",
+
+    "auth/wrong-password":
+      "Incorrect password.",
+
+    "auth/invalid-credential":
+      "Invalid email or password.",
+
+    "auth/too-many-requests":
+      "Too many attempts. Please try again later.",
+
+    "auth/popup-closed-by-user":
+      "Sign-in was cancelled.",
+
+    "auth/popup-blocked":
+      "Your browser blocked the Google sign-in popup. Please allow popups for this site and try again.",
+
+    "auth/cancelled-popup-request":
+      "Sign-in was cancelled.",
+
+    "auth/configuration-not-found":
+      "Sign-in method isn't enabled yet in Firebase Console.",
+
+    "auth/requires-recent-login":
+      "For security, please re-enter your password to confirm this change.",
   };
-  return map[error?.code] || error?.message || "Something went wrong. Please try again.";
+
+  return (
+    map[error?.code] ||
+    error?.message ||
+    "Something went wrong. Please try again."
+  );
 }
