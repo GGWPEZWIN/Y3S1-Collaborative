@@ -16,6 +16,7 @@ import ChallengesPage from "./user/Challenges/pages/ChallengesPage";
 import ChallengeDetails from "./user/Challenges/pages/ChallengeDetails";
 import ChallengeLeaderboard from "./user/Challenges/pages/ChallengeLeaderboard";
 import Waste from "./user/Waste&Resources/pages/WastePage";
+import GreenRecommendationPage from "./user/AIRecommendation/pages/GreenRecommendationPage";
 
 // Admin module — file is named "Adminlogin.jsx" (lowercase "l") on disk,
 // import name kept capitalized (AdminLogin) purely for readability here.
@@ -166,7 +167,7 @@ export default function App() {
     case "/itinerary":
       return <ComingSoon label="Itinerary" onNavigate={navigate} />;
     case "/recommendations":
-      return <ComingSoon label="Recommendations" onNavigate={navigate} />;
+      return <GreenRecommendationPage onNavigate={navigate} />;
     case "/certification":
       return <ComingSoon label="Certification" onNavigate={navigate} />;
     case "/waste":
