@@ -1,6 +1,7 @@
 export default function ItinerarySummary({
   itinerary,
   recommendation,
+  startLocationName,
   onCompare,
   onPreview,
 }) {
@@ -20,7 +21,7 @@ export default function ItinerarySummary({
         <dl className="m2-stat-row" style={{ marginTop: 16 }}>
           <div className="m2-stat">
             <dt>Starting location</dt>
-            <dd>{itinerary.startLocation.name}</dd>
+            <dd>{startLocationName ?? itinerary.startLocation.name}</dd>
           </div>
           <div className="m2-stat">
             <dt>Destinations</dt>

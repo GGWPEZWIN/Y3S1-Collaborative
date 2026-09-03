@@ -4,6 +4,8 @@ import {
   mockGreenRecommendation,
   mockItinerary,
 } from "../data/mockModule2Data";
+import useCurrentLocation from "../hooks/useCurrentLocation";
+import CurrentLocationCard from "../components/CurrentLocationCard";
 import ItinerarySummary from "../components/ItinerarySummary";
 import TransportationComparison from "../components/TransportationComparison";
 import RouteInformationPanel from "../components/RouteInformationPanel";
@@ -23,6 +25,17 @@ export default function GreenRecommendationPage({ onNavigate }) {
   const [selectedMode, setSelectedMode] = useState(RECOMMENDED_MODE);
   const [navIndex, setNavIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const {
+    location,
+    status: locationStatus,
+    requestCurrentLocation,
+    useDemoLocation,
+  } = useCurrentLocation();
+
+  const startLocationName =
+    location.source === "device"
+      ? location.label
+      : mockItinerary.startLocation.name;
 
   const stops = mockGreenRecommendation.recommendedDestinationOrder;
   const lastIndex = stops.length - 1;
@@ -83,9 +96,16 @@ export default function GreenRecommendationPage({ onNavigate }) {
         >
           {view === "recommendation" ? (
             <>
+              <CurrentLocationCard
+                location={location}
+                status={locationStatus}
+                onRequestLocation={requestCurrentLocation}
+                onUseDemoLocation={useDemoLocation}
+              />
               <ItinerarySummary
                 itinerary={mockItinerary}
                 recommendation={mockGreenRecommendation}
+                startLocationName={startLocationName}
                 onCompare={showCompare}
                 onPreview={showNavigation}
               />
