@@ -3,13 +3,32 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
+const env = {
+  VITE_FIREBASE_API_KEY: import.meta.env.VITE_FIREBASE_API_KEY,
+  VITE_FIREBASE_AUTH_DOMAIN: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  VITE_FIREBASE_PROJECT_ID: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  VITE_FIREBASE_STORAGE_BUCKET: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  VITE_FIREBASE_MESSAGING_SENDER_ID: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  VITE_FIREBASE_APP_ID: import.meta.env.VITE_FIREBASE_APP_ID,
+};
+
+const missing = Object.entries(env)
+  .filter(([, value]) => value == null || String(value).trim() === "")
+  .map(([name]) => name);
+
+if (missing.length > 0) {
+  throw new Error(
+    `Missing required Firebase environment variables: ${missing.join(", ")}. Copy client/.env.example to client/.env and fill in the values.`
+  );
+}
+
 const firebaseConfig = {
-  apiKey: "AIzaSyBdWZNDebQyqnsHzYpete9j9q4Jmx8rFuU",
-  authDomain: "greentrip-malaysia.firebaseapp.com",
-  projectId: "greentrip-malaysia",
-  storageBucket: "greentrip-malaysia.firebasestorage.app",
-  messagingSenderId: "1082521143838",
-  appId: "1:1082521143838:web:248aa48fca37f4e90d3c0f",
+  apiKey: env.VITE_FIREBASE_API_KEY,
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: env.VITE_FIREBASE_APP_ID,
 };
 
 const app = initializeApp(firebaseConfig);
