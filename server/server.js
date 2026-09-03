@@ -1,14 +1,18 @@
+import 'dotenv/config';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import serviceAccount from './firebase-config.json' with { type: 'json' };
 
-// Initialize Firebase
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+
+if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+  throw new Error('FIREBASE_SERVICE_ACCOUNT not set. Check your .env file.');
+}
+
 initializeApp({
   credential: cert(serviceAccount)
 });
 
 const db = getFirestore();
-
 console.log("Firebase Admin initialized successfully!");
 
 // -------------------------- Test Firebase Admin SDK -----------------------------

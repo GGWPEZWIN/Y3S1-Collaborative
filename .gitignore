@@ -13,3 +13,6 @@ server/node_modules/
 # Build folders
 dist/
 build/
+
+# Firebase config
+server/firebase-config.json
