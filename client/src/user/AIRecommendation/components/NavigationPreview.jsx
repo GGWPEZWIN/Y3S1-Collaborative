@@ -1,6 +1,10 @@
+import TripMap from "./TripMap";
+
 export default function NavigationPreview({
   stops,
   segments,
+  startLocation,
+  destinations,
   currentIndex,
   paused,
   onPause,
@@ -130,10 +134,7 @@ export default function NavigationPreview({
         </ol>
       </article>
 
-      <div className="m2-map-placeholder" style={{ gridColumn: "1 / -1" }}>
-        Interactive route map will be connected to Google Maps in a later
-        milestone.
-      </div>
+      <TripMap startLocation={startLocation} destinations={destinations} />
     </section>
   );
 }

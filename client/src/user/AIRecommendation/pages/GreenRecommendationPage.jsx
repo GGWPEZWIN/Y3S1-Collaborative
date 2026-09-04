@@ -131,6 +131,8 @@ export default function GreenRecommendationPage({ onNavigate }) {
             <NavigationPreview
               stops={stops}
               segments={mockGreenRecommendation.routeSegments}
+              startLocation={location}
+              destinations={mockItinerary.destinations}
               currentIndex={navIndex}
               paused={paused}
               onPause={() => setPaused(true)}
