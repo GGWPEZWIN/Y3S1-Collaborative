@@ -24,8 +24,9 @@ import ChallengeLeaderboard from "./user/Challenges/pages/ChallengeLeaderboard";
 
 import Waste from "./user/Waste&Resources/pages/WastePage";
 
-// IMPORTANT: Eco Report Card
+
 import EcoReportCard from "./user/EcoJourney/pages/EcoReportCard";
+import AchievementsPage from "./user/EcoJourney/pages/AchievementsPage";
 
 // Admin
 import AdminDashboard from "./admin/AdminDashboard";
@@ -247,17 +248,84 @@ export default function App() {
       );
 
 
-    // --------------------------------------------------------
-    // COMMUNITY
-    // --------------------------------------------------------
+    // =========================
+// COMMUNITY
+// =========================
 
-    case "/community":
-      return (
-        <CommunityPage
-          onNavigate={navigate}
-        />
-      );
+case "/community":
+  return (
+    <CommunityPage
+      onNavigate={navigate}
+    />
+  );
 
+case "/community/history":
+  return (
+    <TravelHistory
+      onNavigate={navigate}
+      onBack={() => navigate("/community")}
+    />
+  );
+
+case "/community/progress":
+  return (
+    <ProgressTracker
+      onNavigate={navigate}
+      onBack={() => navigate("/community")}
+    />
+  );
+
+case "/community/achievements":
+  return (
+    <AchievementsPage
+      onNavigate={navigate}
+    />
+  );
+
+case "/community/friends":
+  return (
+    <Friends
+      onNavigate={navigate}
+    />
+  );
+
+case "/community/chat":
+  return (
+    <ChatList
+      onNavigate={navigate}
+    />
+  );
+
+case "/community/chat/room":
+  return (
+    <ChatRoom
+      chatId={selectedId}
+      onNavigate={navigate}
+    />
+  );
+
+case "/community/chat/info":
+  return (
+    <GroupInfo
+      chatId={selectedId}
+      onNavigate={navigate}
+    />
+  );
+
+case "/community/report":
+  return (
+    <EcoReportCard
+      onNavigate={navigate}
+      tripId={selectedId}
+    />
+  );
+
+case "/community/challenges":
+  return (
+    <ChallengeTeam
+      onNavigate={navigate}
+    />
+  );
 
     // --------------------------------------------------------
     // TRAVEL HISTORY

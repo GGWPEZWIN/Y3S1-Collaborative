@@ -20,7 +20,7 @@ import {
 
 import Layout from "../../../shared/components/Layout";
 
-import AchievementCard from "../../../shared/components/AchievementCard";
+import AchievementCard from "../../../shared/components/achievementCard";
 
 import {
   getOrCreateEcoReport,

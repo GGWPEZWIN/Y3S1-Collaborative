@@ -11,8 +11,6 @@ import {
   ChevronRight,
   TrendingDown,
   Award,
-  Download,
-  Share2,
 } from "lucide-react";
 
 import {
@@ -161,99 +159,6 @@ export default function TravelHistory({
       background: "#fee2e2",
       color: "#dc2626",
     };
-  };
-
-
-  // ==========================================================
-  // DOWNLOAD
-  // ==========================================================
-
-  const handleDownload = (trip) => {
-
-    const content = `
-GreenTrip Malaysia
-Eco Travel Report
-
-Trip: ${trip.title}
-Status: ${trip.status}
-Date: ${trip.dateRange}
-Location: ${trip.location || "N/A"}
-
-Eco Score: ${trip.ecoScore}/100
-Grade: ${trip.grade}
-Carbon: ${trip.carbonKg} kg CO₂
-Badges Earned: ${trip.badgesEarned}
-
-Generated from GreenTrip Malaysia.
-`;
-
-    const blob = new Blob(
-      [content],
-      {
-        type: "text/plain",
-      }
-    );
-
-    const url =
-      URL.createObjectURL(blob);
-
-    const link =
-      document.createElement("a");
-
-    link.href = url;
-
-    link.download =
-      `${trip.title || "travel-report"}.txt`;
-
-    document.body.appendChild(link);
-
-    link.click();
-
-    document.body.removeChild(link);
-
-    URL.revokeObjectURL(url);
-  };
-
-
-  // ==========================================================
-  // SHARE
-  // ==========================================================
-
-  const handleShare = async (trip) => {
-
-    const text =
-      `${trip.title} - ` +
-      `Eco Score ${trip.ecoScore}/100 ` +
-      `(${trip.grade}), ` +
-      `${trip.carbonKg} kg CO₂`;
-
-    try {
-
-      if (navigator.share) {
-
-        await navigator.share({
-          title: trip.title,
-          text,
-        });
-
-      } else {
-
-        await navigator.clipboard.writeText(
-          text
-        );
-
-        alert(
-          "Travel report information copied!"
-        );
-      }
-
-    } catch (err) {
-
-      console.log(
-        "Share cancelled or unavailable."
-      );
-
-    }
   };
 
 
@@ -831,44 +736,10 @@ Generated from GreenTrip Malaysia.
                     </button>
 
 
-                    <button
-                      onClick={() =>
-                        handleDownload(
-                          trip
-                        )
-                      }
-                      style={
-                        styles.btnOutline
-                      }
-                    >
-
-                      <Download
-                        size={16}
-                      />
-
-                      Download Report
-
-                    </button>
 
 
-                    <button
-                      onClick={() =>
-                        handleShare(
-                          trip
-                        )
-                      }
-                      style={
-                        styles.btnOutline
-                      }
-                    >
 
-                      <Share2
-                        size={16}
-                      />
 
-                      Share
-
-                    </button>
 
                   </div>
 
