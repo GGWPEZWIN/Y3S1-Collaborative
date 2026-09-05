@@ -392,6 +392,36 @@
   line-height: 1.5;
 }
 
+.m2-route-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.m2-route-swatch {
+  width: 18px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.m2-route-swatch--walk {
+  background: #16a34a;
+}
+
+.m2-route-swatch--transit {
+  background: #2563eb;
+}
+
+.m2-route-swatch--drive {
+  background: #ea580c;
+}
+
 .m2-sr-only {
   position: absolute;
   width: 1px;

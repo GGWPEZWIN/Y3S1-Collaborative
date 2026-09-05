@@ -1,12 +1,30 @@
 import TripMap from "./TripMap";
 
+const TRAVEL_MODE_LABEL = {
+  WALK: "Walking",
+  TRANSIT: "Public transit",
+  DRIVE: "Driving",
+};
+
+const TRAVEL_MODE_TITLE = {
+  WALK: "Walking",
+  TRANSIT: "Public Transit",
+  DRIVE: "Driving",
+};
+
 const LIVE_ERROR_MESSAGES = {
-  INVALID_ROUTE_REQUEST: "The live walking route request was invalid. You can retry or keep using the demonstration map.",
-  ROUTES_NOT_CONFIGURED: "Live routing is not available on this server. The demonstration map is still usable.",
-  ROUTE_NOT_FOUND: "No walking route was found for this first segment. The demonstration map is still usable.",
-  ROUTES_TIMEOUT: "The live route request timed out. You can retry, or keep using the demonstration map.",
-  ROUTES_UPSTREAM_ERROR: "The live walking route could not be loaded. You can retry, or keep using the demonstration map.",
-  UNAVAILABLE: "The live walking route could not be loaded. You can retry, or keep using the demonstration map.",
+  INVALID_ROUTE_REQUEST:
+    "The live route request was invalid. You can retry or keep using the demonstration map.",
+  ROUTES_NOT_CONFIGURED:
+    "Live routing is not available on this server. The demonstration map is still usable.",
+  ROUTE_NOT_FOUND:
+    "No live route was found for this first segment. The demonstration map is still usable.",
+  ROUTES_TIMEOUT:
+    "The live route request timed out. You can retry, or keep using the demonstration map.",
+  ROUTES_UPSTREAM_ERROR:
+    "The live route could not be loaded. You can retry, or keep using the demonstration map.",
+  UNAVAILABLE:
+    "The live route could not be loaded. You can retry, or keep using the demonstration map.",
   AUTH_REQUIRED: "Please sign in again to load the live route.",
   INVALID_AUTH_TOKEN: "Please sign in again to load the live route.",
 };
@@ -19,6 +37,13 @@ function formatDurationMinutes(seconds) {
   const minutes = seconds / 60;
   if (minutes < 1) return "< 1 min";
   return `${Math.round(minutes)} min`;
+}
+
+function loadButtonLabel(travelMode, { loading, canRefresh }) {
+  const title = TRAVEL_MODE_TITLE[travelMode] || "Route";
+  if (loading) return `Loading selected ${title.toLowerCase()} route…`;
+  if (canRefresh) return `Refresh Selected ${title} Route`;
+  return `Load Selected ${title} Route`;
 }
 
 export default function NavigationPreview({
@@ -34,9 +59,11 @@ export default function NavigationPreview({
   onBack,
   liveOriginName,
   liveDestinationName,
+  selectedTravelMode = "TRANSIT",
   liveRouteStatus = "idle",
   liveRoute = null,
   liveRouteError = null,
+  liveRouteSource = null,
   onLoadLiveRoute,
 }) {
   const lastIndex = stops.length - 1;
@@ -52,6 +79,16 @@ export default function NavigationPreview({
     (sum, segment) => sum + segment.estimatedDistanceKm,
     0
   );
+  const modeLabel = TRAVEL_MODE_LABEL[selectedTravelMode] || "Public transit";
+  const liveSuccess = liveRouteStatus === "success" && liveRoute;
+  const showWalkNotice =
+    selectedTravelMode === "WALK" && liveSuccess;
+  const canLoadDirect = typeof onLoadLiveRoute === "function";
+  const isLoading = liveRouteStatus === "loading";
+  const encodedPolyline =
+    liveSuccess && typeof liveRoute.encodedPolyline === "string"
+      ? liveRoute.encodedPolyline
+      : null;
 
   return (
     <section className="m2-grid" aria-label="Navigation preview">
@@ -59,6 +96,10 @@ export default function NavigationPreview({
         <h3>Navigation Preview</h3>
         <p className="m2-badge" style={{ marginBottom: 12 }}>
           Simulation
+        </p>
+        <p className="m2-muted">
+          Full-itinerary demonstration totals below stay separate from the live
+          first-segment route.
         </p>
         <dl className="m2-stat-row">
           <div className="m2-stat">
@@ -70,11 +111,11 @@ export default function NavigationPreview({
             <dd>{next ? next.name : "None"}</dd>
           </div>
           <div className="m2-stat">
-            <dt>Estimated remaining time</dt>
+            <dt>Demonstration remaining time</dt>
             <dd>{completed ? "0 min" : `${remainingMinutes} min`}</dd>
           </div>
           <div className="m2-stat">
-            <dt>Estimated remaining distance</dt>
+            <dt>Demonstration remaining distance</dt>
             <dd>{completed ? "0 km" : `${remainingKm.toFixed(1)} km`}</dd>
           </div>
         </dl>
@@ -161,10 +202,10 @@ export default function NavigationPreview({
         </ol>
       </article>
 
-      <article className="m2-card m2-live-route" aria-label="Live walking route">
+      <article className="m2-card m2-live-route" aria-label={`Live ${modeLabel.toLowerCase()} route`}>
         <div className="m2-live-route-head">
-          <h3>Live walking route</h3>
-          {liveRouteStatus === "success" ? (
+          <h3>Live {modeLabel.toLowerCase()} route</h3>
+          {liveSuccess ? (
             <span className="m2-source-badge m2-source-badge--live">
               Live Google Routes
             </span>
@@ -173,28 +214,40 @@ export default function NavigationPreview({
           )}
         </div>
         <p className="m2-muted">
-          This requests one paid walking route from your effective start to{" "}
-          {liveDestinationName}. Full-itinerary demonstration totals above are
-          unchanged.
+          Selected transport: {modeLabel}. This first-segment preview uses your
+          effective start to {liveDestinationName}. Full-itinerary demonstration
+          totals above are unchanged.
         </p>
         <div className="m2-live" aria-live="polite">
           {liveRouteStatus === "idle" ? (
             <p className="m2-muted">
-              No paid route request has been made yet.
+              No live route has been loaded for {modeLabel.toLowerCase()}. The
+              demonstration map markers remain visible.
             </p>
           ) : null}
-          {liveRouteStatus === "loading" ? (
+          {liveRouteStatus === "comparison-loading" ? (
             <p className="m2-status m2-status--loading">
-              Loading live walking route…
+              Live comparison is loading. This preview will reuse that result
+              when it finishes, without an extra request.
+            </p>
+          ) : null}
+          {isLoading ? (
+            <p className="m2-status m2-status--loading">
+              Loading selected {modeLabel.toLowerCase()} route…
             </p>
           ) : null}
           {liveRouteStatus === "error" ? (
             <p className="m2-status m2-status--error">
-              {LIVE_ERROR_MESSAGES[liveRouteError] || LIVE_ERROR_MESSAGES.UNAVAILABLE}
+              {LIVE_ERROR_MESSAGES[liveRouteError] ||
+                LIVE_ERROR_MESSAGES.UNAVAILABLE}
             </p>
           ) : null}
-          {liveRouteStatus === "success" && liveRoute ? (
+          {liveSuccess ? (
             <dl className="m2-stat-row">
+              <div className="m2-stat">
+                <dt>Selected transport</dt>
+                <dd>{modeLabel}</dd>
+              </div>
               <div className="m2-stat">
                 <dt>Origin</dt>
                 <dd>{liveOriginName}</dd>
@@ -204,46 +257,70 @@ export default function NavigationPreview({
                 <dd>{liveDestinationName}</dd>
               </div>
               <div className="m2-stat">
-                <dt>Live distance</dt>
+                <dt>Live first-segment distance</dt>
                 <dd>{formatDistanceKm(liveRoute.distanceMeters)}</dd>
               </div>
               <div className="m2-stat">
-                <dt>Live duration</dt>
+                <dt>Live first-segment duration</dt>
                 <dd>{formatDurationMinutes(liveRoute.durationSeconds)}</dd>
               </div>
+              {selectedTravelMode === "DRIVE" ? (
+                <div className="m2-stat">
+                  <dt>Traffic-aware routing</dt>
+                  <dd>{liveRoute.trafficAware ? "Yes" : "No"}</dd>
+                </div>
+              ) : null}
             </dl>
           ) : null}
-        </div>
-        <div className="m2-actions">
-          <button
-            type="button"
-            className="m2-btn"
-            onClick={onLoadLiveRoute}
-            disabled={liveRouteStatus === "loading" || !onLoadLiveRoute}
-          >
-            {liveRouteStatus === "loading"
-              ? "Loading live walking route…"
-              : "Load Live Walking Route"}
-          </button>
-          {liveRouteStatus === "error" ? (
-            <button
-              type="button"
-              className="m2-btn m2-btn--secondary"
-              onClick={onLoadLiveRoute}
-              disabled={!onLoadLiveRoute}
-            >
-              Retry
-            </button>
+          {liveSuccess && liveRouteSource === "comparison" ? (
+            <p className="m2-chip" style={{ marginTop: 12 }}>
+              Reused from live comparison
+            </p>
+          ) : null}
+          {liveSuccess && liveRouteSource === "direct" ? (
+            <p className="m2-chip" style={{ marginTop: 12 }}>
+              Loaded directly in Navigation Preview
+            </p>
           ) : null}
         </div>
+        {showWalkNotice ? (
+          <p className="m2-walk-notice" role="note">
+            Walking routes are in beta. Check sidewalks, pedestrian access, and
+            local conditions before travelling.
+          </p>
+        ) : null}
+        {canLoadDirect ? (
+          <div className="m2-actions">
+            <button
+              type="button"
+              className="m2-btn"
+              onClick={onLoadLiveRoute}
+              disabled={isLoading}
+            >
+              {loadButtonLabel(selectedTravelMode, {
+                loading: isLoading,
+                canRefresh: liveRouteSource === "direct",
+              })}
+            </button>
+            {liveRouteStatus === "error" ? (
+              <button
+                type="button"
+                className="m2-btn m2-btn--secondary"
+                onClick={onLoadLiveRoute}
+                disabled={isLoading}
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </article>
 
       <TripMap
         startLocation={startLocation}
         destinations={destinations}
-        encodedPolyline={
-          liveRouteStatus === "success" ? liveRoute?.encodedPolyline : null
-        }
+        encodedPolyline={encodedPolyline}
+        routeTravelMode={liveSuccess ? selectedTravelMode : null}
       />
     </section>
   );

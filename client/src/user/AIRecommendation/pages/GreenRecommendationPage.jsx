@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Layout from "../../../shared/components/Layout";
 import {
   mockGreenRecommendation,
   mockItinerary,
 } from "../data/mockModule2Data";
 import useCurrentLocation from "../hooks/useCurrentLocation";
-import useLiveWalkingRoute from "../hooks/useLiveWalkingRoute";
+import useLiveSelectedRoute from "../hooks/useLiveSelectedRoute";
 import useLiveTransportComparison from "../hooks/useLiveTransportComparison";
 import CurrentLocationCard from "../components/CurrentLocationCard";
 import ItinerarySummary from "../components/ItinerarySummary";
@@ -22,6 +22,80 @@ const TABS = [
 
 const RECOMMENDED_MODE = "public_transit";
 const FIRST_LIVE_DESTINATION_ID = "dest-perdana-botanical-garden";
+
+const OPTION_TO_TRAVEL_MODE = {
+  walking: "WALK",
+  public_transit: "TRANSIT",
+  driving: "DRIVE",
+};
+
+function resolveNavigationLiveRoute({
+  selectedTravelMode,
+  comparisonEntry,
+  comparisonStatus,
+  directStatus,
+  directRoute,
+  directError,
+}) {
+  const comparisonSuccess =
+    comparisonEntry?.status === "success" &&
+    comparisonEntry.route?.travelMode === selectedTravelMode
+      ? comparisonEntry.route
+      : null;
+  const comparisonFailed = comparisonEntry?.status === "error";
+  const directSuccess =
+    directStatus === "success" &&
+    directRoute?.travelMode === selectedTravelMode
+      ? directRoute
+      : null;
+
+  if (comparisonSuccess) {
+    return {
+      status: "success",
+      route: comparisonSuccess,
+      errorCode: null,
+      sourceKind: "comparison",
+    };
+  }
+  if (directSuccess) {
+    return {
+      status: "success",
+      route: directSuccess,
+      errorCode: null,
+      sourceKind: "direct",
+    };
+  }
+  if (directStatus === "loading") {
+    return {
+      status: "loading",
+      route: null,
+      errorCode: null,
+      sourceKind: null,
+    };
+  }
+  if (directStatus === "error") {
+    return {
+      status: "error",
+      route: null,
+      errorCode: directError,
+      sourceKind: null,
+    };
+  }
+  if (comparisonFailed) {
+    return {
+      status: "error",
+      route: null,
+      errorCode: comparisonEntry.code || "UNAVAILABLE",
+      sourceKind: null,
+    };
+  }
+  return {
+    status: comparisonStatus === "loading" ? "comparison-loading" : "idle",
+    route: null,
+    errorCode: null,
+    sourceKind: null,
+  };
+}
 
 export default function GreenRecommendationPage({ onNavigate }) {
   const [view, setView] = useState("recommendation");
@@ -40,14 +114,18 @@ export default function GreenRecommendationPage({ onNavigate }) {
       (destination) => destination.destinationId === FIRST_LIVE_DESTINATION_ID
     ) || mockItinerary.destinations[0];
 
+  const selectedTravelMode =
+    OPTION_TO_TRAVEL_MODE[selectedMode] || OPTION_TO_TRAVEL_MODE[RECOMMENDED_MODE];
+
   const {
-    status: liveRouteStatus,
-    route: liveRoute,
-    errorCode: liveRouteError,
-    loadRoute: loadLiveWalkingRoute,
-  } = useLiveWalkingRoute({
+    status: directRouteStatus,
+    route: directRoute,
+    errorCode: directRouteError,
+    loadRoute: loadSelectedLiveRoute,
+  } = useLiveSelectedRoute({
     origin: location,
     destination: firstLiveDestination,
+    travelMode: selectedTravelMode,
   });
 
   const {
@@ -59,6 +137,26 @@ export default function GreenRecommendationPage({ onNavigate }) {
     origin: location,
     destination: firstLiveDestination,
   });
+
+  const navigationLive = useMemo(
+    () =>
+      resolveNavigationLiveRoute({
+        selectedTravelMode,
+        comparisonEntry: liveComparisonResults?.[selectedTravelMode] ?? null,
+        comparisonStatus: liveComparisonStatus,
+        directStatus: directRouteStatus,
+        directRoute,
+        directError: directRouteError,
+      }),
+    [
+      selectedTravelMode,
+      liveComparisonResults,
+      liveComparisonStatus,
+      directRouteStatus,
+      directRoute,
+      directRouteError,
+    ]
+  );
 
   const startLocationName =
     location.source === "device"
@@ -178,11 +276,20 @@ export default function GreenRecommendationPage({ onNavigate }) {
               onNext={handleNextDestination}
               onBack={showRecommendation}
               liveOriginName={startLocationName}
-              liveDestinationName={firstLiveDestination?.name || "Perdana Botanical Garden"}
-              liveRouteStatus={liveRouteStatus}
-              liveRoute={liveRoute}
-              liveRouteError={liveRouteError}
-              onLoadLiveRoute={loadLiveWalkingRoute}
+              liveDestinationName={
+                firstLiveDestination?.name || "Perdana Botanical Garden"
+              }
+              selectedTravelMode={selectedTravelMode}
+              liveRouteStatus={navigationLive.status}
+              liveRoute={navigationLive.route}
+              liveRouteError={navigationLive.errorCode}
+              liveRouteSource={navigationLive.sourceKind}
+              onLoadLiveRoute={
+                navigationLive.sourceKind === "comparison" ||
+                liveComparisonStatus === "loading"
+                  ? undefined
+                  : loadSelectedLiveRoute
+              }
             />
           ) : null}
         </div>

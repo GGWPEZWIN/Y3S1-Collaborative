@@ -7,10 +7,12 @@ import {
 
 export const COMPARISON_TRAVEL_MODES = ["WALK", "TRANSIT", "DRIVE"];
 
-function summarizeRoute(route) {
+function keepReusableRoute(route) {
   return {
     distanceMeters: route.distanceMeters,
     durationSeconds: route.durationSeconds,
+    staticDurationSeconds: route.staticDurationSeconds ?? null,
+    encodedPolyline: route.encodedPolyline,
     travelMode: route.travelMode,
     trafficAware: Boolean(route.trafficAware),
     source: route.source,
@@ -106,7 +108,7 @@ export default function useLiveTransportComparison({ origin, destination }) {
         if (entry.status === "fulfilled") {
           nextResults[travelMode] = {
             status: "success",
-            route: summarizeRoute(entry.value),
+            route: keepReusableRoute(entry.value),
           };
           successCount += 1;
           return;

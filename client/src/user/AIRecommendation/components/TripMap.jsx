@@ -56,10 +56,23 @@ function clearPolyline(polylineRef) {
   }
 }
 
+function polylineColor(travelMode) {
+  if (travelMode === "TRANSIT") return "#2563eb";
+  if (travelMode === "DRIVE") return "#ea580c";
+  return "#16a34a";
+}
+
+function polylineLabel(travelMode) {
+  if (travelMode === "TRANSIT") return "Public transit (blue)";
+  if (travelMode === "DRIVE") return "Driving (orange)";
+  return "Walking (green)";
+}
+
 export default function TripMap({
   startLocation,
   destinations = [],
   encodedPolyline = null,
+  routeTravelMode = null,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -222,7 +235,7 @@ export default function TripMap({
         polylineRef.current = new api.Polyline({
           map: mapRef.current,
           path,
-          strokeColor: "#16a34a",
+          strokeColor: polylineColor(routeTravelMode),
           strokeOpacity: 0.92,
           strokeWeight: 5,
           geodesic: true,
@@ -246,7 +259,7 @@ export default function TripMap({
       cancelled = true;
       clearPolyline(polylineRef);
     };
-  }, [encodedPolyline, status]);
+  }, [encodedPolyline, routeTravelMode, status]);
 
   const statusMessage =
     status === "loading"
@@ -284,10 +297,19 @@ export default function TripMap({
           aria-label="Map showing the trip starting point and demonstration destinations"
         />
       </div>
+      {encodedPolyline && routeTravelMode ? (
+        <p className="m2-route-legend" role="note">
+          <span
+            className={`m2-route-swatch m2-route-swatch--${routeTravelMode.toLowerCase()}`}
+            aria-hidden="true"
+          />
+          Displayed first-segment route: {polylineLabel(routeTravelMode)}
+        </p>
+      ) : null}
       <p className="m2-map-note">
         {encodedPolyline
-          ? "The green line is a live walking route for the first itinerary segment only. Other markers remain demonstration destinations."
-          : "The Google basemap is shown when a Maps JavaScript API key is configured. Markers use the demonstration itinerary. A live walking line is drawn only after you load the first segment."}
+          ? "The coloured line is the selected live route for the first itinerary segment only. Other markers remain demonstration destinations."
+          : "The Google basemap is shown when a Maps JavaScript API key is configured. Markers use the demonstration itinerary. A live route line is drawn only after a selected first-segment route is available."}
       </p>
     </section>
   );
