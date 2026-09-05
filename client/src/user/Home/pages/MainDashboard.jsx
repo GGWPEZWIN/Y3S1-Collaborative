@@ -1,4 +1,4 @@
-import {
+import React, {
   useEffect,
   useState,
 } from "react";
@@ -15,16 +15,15 @@ import {
 } from "lucide-react";
 
 import Layout from "../../../shared/components/Layout";
-
 import StatCard from "../../../shared/components/StatCard";
 
+// IMPORTANT:
+// Your actual file name is achievementCard.jsx
+import AchievementCard from "../../../shared/components/achievementCard";
+
 import QuickActionCard from "../components/QuickActionCard";
-
 import ActiveTripRow from "../components/ActiveTripRow";
-
 import ChallengeRow from "../components/ChallengeRow";
-
-import AchievementCard from "../../../shared/components/AchievementCard";
 
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
 
@@ -35,8 +34,10 @@ import {
 } from "../services/Homedashboard";
 
 import {
-  listenToAchievements,
+  listenToPublishedAchievements,
 } from "../../../firebase/achievementService";
+
+
 
 const STAT_ICONS = {
   "Eco Score": {
@@ -60,6 +61,7 @@ const STAT_ICONS = {
   },
 };
 
+
 export default function MainDashboard({
   onNavigate,
 }) {
@@ -69,23 +71,19 @@ export default function MainDashboard({
     loading,
   } = useCurrentUser();
 
-  const [stats, setStats] =
-    useState([]);
+  const [stats, setStats] = useState([]);
+  const [trips, setTrips] = useState([]);
+  const [challenges, setChallenges] = useState([]);
 
-  const [trips, setTrips] =
-    useState([]);
-
-  const [challenges, setChallenges] =
-    useState([]);
-
+  // All published achievements from Firebase
   const [achievements, setAchievements] =
     useState([]);
 
-  /*
-  |--------------------------------------------------------------------------
-  | Load dashboard data
-  |--------------------------------------------------------------------------
-  */
+
+
+  // ============================================================
+  // LOAD DASHBOARD DATA
+  // ============================================================
 
   useEffect(() => {
     getSummaryStats().then(setStats);
@@ -97,20 +95,28 @@ export default function MainDashboard({
     );
   }, []);
 
-  /*
-  |--------------------------------------------------------------------------
-  | Listen to achievements from Firestore
-  |--------------------------------------------------------------------------
-  */
+
+  // ============================================================
+  // LISTEN TO ADMIN-CREATED PUBLISHED ACHIEVEMENTS
+  // ============================================================
 
   useEffect(() => {
     const unsubscribe =
-      listenToAchievements((list) => {
-        setAchievements(list);
-      });
+      listenToPublishedAchievements(
+        (list) => {
+          setAchievements(list);
+        }
+      );
 
     return unsubscribe;
   }, []);
+
+
+
+
+  // ============================================================
+  // LOADING
+  // ============================================================
 
   if (loading) {
     return (
@@ -121,6 +127,11 @@ export default function MainDashboard({
       </div>
     );
   }
+
+
+  // ============================================================
+  // LOGIN CHECK
+  // ============================================================
 
   if (!authUser || !profile) {
     return (
@@ -142,100 +153,98 @@ export default function MainDashboard({
     );
   }
 
+
+  // ============================================================
+  // USER
+  // ============================================================
+
   const user = {
     name: profile.name,
+
     ecoScore:
       profile.eco_score ?? 0,
   };
 
-  /*
-  |--------------------------------------------------------------------------
-  | User progress
-  |--------------------------------------------------------------------------
-  |
-  | Adjust these fields if your Firestore user
-  | document uses different names.
-  |
-  */
+
+  // ============================================================
+  // USER PROGRESS
+  // ============================================================
 
   const userProgress = {
-    trips_completed:
-      Number(
-        profile.trips_completed ??
-          profile.completed_trips ??
-          0
-      ),
+    trips_completed: Number(
+      profile.trips_completed ??
+        profile.completed_trips ??
+        0
+    ),
 
-    eco_score:
-      Number(
-        profile.eco_score ?? 0
-      ),
+    eco_score: Number(
+      profile.eco_score ?? 0
+    ),
 
-    carbon_saved:
-      Number(
-        profile.carbon_saved ?? 0
-      ),
+    carbon_saved: Number(
+      profile.carbon_saved ?? 0
+    ),
 
-    challenges_completed:
-      Number(
-        profile.challenges_completed ??
-          0
-      ),
+    challenges_completed: Number(
+      profile.challenges_completed ?? 0
+    ),
 
-    community_posts:
-      Number(
-        profile.community_posts ?? 0
-      ),
+    community_posts: Number(
+      profile.community_posts ?? 0
+    ),
 
-    waste_reduced:
-      Number(
-        profile.waste_reduced ?? 0
-      ),
+    waste_reduced: Number(
+      profile.waste_reduced ?? 0
+    ),
   };
 
-  /*
-  |--------------------------------------------------------------------------
-  | Determine whether each achievement is unlocked
-  |--------------------------------------------------------------------------
-  */
+
+  // ============================================================
+  // CALCULATE ACHIEVEMENT STATUS
+  // ============================================================
 
   const achievementsWithStatus =
     achievements.map(
       (achievement) => {
         const ruleType =
-          achievement.rule_type ||
+          achievement.ruleType ||
           "trips_completed";
 
-        const target =
+        const target = Math.max(
           Number(
-            achievement.rule_target
-          ) || 1;
+            achievement.ruleTarget
+          ) || 1,
+          1
+        );
 
         const progress =
-          userProgress[
-            ruleType
-          ] ?? 0;
+          userProgress[ruleType] ?? 0;
 
         const unlocked =
           progress >= target;
 
         return {
           ...achievement,
+
           unlocked,
+
           progress,
-          ruleTarget: target,
+
+          ruleTarget:
+            target,
+
           ruleUnit:
-            achievement.rule_unit ||
-            "",
+            achievement.ruleUnit || "",
         };
       }
     );
 
-  /*
-  |--------------------------------------------------------------------------
-  | Sort unlocked achievements first
-  |--------------------------------------------------------------------------
-  */
+
+  // ============================================================
+  // SORT ACHIEVEMENTS
+  // UNLOCKED FIRST
+  // THEN NEWEST
+  // ============================================================
 
   const sortedAchievements =
     [...achievementsWithStatus].sort(
@@ -254,15 +263,22 @@ export default function MainDashboard({
           return 1;
         }
 
-        return 0;
+        const dateA =
+          a.createdAt?.toMillis?.() || 0;
+
+        const dateB =
+          b.createdAt?.toMillis?.() || 0;
+
+        return dateB - dateA;
       }
     );
 
-  /*
-  |--------------------------------------------------------------------------
-  | Quick actions
-  |--------------------------------------------------------------------------
-  */
+
+
+
+  // ============================================================
+  // QUICK ACTIONS
+  // ============================================================
 
   const QUICK_ACTIONS = [
     {
@@ -298,11 +314,11 @@ export default function MainDashboard({
     },
   ];
 
-  const unlockedCount =
-    sortedAchievements.filter(
-      (achievement) =>
-        achievement.unlocked
-    ).length;
+
+
+  // ============================================================
+  // DASHBOARD
+  // ============================================================
 
   return (
     <Layout
@@ -311,6 +327,11 @@ export default function MainDashboard({
       onNavigate={onNavigate}
     >
       <div style={styles.content}>
+
+        {/* ======================================================
+            PAGE HEADER
+            ====================================================== */}
+
         <h1 style={styles.pageTitle}>
           Welcome back, {user.name}!
         </h1>
@@ -320,7 +341,10 @@ export default function MainDashboard({
           every trip sustainable
         </p>
 
-        {/* Stats */}
+
+        {/* ======================================================
+            STATS
+            ====================================================== */}
 
         <div style={styles.statGrid}>
           {stats.map((stat) => (
@@ -346,7 +370,10 @@ export default function MainDashboard({
           ))}
         </div>
 
-        {/* Quick actions */}
+
+        {/* ======================================================
+            QUICK ACTIONS
+            ====================================================== */}
 
         <div
           style={{
@@ -380,9 +407,15 @@ export default function MainDashboard({
           </div>
         </div>
 
-        {/* Active trips + challenges */}
+
+        {/* ======================================================
+            ACTIVE TRIPS + CHALLENGES
+            ====================================================== */}
 
         <div style={styles.twoCol}>
+
+          {/* ACTIVE TRIPS */}
+
           <div style={styles.card}>
             <div style={styles.rowHeader}>
               <span
@@ -404,11 +437,13 @@ export default function MainDashboard({
               </div>
             </div>
 
-            <div style={{ marginTop: 16 }}>
+            <div
+              style={{
+                marginTop: 16,
+              }}
+            >
               {trips.length === 0 ? (
-                <div
-                  style={styles.noData}
-                >
+                <div style={styles.noData}>
                   No active trips.
                 </div>
               ) : (
@@ -421,6 +456,9 @@ export default function MainDashboard({
               )}
             </div>
           </div>
+
+
+          {/* FEATURED CHALLENGES */}
 
           <div style={styles.card}>
             <div style={styles.rowHeader}>
@@ -443,20 +481,20 @@ export default function MainDashboard({
               </div>
             </div>
 
-            <div style={{ marginTop: 16 }}>
+            <div
+              style={{
+                marginTop: 16,
+              }}
+            >
               {challenges.length === 0 ? (
-                <div
-                  style={styles.noData}
-                >
+                <div style={styles.noData}>
                   No featured challenges.
                 </div>
               ) : (
                 challenges.map(
                   (challenge) => (
                     <ChallengeRow
-                      key={
-                        challenge.title
-                      }
+                      key={challenge.title}
                       {...challenge}
                     />
                   )
@@ -466,7 +504,10 @@ export default function MainDashboard({
           </div>
         </div>
 
-        {/* Achievements */}
+
+        {/* ======================================================
+            ACHIEVEMENTS
+            ====================================================== */}
 
         <div
           style={{
@@ -475,10 +516,19 @@ export default function MainDashboard({
             marginBottom: 32,
           }}
         >
-          <div style={styles.achievementHeader}>
+
+          {/* HEADER */}
+
+          <div
+            style={
+              styles.achievementHeader
+            }
+          >
             <div>
               <div
-                style={styles.sectionTitle}
+                style={
+                  styles.sectionTitle
+                }
               >
                 Achievements
               </div>
@@ -488,23 +538,48 @@ export default function MainDashboard({
                   styles.sectionSubtitle
                 }
               >
-                {unlockedCount === 0
-                  ? "You haven't unlocked any achievements yet."
-                  : `${unlockedCount} achievement${
-                      unlockedCount !== 1
-                        ? "s"
-                        : ""
-                    } unlocked`}
+                {achievements.length === 0
+                  ? "No achievements available yet."
+                  : "View your latest achievements and track your progress."}
               </p>
             </div>
 
+
+            {/* RIGHT SIDE */}
+
             <div
-              style={styles.achievementCount}
+              style={
+                styles.achievementActions
+              }
             >
-              {unlockedCount}/
-              {sortedAchievements.length}
+
+              {/* VIEW MORE */}
+
+              {sortedAchievements.length >
+                0 && (
+                <button
+                  type="button"
+                  style={
+                    styles.viewMoreButton
+                  }
+                  onClick={() =>
+                    onNavigate?.(
+                      "/community/achievements"
+                    )
+                  }
+                >
+                  View More
+                  <ChevronRight size={16} />
+                </button>
+              )}
+
             </div>
           </div>
+
+
+          {/* ====================================================
+              NO ACHIEVEMENTS
+              ==================================================== */}
 
           {sortedAchievements.length ===
           0 ? (
@@ -539,56 +614,73 @@ export default function MainDashboard({
               </div>
             </div>
           ) : (
+
+            /* ==================================================
+               ONLY SHOW FIRST 3
+               ================================================== */
+
             <div
               style={
                 styles.achievementGrid
               }
             >
-              {sortedAchievements.map(
-                (achievement) => (
-                  <AchievementCard
-                    key={
-                      achievement.id
-                    }
-                    title={
-                      achievement.title
-                    }
-                    description={
-                      achievement.description
-                    }
-                    category={
-                      achievement.category
-                    }
-                    icon={
-                      achievement.icon
-                    }
-                    points={
-                      achievement.points
-                    }
-                    unlocked={
-                      achievement.unlocked
-                    }
-                    progress={
-                      achievement.progress
-                    }
-                    ruleTarget={
-                      achievement.ruleTarget
-                    }
-                    ruleUnit={
-                      achievement.ruleUnit
-                    }
-                  />
-                )
-              )}
+              {sortedAchievements
+                .slice(0, 3)
+                .map(
+                  (achievement) => (
+                    <AchievementCard
+                      key={achievement.id}
+                      title={
+                        achievement.title
+                      }
+                      description={
+                        achievement.description
+                      }
+                      category={
+                        achievement.category
+                      }
+                      icon={
+                        achievement.icon
+                      }
+                      iconUrl={
+                        achievement.iconUrl ||
+                        ""
+                      }
+                      points={
+                        achievement.points
+                      }
+                      unlocked={
+                        achievement.unlocked
+                      }
+                      progress={
+                        achievement.progress
+                      }
+                      ruleTarget={
+                        achievement.ruleTarget
+                      }
+                      ruleUnit={
+                        achievement.ruleUnit
+                      }
+                    />
+                  )
+                )}
             </div>
           )}
+
         </div>
+
       </div>
     </Layout>
   );
 }
 
+
+/* ================================================================
+   STYLES
+   ================================================================ */
+
 const styles = {
+
   loadingPage: {
     minHeight: "100vh",
     display: "flex",
@@ -679,8 +771,7 @@ const styles = {
 
   rowHeader: {
     display: "flex",
-    justifyContent:
-      "space-between",
+    justifyContent: "space-between",
     alignItems: "center",
   },
 
@@ -700,20 +791,35 @@ const styles = {
     padding: "15px 0",
   },
 
+
+
+  /* ==============================================================
+     ACHIEVEMENT HEADER
+     ============================================================== */
+
   achievementHeader: {
     display: "flex",
     alignItems: "flex-start",
-    justifyContent:
-      "space-between",
+    justifyContent: "space-between",
   },
 
-  achievementCount: {
-    padding: "7px 10px",
-    borderRadius: 999,
-    background: "#f0fdf4",
-    color: "#15803d",
-    fontSize: 12,
-    fontWeight: 800,
+  achievementActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+  },
+
+  viewMoreButton: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    border: "none",
+    background: "transparent",
+    color: "#374151",
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: "pointer",
+    padding: 0,
   },
 
   achievementGrid: {
