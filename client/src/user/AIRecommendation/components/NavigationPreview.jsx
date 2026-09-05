@@ -7,6 +7,8 @@ const LIVE_ERROR_MESSAGES = {
   ROUTES_TIMEOUT: "The live route request timed out. You can retry, or keep using the demonstration map.",
   ROUTES_UPSTREAM_ERROR: "The live walking route could not be loaded. You can retry, or keep using the demonstration map.",
   UNAVAILABLE: "The live walking route could not be loaded. You can retry, or keep using the demonstration map.",
+  AUTH_REQUIRED: "Please sign in again to load the live route.",
+  INVALID_AUTH_TOKEN: "Please sign in again to load the live route.",
 };
 
 function formatDistanceKm(meters) {

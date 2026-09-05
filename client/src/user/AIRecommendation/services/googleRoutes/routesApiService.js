@@ -1,3 +1,5 @@
+import { auth } from "../../../../firebase/config";
+
 export const ROUTES_CLIENT_ERROR = {
   INVALID_ROUTE_REQUEST: "INVALID_ROUTE_REQUEST",
   ROUTES_NOT_CONFIGURED: "ROUTES_NOT_CONFIGURED",
@@ -6,6 +8,8 @@ export const ROUTES_CLIENT_ERROR = {
   ROUTES_UPSTREAM_ERROR: "ROUTES_UPSTREAM_ERROR",
   UNAVAILABLE: "UNAVAILABLE",
   ABORTED: "ABORTED",
+  AUTH_REQUIRED: "AUTH_REQUIRED",
+  INVALID_AUTH_TOKEN: "INVALID_AUTH_TOKEN",
 };
 
 const KNOWN_BACKEND_CODES = new Set([
@@ -14,6 +18,8 @@ const KNOWN_BACKEND_CODES = new Set([
   ROUTES_CLIENT_ERROR.ROUTE_NOT_FOUND,
   ROUTES_CLIENT_ERROR.ROUTES_TIMEOUT,
   ROUTES_CLIENT_ERROR.ROUTES_UPSTREAM_ERROR,
+  ROUTES_CLIENT_ERROR.AUTH_REQUIRED,
+  ROUTES_CLIENT_ERROR.INVALID_AUTH_TOKEN,
 ]);
 
 export class RoutesClientError extends Error {
@@ -70,12 +76,28 @@ export async function computeRoute({
     throw new RoutesClientError(ROUTES_CLIENT_ERROR.INVALID_ROUTE_REQUEST);
   }
 
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new RoutesClientError(ROUTES_CLIENT_ERROR.AUTH_REQUIRED);
+  }
+
+  let idToken;
+  try {
+    idToken = await currentUser.getIdToken();
+  } catch {
+    throw new RoutesClientError(ROUTES_CLIENT_ERROR.AUTH_REQUIRED);
+  }
+  if (typeof idToken !== "string" || idToken.trim() === "") {
+    throw new RoutesClientError(ROUTES_CLIENT_ERROR.AUTH_REQUIRED);
+  }
+
   let response;
   try {
     response = await fetch("/api/routes/compute", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
       },
       body: JSON.stringify({
         origin: {
