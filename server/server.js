@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./loadEnv.js";
 import { initFirebaseAdmin } from "./src/config/firebaseAdmin.js";
 import app from "./src/app.js";
 
