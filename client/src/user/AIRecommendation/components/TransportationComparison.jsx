@@ -1,3 +1,5 @@
+import { estimateTripSustainability } from "../services/sustainability/carbonCalculator";
+
 const OPTION_TRAVEL_MODE = {
   walking: "WALK",
   public_transit: "TRANSIT",
@@ -12,6 +14,13 @@ const MODE_UNAVAILABLE = {
 
 function formatDistanceKm(meters) {
   return `${(meters / 1000).toFixed(1)} km`;
+}
+
+function formatCarbonKg(carbonKgCo2e) {
+  if (carbonKgCo2e < 1) {
+    return `${carbonKgCo2e.toFixed(3)} kg CO₂e`;
+  }
+  return `${carbonKgCo2e.toFixed(2)} kg CO₂e`;
 }
 
 function formatDurationMinutes(seconds) {
@@ -46,8 +55,8 @@ export default function TransportationComparison({
         <p className="m2-muted">
           Clicking the button requests up to three live routes (WALK, TRANSIT,
           and DRIVE) from {liveOriginName} to {liveDestinationName}. This is
-          the first itinerary segment only. Carbon and Eco-Score figures remain
-          demonstration estimates.
+          the first itinerary segment only. Carbon and Eco-Score are calculated
+          locally from each successful live distance.
         </p>
         <div className="m2-live" aria-live="polite">
           {liveComparisonStatus === "idle" ? (
@@ -105,6 +114,12 @@ export default function TransportationComparison({
             live?.status === "error" &&
             liveComparisonError !== "AUTH_REQUIRED" &&
             liveComparisonError !== "INVALID_AUTH_TOKEN";
+          const estimate = liveSuccess
+            ? estimateTripSustainability({
+                distanceMeters: liveSuccess.distanceMeters,
+                travelMode: liveSuccess.travelMode || travelMode,
+              })
+            : null;
 
           return (
             <button
@@ -153,12 +168,18 @@ export default function TransportationComparison({
                   </dd>
                 </div>
                 <div className="m2-stat">
-                  <dt>Demo carbon estimate</dt>
-                  <dd>{option.estimatedCarbonKg} kg CO₂e</dd>
+                  <dt>
+                    {estimate ? "Calculated carbon estimate" : "Demo carbon estimate"}
+                  </dt>
+                  <dd>
+                    {estimate
+                      ? formatCarbonKg(estimate.carbonKgCo2e)
+                      : `${option.estimatedCarbonKg} kg CO₂e`}
+                  </dd>
                 </div>
                 <div className="m2-stat">
-                  <dt>Demo Eco-Score</dt>
-                  <dd>{option.demoEcoScore}</dd>
+                  <dt>{estimate ? "Prototype Eco-Score" : "Demo Eco-Score"}</dt>
+                  <dd>{estimate ? estimate.ecoScore : option.demoEcoScore}</dd>
                 </div>
               </dl>
               {liveFailed ? (
@@ -186,6 +207,37 @@ export default function TransportationComparison({
           );
         })}
       </div>
+
+      <article className="m2-card m2-carbon-explainer" aria-labelledby="m2-carbon-explainer-title">
+        <h3 id="m2-carbon-explainer-title">How these estimates are calculated</h3>
+        <p className="m2-muted">
+          After a live route loads, carbon is calculated locally as distance in
+          kilometres multiplied by a prototype emission factor. The Prototype
+          Eco-Score is a screening label, not an official environmental
+          certification or AI model result. These UK Government 2026 conversion
+          factors are a prototype screening method and are not Malaysia-specific.
+        </p>
+        <ul className="m2-list">
+          <li>WALK: 0 kg CO₂e per passenger-km</li>
+          <li>TRANSIT: 0.10151 kg CO₂e per passenger-km (average local bus)</li>
+          <li>DRIVE: 0.16591 kg CO₂e per km (average car, unknown fuel)</li>
+        </ul>
+        <p className="m2-muted" style={{ marginTop: 12 }}>
+          Eco-Score = round(clamp(100 − (factor ÷ drive factor) × 45, 0, 100)).
+          Walking scores 100, transit about 72, and driving 55.
+        </p>
+        <p className="m2-muted">
+          Source:{" "}
+          <a
+            href="https://www.gov.uk/government/publications/greenhouse-gas-reporting-conversion-factors-2026"
+            target="_blank"
+            rel="noreferrer"
+          >
+            UK Government greenhouse gas reporting conversion factors 2026
+          </a>
+        </p>
+      </article>
+
       <div className="m2-actions">
         <button type="button" className="m2-btn" onClick={onUseRecommended}>
           Use Recommended Option
