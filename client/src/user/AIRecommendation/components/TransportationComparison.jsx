@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { estimateTripSustainability } from "../services/sustainability/carbonCalculator";
+import { rankGreenRoutes } from "../services/sustainability/greenRouteRanker";
 
 const OPTION_TRAVEL_MODE = {
   walking: "WALK",
@@ -29,6 +31,68 @@ function formatDurationMinutes(seconds) {
   return `${Math.round(minutes)} min`;
 }
 
+const TRAVEL_TO_OPTION = {
+  WALK: "walking",
+  TRANSIT: "public_transit",
+  DRIVE: "driving",
+};
+
+const MODE_LABEL = {
+  WALK: "Walking",
+  TRANSIT: "Public transit",
+  DRIVE: "Driving",
+};
+
+function liveCandidatesFromResults(liveComparisonResults) {
+  if (!liveComparisonResults) return [];
+  return ["WALK", "TRANSIT", "DRIVE"].flatMap((travelMode) => {
+    const entry = liveComparisonResults[travelMode];
+    if (entry?.status !== "success" || !entry.route) return [];
+    return [
+      {
+        travelMode,
+        distanceMeters: entry.route.distanceMeters,
+        durationSeconds: entry.route.durationSeconds,
+      },
+    ];
+  });
+}
+
+function rankingExplanation(ranking) {
+  if (ranking.onlyOption && ranking.recommended) {
+    const rec = ranking.recommended;
+    return `${MODE_LABEL[rec.travelMode]} is the only live option available for this first segment. Live duration ${formatDurationMinutes(rec.durationSeconds)}. Calculated carbon estimate ${formatCarbonKg(rec.carbonKgCo2e)}. Green ranking score ${rec.rankingScore}.`;
+  }
+  if (!ranking.comparative || !ranking.recommended) return null;
+  const rec = ranking.recommended;
+  const others = rec.reason.comparedTo
+    .map((other) => `${MODE_LABEL[other.travelMode]} (score ${other.rankingScore})`)
+    .join(" and ");
+  const sentences = [
+    `${MODE_LABEL[rec.travelMode]} is recommended for this first segment.`,
+    `Live duration ${formatDurationMinutes(rec.durationSeconds)}. Calculated carbon estimate ${formatCarbonKg(rec.carbonKgCo2e)}. Green ranking score ${rec.rankingScore}.`,
+  ];
+  if (others) {
+    sentences.push(`It ranked above ${others}.`);
+  }
+  if (rec.travelMode === "TRANSIT") {
+    sentences.push("Transit balances emissions and duration.");
+  }
+  const walk = ranking.ranked.find((item) => item.travelMode === "WALK");
+  if (walk?.walkingPenaltyApplied) {
+    sentences.push(
+      "Walking has zero direct operational emissions but exceeded the walking practicality threshold."
+    );
+  }
+  if (
+    ranking.ranked.some((item) => item.travelMode === "DRIVE") &&
+    rec.travelMode !== "DRIVE"
+  ) {
+    sentences.push("Driving is faster but has higher calculated emissions.");
+  }
+  return sentences.join(" ");
+}
+
 export default function TransportationComparison({
   options,
   selectedMode,
@@ -47,6 +111,30 @@ export default function TransportationComparison({
     liveComparisonStatus === "success" || liveComparisonStatus === "error";
   const walkLive = liveComparisonResults?.WALK;
   const showWalkNotice = walkLive?.status === "success";
+  const ranking = useMemo(
+    () =>
+      liveComparisonStatus === "success"
+        ? rankGreenRoutes(liveCandidatesFromResults(liveComparisonResults))
+        : rankGreenRoutes([]),
+    [liveComparisonStatus, liveComparisonResults]
+  );
+  const rankingByMode = useMemo(() => {
+    const byMode = {};
+    ranking.ranked.forEach((entry) => {
+      byMode[entry.travelMode] = entry;
+    });
+    return byMode;
+  }, [ranking]);
+  const explanation = rankingExplanation(ranking);
+  const hasLiveRanking = ranking.ranked.length > 0;
+
+  function handleUseRecommended() {
+    if (ranking.recommended) {
+      onUseRecommended(TRAVEL_TO_OPTION[ranking.recommended.travelMode]);
+      return;
+    }
+    onUseRecommended();
+  }
 
   return (
     <section aria-label="Compare transport">
@@ -55,8 +143,8 @@ export default function TransportationComparison({
         <p className="m2-muted">
           Clicking the button requests up to three live routes (WALK, TRANSIT,
           and DRIVE) from {liveOriginName} to {liveDestinationName}. This is
-          the first itinerary segment only. Carbon and Eco-Score are calculated
-          locally from each successful live distance.
+          the first itinerary segment only. Carbon, Eco-Score, and ranking are
+          calculated locally from each successful live distance.
         </p>
         <div className="m2-live" aria-live="polite">
           {liveComparisonStatus === "idle" ? (
@@ -120,6 +208,11 @@ export default function TransportationComparison({
                 travelMode: liveSuccess.travelMode || travelMode,
               })
             : null;
+          const rankedEntry = travelMode ? rankingByMode[travelMode] : null;
+          const showPrototypeBadge = !hasLiveRanking && option.isRecommended;
+          const showRecommendedBadge =
+            ranking.comparative && rankedEntry?.rank === 1;
+          const showOnlyOptionBadge = ranking.onlyOption && rankedEntry;
 
           return (
             <button
@@ -135,9 +228,20 @@ export default function TransportationComparison({
             >
               <div className="m2-mode-head">
                 <h3>{option.label}</h3>
-                {option.isRecommended ? (
-                  <span className="m2-rec-badge">Prototype recommendation</span>
-                ) : null}
+                <div className="m2-mode-badges">
+                  {rankedEntry ? (
+                    <span className="m2-rank-badge">Rank {rankedEntry.rank}</span>
+                  ) : null}
+                  {showRecommendedBadge ? (
+                    <span className="m2-rec-badge">Recommended</span>
+                  ) : null}
+                  {showOnlyOptionBadge ? (
+                    <span className="m2-rec-badge">Only live option available</span>
+                  ) : null}
+                  {showPrototypeBadge ? (
+                    <span className="m2-rec-badge">Prototype recommendation</span>
+                  ) : null}
+                </div>
               </div>
               {liveSuccess ? (
                 <div className="m2-mode-live-meta">
@@ -147,6 +251,9 @@ export default function TransportationComparison({
                   <span className="m2-chip">{liveSuccess.travelMode}</span>
                   {liveSuccess.travelMode === "DRIVE" && liveSuccess.trafficAware ? (
                     <span className="m2-chip">Traffic-aware routing</span>
+                  ) : null}
+                  {rankedEntry ? (
+                    <span className="m2-chip">Transparent rule-based prototype</span>
                   ) : null}
                 </div>
               ) : null}
@@ -181,6 +288,12 @@ export default function TransportationComparison({
                   <dt>{estimate ? "Prototype Eco-Score" : "Demo Eco-Score"}</dt>
                   <dd>{estimate ? estimate.ecoScore : option.demoEcoScore}</dd>
                 </div>
+                {rankedEntry ? (
+                  <div className="m2-stat">
+                    <dt>Green ranking score</dt>
+                    <dd>{rankedEntry.rankingScore}</dd>
+                  </div>
+                ) : null}
               </dl>
               {liveFailed ? (
                 <p className="m2-status m2-status--error" style={{ marginTop: 12 }}>
@@ -207,6 +320,31 @@ export default function TransportationComparison({
           );
         })}
       </div>
+
+      {explanation ? (
+        <article className="m2-card m2-ranking-explainer" aria-labelledby="m2-ranking-reason-title">
+          <h3 id="m2-ranking-reason-title">Recommendation explanation</h3>
+          <p className="m2-chip">Transparent rule-based prototype</p>
+          <p>{explanation}</p>
+        </article>
+      ) : null}
+
+      <article className="m2-card m2-ranking-explainer" aria-labelledby="m2-ranking-how-title">
+        <h3 id="m2-ranking-how-title">How ranking works</h3>
+        <p className="m2-chip">Transparent rule-based prototype</p>
+        <p className="m2-muted">
+          Successful live WALK, TRANSIT, and DRIVE options for the current
+          first segment are ranked locally from calculated facts. This is not
+          machine learning and does not reorder destinations.
+        </p>
+        <ul className="m2-list">
+          <li>Sustainability/Eco-Score weight: 70%</li>
+          <li>Duration efficiency weight: 30%</li>
+          <li>
+            Walking practicality adjustment: −15 when over 45 minutes or 4 km
+          </li>
+        </ul>
+      </article>
 
       <article className="m2-card m2-carbon-explainer" aria-labelledby="m2-carbon-explainer-title">
         <h3 id="m2-carbon-explainer-title">How these estimates are calculated</h3>
@@ -239,7 +377,7 @@ export default function TransportationComparison({
       </article>
 
       <div className="m2-actions">
-        <button type="button" className="m2-btn" onClick={onUseRecommended}>
+        <button type="button" className="m2-btn" onClick={handleUseRecommended}>
           Use Recommended Option
         </button>
         <button

@@ -150,7 +150,9 @@ export default function GreenRecommendationPage({ onNavigate }) {
               options={mockGreenRecommendation.transportationOptions}
               selectedMode={selectedMode}
               onSelect={setSelectedMode}
-              onUseRecommended={() => setSelectedMode(RECOMMENDED_MODE)}
+              onUseRecommended={(mode) =>
+                setSelectedMode(mode || RECOMMENDED_MODE)
+              }
               onBack={showRecommendation}
               liveOriginName={startLocationName}
               liveDestinationName={
