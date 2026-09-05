@@ -6,6 +6,7 @@ import {
 } from "../data/mockModule2Data";
 import useCurrentLocation from "../hooks/useCurrentLocation";
 import useLiveWalkingRoute from "../hooks/useLiveWalkingRoute";
+import useLiveTransportComparison from "../hooks/useLiveTransportComparison";
 import CurrentLocationCard from "../components/CurrentLocationCard";
 import ItinerarySummary from "../components/ItinerarySummary";
 import TransportationComparison from "../components/TransportationComparison";
@@ -45,6 +46,16 @@ export default function GreenRecommendationPage({ onNavigate }) {
     errorCode: liveRouteError,
     loadRoute: loadLiveWalkingRoute,
   } = useLiveWalkingRoute({
+    origin: location,
+    destination: firstLiveDestination,
+  });
+
+  const {
+    status: liveComparisonStatus,
+    results: liveComparisonResults,
+    errorCode: liveComparisonError,
+    loadComparison: loadLiveTransportComparison,
+  } = useLiveTransportComparison({
     origin: location,
     destination: firstLiveDestination,
   });
@@ -141,6 +152,14 @@ export default function GreenRecommendationPage({ onNavigate }) {
               onSelect={setSelectedMode}
               onUseRecommended={() => setSelectedMode(RECOMMENDED_MODE)}
               onBack={showRecommendation}
+              liveOriginName={startLocationName}
+              liveDestinationName={
+                firstLiveDestination?.name || "Perdana Botanical Garden"
+              }
+              liveComparisonStatus={liveComparisonStatus}
+              liveComparisonError={liveComparisonError}
+              liveComparisonResults={liveComparisonResults}
+              onLoadComparison={loadLiveTransportComparison}
             />
           ) : null}
 

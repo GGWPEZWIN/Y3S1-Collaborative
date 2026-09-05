@@ -220,10 +220,27 @@
   color: #15803d;
 }
 
-.m2-compare {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+.m2-compare-live {
+  margin-bottom: 16px;
+}
+
+.m2-mode-live-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.m2-walk-notice {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 16px;
 }
 
 .m2-mode-card {
