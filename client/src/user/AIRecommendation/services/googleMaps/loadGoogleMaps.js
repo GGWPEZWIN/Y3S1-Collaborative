@@ -25,9 +25,9 @@ function readConfiguredApiKey() {
 
 /**
  * Loads Maps JavaScript API libraries needed for map display and advanced
- * markers. Uses maps, marker, and core only. Does not load Routes,
- * Directions, Distance Matrix, Places, Geocoding, geometry, or transit
- * libraries.
+ * markers. Uses maps, marker, and core at startup. Geometry is loaded
+ * on demand when a live polyline is drawn. Does not load Routes,
+ * Directions, Distance Matrix, Places, Geocoding, or transit libraries.
  */
 export function loadGoogleMapsLibraries() {
   if (loadPromise) return loadPromise;
@@ -58,12 +58,14 @@ export function loadGoogleMapsLibraries() {
       ]);
 
       const Map = mapsLibrary.Map;
+      const Polyline = mapsLibrary.Polyline;
       const AdvancedMarkerElement = markerLibrary.AdvancedMarkerElement;
       const PinElement = markerLibrary.PinElement;
       const LatLngBounds = coreLibrary.LatLngBounds;
 
       if (
         typeof Map !== "function" ||
+        typeof Polyline !== "function" ||
         typeof AdvancedMarkerElement !== "function" ||
         typeof PinElement !== "function" ||
         typeof LatLngBounds !== "function"
@@ -73,6 +75,7 @@ export function loadGoogleMapsLibraries() {
 
       return {
         Map,
+        Polyline,
         LatLngBounds,
         AdvancedMarkerElement,
         PinElement,
@@ -86,4 +89,31 @@ export function loadGoogleMapsLibraries() {
   })();
 
   return loadPromise;
+}
+
+let geometryPromise = null;
+
+/**
+ * Loads the geometry library after the Maps script is configured.
+ * Used only to decode an encoded polyline for display.
+ */
+export function loadGoogleMapsGeometry() {
+  if (geometryPromise) return geometryPromise;
+
+  geometryPromise = (async () => {
+    await loadGoogleMapsLibraries();
+    const geometryLibrary = await importLibrary("geometry");
+    const decodePath = geometryLibrary?.encoding?.decodePath;
+    if (typeof decodePath !== "function") {
+      throw createLoadError(GOOGLE_MAPS_LOAD_ERROR.LOAD_FAILED);
+    }
+    return {
+      decodePath: (encoded) => decodePath.call(geometryLibrary.encoding, encoded),
+    };
+  })().catch((error) => {
+    geometryPromise = null;
+    throw error;
+  });
+
+  return geometryPromise;
 }

@@ -1,5 +1,24 @@
 import TripMap from "./TripMap";
 
+const LIVE_ERROR_MESSAGES = {
+  INVALID_ROUTE_REQUEST: "The live walking route request was invalid. You can retry or keep using the demonstration map.",
+  ROUTES_NOT_CONFIGURED: "Live routing is not available on this server. The demonstration map is still usable.",
+  ROUTE_NOT_FOUND: "No walking route was found for this first segment. The demonstration map is still usable.",
+  ROUTES_TIMEOUT: "The live route request timed out. You can retry, or keep using the demonstration map.",
+  ROUTES_UPSTREAM_ERROR: "The live walking route could not be loaded. You can retry, or keep using the demonstration map.",
+  UNAVAILABLE: "The live walking route could not be loaded. You can retry, or keep using the demonstration map.",
+};
+
+function formatDistanceKm(meters) {
+  return `${(meters / 1000).toFixed(1)} km`;
+}
+
+function formatDurationMinutes(seconds) {
+  const minutes = seconds / 60;
+  if (minutes < 1) return "< 1 min";
+  return `${Math.round(minutes)} min`;
+}
+
 export default function NavigationPreview({
   stops,
   segments,
@@ -11,6 +30,12 @@ export default function NavigationPreview({
   onResume,
   onNext,
   onBack,
+  liveOriginName,
+  liveDestinationName,
+  liveRouteStatus = "idle",
+  liveRoute = null,
+  liveRouteError = null,
+  onLoadLiveRoute,
 }) {
   const lastIndex = stops.length - 1;
   const current = stops[currentIndex];
@@ -134,7 +159,90 @@ export default function NavigationPreview({
         </ol>
       </article>
 
-      <TripMap startLocation={startLocation} destinations={destinations} />
+      <article className="m2-card m2-live-route" aria-label="Live walking route">
+        <div className="m2-live-route-head">
+          <h3>Live walking route</h3>
+          {liveRouteStatus === "success" ? (
+            <span className="m2-source-badge m2-source-badge--live">
+              Live Google Routes
+            </span>
+          ) : (
+            <span className="m2-source-badge">First segment only</span>
+          )}
+        </div>
+        <p className="m2-muted">
+          This requests one paid walking route from your effective start to{" "}
+          {liveDestinationName}. Full-itinerary demonstration totals above are
+          unchanged.
+        </p>
+        <div className="m2-live" aria-live="polite">
+          {liveRouteStatus === "idle" ? (
+            <p className="m2-muted">
+              No paid route request has been made yet.
+            </p>
+          ) : null}
+          {liveRouteStatus === "loading" ? (
+            <p className="m2-status m2-status--loading">
+              Loading live walking route…
+            </p>
+          ) : null}
+          {liveRouteStatus === "error" ? (
+            <p className="m2-status m2-status--error">
+              {LIVE_ERROR_MESSAGES[liveRouteError] || LIVE_ERROR_MESSAGES.UNAVAILABLE}
+            </p>
+          ) : null}
+          {liveRouteStatus === "success" && liveRoute ? (
+            <dl className="m2-stat-row">
+              <div className="m2-stat">
+                <dt>Origin</dt>
+                <dd>{liveOriginName}</dd>
+              </div>
+              <div className="m2-stat">
+                <dt>Destination</dt>
+                <dd>{liveDestinationName}</dd>
+              </div>
+              <div className="m2-stat">
+                <dt>Live distance</dt>
+                <dd>{formatDistanceKm(liveRoute.distanceMeters)}</dd>
+              </div>
+              <div className="m2-stat">
+                <dt>Live duration</dt>
+                <dd>{formatDurationMinutes(liveRoute.durationSeconds)}</dd>
+              </div>
+            </dl>
+          ) : null}
+        </div>
+        <div className="m2-actions">
+          <button
+            type="button"
+            className="m2-btn"
+            onClick={onLoadLiveRoute}
+            disabled={liveRouteStatus === "loading" || !onLoadLiveRoute}
+          >
+            {liveRouteStatus === "loading"
+              ? "Loading live walking route…"
+              : "Load Live Walking Route"}
+          </button>
+          {liveRouteStatus === "error" ? (
+            <button
+              type="button"
+              className="m2-btn m2-btn--secondary"
+              onClick={onLoadLiveRoute}
+              disabled={!onLoadLiveRoute}
+            >
+              Retry
+            </button>
+          ) : null}
+        </div>
+      </article>
+
+      <TripMap
+        startLocation={startLocation}
+        destinations={destinations}
+        encodedPolyline={
+          liveRouteStatus === "success" ? liveRoute?.encodedPolyline : null
+        }
+      />
     </section>
   );
 }

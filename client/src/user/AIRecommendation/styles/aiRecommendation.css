@@ -399,9 +399,26 @@
   font-weight: 700;
 }
 
-.m2-source-badge--device {
-  background: #dbeafe;
-  color: #1d4ed8;
+.m2-source-badge--live {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.m2-live-route {
+  grid-column: 1 / -1;
+}
+
+.m2-live-route-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.m2-live-route-head h3 {
+  margin-bottom: 0;
 }
 
 .m2-live {

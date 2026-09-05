@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   DEMO_MAP_ID,
   GOOGLE_MAPS_LOAD_ERROR,
+  loadGoogleMapsGeometry,
   loadGoogleMapsLibraries,
 } from "../services/googleMaps/loadGoogleMaps";
 
@@ -48,11 +49,23 @@ function clearMarkers(markers) {
   });
 }
 
-export default function TripMap({ startLocation, destinations = [] }) {
+function clearPolyline(polylineRef) {
+  if (polylineRef.current) {
+    polylineRef.current.setMap(null);
+    polylineRef.current = null;
+  }
+}
+
+export default function TripMap({
+  startLocation,
+  destinations = [],
+  encodedPolyline = null,
+}) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const mapsApiRef = useRef(null);
   const markersRef = useRef([]);
+  const polylineRef = useRef(null);
   const [status, setStatus] = useState("loading");
 
   useEffect(() => {
@@ -92,6 +105,7 @@ export default function TripMap({ startLocation, destinations = [] }) {
 
     return () => {
       cancelled = true;
+      clearPolyline(polylineRef);
       clearMarkers(markersRef.current);
       markersRef.current = [];
       mapRef.current = null;
@@ -157,10 +171,10 @@ export default function TripMap({ startLocation, destinations = [] }) {
         positions.push(position);
       });
 
-      if (positions.length === 1) {
+      if (positions.length === 1 && !encodedPolyline) {
         map.setCenter(positions[0]);
         map.setZoom(14);
-      } else if (positions.length > 1) {
+      } else if (positions.length > 1 && !encodedPolyline) {
         if (typeof LatLngBounds !== "function") {
           throw new Error(GOOGLE_MAPS_LOAD_ERROR.LOAD_FAILED);
         }
@@ -178,7 +192,61 @@ export default function TripMap({ startLocation, destinations = [] }) {
       clearMarkers(markersRef.current);
       markersRef.current = [];
     };
-  }, [destinations, startLocation, status]);
+  }, [destinations, encodedPolyline, startLocation, status]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const api = mapsApiRef.current;
+    if (status !== "ready" || !map || !api) return undefined;
+
+    let cancelled = false;
+
+    async function drawLiveRoute() {
+      clearPolyline(polylineRef);
+
+      if (typeof encodedPolyline !== "string" || encodedPolyline.length === 0) {
+        return;
+      }
+
+      try {
+        const geometry = await loadGoogleMapsGeometry();
+        if (cancelled || !mapRef.current) return;
+
+        const path = geometry.decodePath(encodedPolyline);
+        if (!Array.isArray(path) || path.length < 2) {
+          return;
+        }
+
+        if (typeof api.Polyline !== "function") return;
+
+        polylineRef.current = new api.Polyline({
+          map: mapRef.current,
+          path,
+          strokeColor: "#16a34a",
+          strokeOpacity: 0.92,
+          strokeWeight: 5,
+          geodesic: true,
+          clickable: false,
+          zIndex: 1,
+        });
+
+        if (typeof api.LatLngBounds === "function") {
+          const bounds = new api.LatLngBounds();
+          path.forEach((point) => bounds.extend(point));
+          mapRef.current.fitBounds(bounds, 64);
+        }
+      } catch {
+        clearPolyline(polylineRef);
+      }
+    }
+
+    drawLiveRoute();
+
+    return () => {
+      cancelled = true;
+      clearPolyline(polylineRef);
+    };
+  }, [encodedPolyline, status]);
 
   const statusMessage =
     status === "loading"
@@ -217,10 +285,9 @@ export default function TripMap({ startLocation, destinations = [] }) {
         />
       </div>
       <p className="m2-map-note">
-        The Google basemap is shown when a Maps JavaScript API key is configured.
-        Markers use the demonstration itinerary. Route lines and live routing are
-        not included in this milestone, and time, distance, and carbon figures
-        remain prototype estimates.
+        {encodedPolyline
+          ? "The green line is a live walking route for the first itinerary segment only. Other markers remain demonstration destinations."
+          : "The Google basemap is shown when a Maps JavaScript API key is configured. Markers use the demonstration itinerary. A live walking line is drawn only after you load the first segment."}
       </p>
     </section>
   );

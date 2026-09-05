@@ -5,6 +5,7 @@ import {
   mockItinerary,
 } from "../data/mockModule2Data";
 import useCurrentLocation from "../hooks/useCurrentLocation";
+import useLiveWalkingRoute from "../hooks/useLiveWalkingRoute";
 import CurrentLocationCard from "../components/CurrentLocationCard";
 import ItinerarySummary from "../components/ItinerarySummary";
 import TransportationComparison from "../components/TransportationComparison";
@@ -19,6 +20,7 @@ const TABS = [
 ];
 
 const RECOMMENDED_MODE = "public_transit";
+const FIRST_LIVE_DESTINATION_ID = "dest-perdana-botanical-garden";
 
 export default function GreenRecommendationPage({ onNavigate }) {
   const [view, setView] = useState("recommendation");
@@ -31,6 +33,21 @@ export default function GreenRecommendationPage({ onNavigate }) {
     requestCurrentLocation,
     useDemoLocation,
   } = useCurrentLocation();
+
+  const firstLiveDestination =
+    mockItinerary.destinations.find(
+      (destination) => destination.destinationId === FIRST_LIVE_DESTINATION_ID
+    ) || mockItinerary.destinations[0];
+
+  const {
+    status: liveRouteStatus,
+    route: liveRoute,
+    errorCode: liveRouteError,
+    loadRoute: loadLiveWalkingRoute,
+  } = useLiveWalkingRoute({
+    origin: location,
+    destination: firstLiveDestination,
+  });
 
   const startLocationName =
     location.source === "device"
@@ -139,6 +156,12 @@ export default function GreenRecommendationPage({ onNavigate }) {
               onResume={() => setPaused(false)}
               onNext={handleNextDestination}
               onBack={showRecommendation}
+              liveOriginName={startLocationName}
+              liveDestinationName={firstLiveDestination?.name || "Perdana Botanical Garden"}
+              liveRouteStatus={liveRouteStatus}
+              liveRoute={liveRoute}
+              liveRouteError={liveRouteError}
+              onLoadLiveRoute={loadLiveWalkingRoute}
             />
           ) : null}
         </div>
