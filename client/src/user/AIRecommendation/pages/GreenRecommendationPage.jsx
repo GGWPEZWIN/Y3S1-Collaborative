@@ -1,12 +1,11 @@
 import { useMemo, useState } from "react";
 import Layout from "../../../shared/components/Layout";
-import {
-  mockGreenRecommendation,
-  mockItinerary,
-} from "../data/mockModule2Data";
+import { mockGreenRecommendation } from "../data/mockModule2Data";
 import useCurrentLocation from "../hooks/useCurrentLocation";
 import useLiveSelectedRoute from "../hooks/useLiveSelectedRoute";
 import useLiveTransportComparison from "../hooks/useLiveTransportComparison";
+import { isRouteableCoordinate } from "../services/itinerary/normalizeItinerary.js";
+import { resolveItineraryContext } from "../services/itinerary/resolveItinerary.js";
 import CurrentLocationCard from "../components/CurrentLocationCard";
 import ItinerarySummary from "../components/ItinerarySummary";
 import TransportationComparison from "../components/TransportationComparison";
@@ -21,7 +20,6 @@ const TABS = [
 ];
 
 const RECOMMENDED_MODE = "public_transit";
-const FIRST_LIVE_DESTINATION_ID = "dest-perdana-botanical-garden";
 
 const OPTION_TO_TRAVEL_MODE = {
   walking: "WALK",
@@ -97,25 +95,82 @@ function resolveNavigationLiveRoute({
   };
 }
 
-export default function GreenRecommendationPage({ onNavigate }) {
+function mapDestinationsForMap(itinerary) {
+  if (!itinerary?.destinations) return [];
+  return itinerary.destinations
+    .filter((destination) => destination.routeable)
+    .map((destination, index) => ({
+      destinationId: destination.destinationId,
+      name: destination.name,
+      latitude: destination.latitude,
+      longitude: destination.longitude,
+      plannedOrder: destination.order ?? index + 1,
+    }));
+}
+
+function mapStops(itinerary) {
+  if (!itinerary) return [];
+  const stops = [];
+  if (itinerary.startLocation) {
+    stops.push({
+      stopId: itinerary.startLocation.locationId,
+      name: itinerary.startLocation.name,
+      kind: "start",
+    });
+  }
+  itinerary.destinations.forEach((destination) => {
+    stops.push({
+      stopId: destination.destinationId,
+      name: destination.name,
+      kind: "destination",
+    });
+  });
+  return stops;
+}
+
+export default function GreenRecommendationPage({
+  onNavigate,
+  itineraryId = null,
+  itinerary = null,
+}) {
   const [view, setView] = useState("recommendation");
   const [selectedMode, setSelectedMode] = useState(RECOMMENDED_MODE);
   const [navIndex, setNavIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+
+  const context = useMemo(
+    () => resolveItineraryContext({ itineraryId, itinerary }),
+    [itineraryId, itinerary]
+  );
+  const contextKey =
+    context.itinerary?.itineraryId || itineraryId || context.source;
+  const firstDestination = context.itinerary?.destinations?.[0] || null;
+  const firstLiveDestination = firstDestination?.routeable
+    ? {
+        destinationId: firstDestination.destinationId,
+        name: firstDestination.name,
+        latitude: firstDestination.latitude,
+        longitude: firstDestination.longitude,
+      }
+    : null;
+
   const {
     location,
     status: locationStatus,
     requestCurrentLocation,
     useDemoLocation,
-  } = useCurrentLocation();
-
-  const firstLiveDestination =
-    mockItinerary.destinations.find(
-      (destination) => destination.destinationId === FIRST_LIVE_DESTINATION_ID
-    ) || mockItinerary.destinations[0];
+  } = useCurrentLocation({
+    savedStart: context.itinerary?.startLocation || null,
+    itineraryKey: contextKey,
+  });
 
   const selectedTravelMode =
     OPTION_TO_TRAVEL_MODE[selectedMode] || OPTION_TO_TRAVEL_MODE[RECOMMENDED_MODE];
+  const originHasCoords = isRouteableCoordinate(
+    location.latitude,
+    location.longitude
+  );
+  const canRequestFirstSegment = Boolean(firstLiveDestination) && originHasCoords;
 
   const {
     status: directRouteStatus,
@@ -126,6 +181,7 @@ export default function GreenRecommendationPage({ onNavigate }) {
     origin: location,
     destination: firstLiveDestination,
     travelMode: selectedTravelMode,
+    contextKey,
   });
 
   const {
@@ -136,6 +192,7 @@ export default function GreenRecommendationPage({ onNavigate }) {
   } = useLiveTransportComparison({
     origin: location,
     destination: firstLiveDestination,
+    contextKey,
   });
 
   const navigationLive = useMemo(
@@ -161,10 +218,11 @@ export default function GreenRecommendationPage({ onNavigate }) {
   const startLocationName =
     location.source === "device"
       ? location.label
-      : mockItinerary.startLocation.name;
+      : context.itinerary?.startLocation?.name || location.label;
 
-  const stops = mockGreenRecommendation.recommendedDestinationOrder;
-  const lastIndex = stops.length - 1;
+  const stops = mapStops(context.itinerary);
+  const lastIndex = Math.max(stops.length - 1, 0);
+  const isDemo = context.source === "demo";
 
   function showRecommendation() {
     setView("recommendation");
@@ -189,13 +247,16 @@ export default function GreenRecommendationPage({ onNavigate }) {
         <header className="m2-header">
           <div className="m2-title-row">
             <h1 className="m2-title">AI Green Recommendation</h1>
-            <span className="m2-badge">Frontend Prototype</span>
+            <span className={isDemo ? "m2-badge m2-badge--demo" : "m2-badge"}>
+              {isDemo ? "Demonstration itinerary" : "Module 1 itinerary"}
+            </span>
           </div>
         </header>
 
         <p className="m2-notice" role="note">
-          Demonstration data is being used while Module 1 and live route
-          services are under development.
+          {isDemo
+            ? "Demonstration itinerary is shown because no Module 1 itinerary is selected."
+            : "This itinerary was loaded from Module 1. Destinations stay in the saved order and are not mixed with demonstration stops."}
         </p>
 
         <div className="m2-tabs" role="tablist" aria-label="Module 2 views">
@@ -227,17 +288,26 @@ export default function GreenRecommendationPage({ onNavigate }) {
                 status={locationStatus}
                 onRequestLocation={requestCurrentLocation}
                 onUseDemoLocation={useDemoLocation}
+                resetLabel={isDemo ? "Use Demo Location" : "Use Saved Start"}
               />
               <ItinerarySummary
-                itinerary={mockItinerary}
+                itinerary={context.itinerary}
                 recommendation={mockGreenRecommendation}
                 startLocationName={startLocationName}
+                source={context.source}
+                issues={context.issues}
+                routeableSegmentCount={context.routeableSegmentCount}
                 onCompare={showCompare}
                 onPreview={showNavigation}
               />
               <div style={{ marginTop: 16 }}>
                 <RouteInformationPanel
-                  segments={mockGreenRecommendation.routeSegments}
+                  segments={
+                    isDemo
+                      ? mockGreenRecommendation.routeSegments
+                      : context.segments
+                  }
+                  structural={!isDemo}
                 />
               </div>
             </>
@@ -254,21 +324,39 @@ export default function GreenRecommendationPage({ onNavigate }) {
               onBack={showRecommendation}
               liveOriginName={startLocationName}
               liveDestinationName={
-                firstLiveDestination?.name || "Perdana Botanical Garden"
+                firstLiveDestination?.name || "First destination"
               }
               liveComparisonStatus={liveComparisonStatus}
               liveComparisonError={liveComparisonError}
               liveComparisonResults={liveComparisonResults}
-              onLoadComparison={loadLiveTransportComparison}
+              onLoadComparison={
+                canRequestFirstSegment
+                  ? loadLiveTransportComparison
+                  : undefined
+              }
             />
           ) : null}
 
           {view === "navigation" ? (
             <NavigationPreview
               stops={stops}
-              segments={mockGreenRecommendation.routeSegments}
+              segments={
+                isDemo
+                  ? mockGreenRecommendation.routeSegments
+                  : context.segments.map((segment) => ({
+                      ...segment,
+                      origin: segment.origin.name,
+                      destination: segment.destination.name,
+                      modeLabel: segment.routeable
+                        ? "Not requested yet"
+                        : "Not yet routeable",
+                      estimatedDistanceKm: "—",
+                      estimatedDurationMinutes: "—",
+                      estimatedCarbonKg: "—",
+                    }))
+              }
               startLocation={location}
-              destinations={mockItinerary.destinations}
+              destinations={mapDestinationsForMap(context.itinerary)}
               currentIndex={navIndex}
               paused={paused}
               onPause={() => setPaused(true)}
@@ -277,7 +365,7 @@ export default function GreenRecommendationPage({ onNavigate }) {
               onBack={showRecommendation}
               liveOriginName={startLocationName}
               liveDestinationName={
-                firstLiveDestination?.name || "Perdana Botanical Garden"
+                firstLiveDestination?.name || "First destination"
               }
               selectedTravelMode={selectedTravelMode}
               liveRouteStatus={navigationLive.status}
@@ -285,6 +373,7 @@ export default function GreenRecommendationPage({ onNavigate }) {
               liveRouteError={navigationLive.errorCode}
               liveRouteSource={navigationLive.sourceKind}
               onLoadLiveRoute={
+                !canRequestFirstSegment ||
                 navigationLive.sourceKind === "comparison" ||
                 liveComparisonStatus === "loading"
                   ? undefined

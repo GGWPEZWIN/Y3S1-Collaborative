@@ -4,6 +4,7 @@ import {
   DEVICE_LOCATION_ERROR,
   getCurrentDeviceLocation,
 } from "../services/deviceLocationService";
+import { isRouteableCoordinate } from "../services/itinerary/normalizeItinerary.js";
 
 function createDemoLocation() {
   return {
@@ -13,6 +14,26 @@ function createDemoLocation() {
     capturedAt: null,
     source: "demo",
     label: mockItinerary.startLocation.name,
+  };
+}
+
+function createFallbackLocation(itineraryKey, savedStart) {
+  if (itineraryKey === "demo") {
+    return createDemoLocation();
+  }
+  const routeable = isRouteableCoordinate(
+    savedStart?.latitude,
+    savedStart?.longitude
+  );
+  return {
+    latitude: routeable ? savedStart.latitude : null,
+    longitude: routeable ? savedStart.longitude : null,
+    accuracyMeters: null,
+    capturedAt: null,
+    source: "itinerary",
+    label:
+      savedStart?.name ||
+      (routeable ? "Saved starting location" : "Starting location not provided"),
   };
 }
 
@@ -33,10 +54,27 @@ function statusFromErrorCode(code) {
   }
 }
 
-export default function useCurrentLocation() {
-  const [location, setLocation] = useState(createDemoLocation);
+export default function useCurrentLocation({
+  savedStart = null,
+  itineraryKey = "demo",
+} = {}) {
+  const [activeKey, setActiveKey] = useState(itineraryKey);
+  const [location, setLocation] = useState(() =>
+    createFallbackLocation(itineraryKey, savedStart)
+  );
   const [status, setStatus] = useState("idle");
   const [errorCode, setErrorCode] = useState(null);
+
+  if (activeKey !== itineraryKey) {
+    setActiveKey(itineraryKey);
+    setLocation(createFallbackLocation(itineraryKey, savedStart));
+    setStatus("idle");
+    setErrorCode(null);
+  }
+
+  const savedLat = savedStart?.latitude;
+  const savedLng = savedStart?.longitude;
+  const savedName = savedStart?.name;
 
   const requestCurrentLocation = useCallback(async () => {
     if (status === "loading") return;
@@ -57,23 +95,35 @@ export default function useCurrentLocation() {
       setStatus("success");
     } catch (error) {
       const code = error?.code || DEVICE_LOCATION_ERROR.UNKNOWN;
-      setLocation(createDemoLocation());
+      setLocation(
+        createFallbackLocation(itineraryKey, {
+          latitude: savedLat,
+          longitude: savedLng,
+          name: savedName,
+        })
+      );
       setErrorCode(code);
       setStatus(statusFromErrorCode(code));
     }
-  }, [status]);
+  }, [status, itineraryKey, savedLat, savedLng, savedName]);
 
-  const useDemoLocation = useCallback(() => {
-    setLocation(createDemoLocation());
+  const useSavedStart = useCallback(() => {
+    setLocation(
+      createFallbackLocation(itineraryKey, {
+        latitude: savedLat,
+        longitude: savedLng,
+        name: savedName,
+      })
+    );
     setStatus("idle");
     setErrorCode(null);
-  }, []);
+  }, [itineraryKey, savedLat, savedLng, savedName]);
 
   return {
     location,
     status,
     errorCode,
     requestCurrentLocation,
-    useDemoLocation,
+    useDemoLocation: useSavedStart,
   };
 }

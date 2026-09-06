@@ -21,13 +21,14 @@ export default function useLiveSelectedRoute({
   origin,
   destination,
   travelMode,
+  contextKey = "",
 }) {
   const originLat = origin?.latitude;
   const originLng = origin?.longitude;
   const destLat = destination?.latitude;
   const destLng = destination?.longitude;
   const selectedMode = isSupportedTravelMode(travelMode) ? travelMode : null;
-  const routeKey = `${originLat},${originLng},${destLat},${destLng},${selectedMode}`;
+  const routeKey = `${contextKey},${originLat},${originLng},${destLat},${destLng},${selectedMode}`;
 
   const [activeKey, setActiveKey] = useState(routeKey);
   const [status, setStatus] = useState("idle");

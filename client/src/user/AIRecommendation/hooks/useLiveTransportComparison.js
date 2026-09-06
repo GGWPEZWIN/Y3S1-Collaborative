@@ -38,12 +38,16 @@ function isAuthError(code) {
  * Loads first-segment WALK, TRANSIT, and DRIVE routes on demand.
  * Does not request on mount.
  */
-export default function useLiveTransportComparison({ origin, destination }) {
+export default function useLiveTransportComparison({
+  origin,
+  destination,
+  contextKey = "",
+}) {
   const originLat = origin?.latitude;
   const originLng = origin?.longitude;
   const destLat = destination?.latitude;
   const destLng = destination?.longitude;
-  const routeKey = `${originLat},${originLng},${destLat},${destLng}`;
+  const routeKey = `${contextKey},${originLat},${originLng},${destLat},${destLng}`;
 
   const [activeKey, setActiveKey] = useState(routeKey);
   const [status, setStatus] = useState("idle");

@@ -394,6 +394,7 @@ export default function App() {
       return (
         <GreenRecommendationPage
           onNavigate={navigate}
+          itineraryId={selectedId}
         />
       );
 

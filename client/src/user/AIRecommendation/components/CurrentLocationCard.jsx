@@ -1,17 +1,17 @@
 const STATUS_MESSAGES = {
   loading: "Getting your location…",
   denied:
-    "Location access was denied. You can enable it in this site’s browser settings, or keep using the KL Sentral demo start.",
+    "Location access was denied. You can enable it in this site’s browser settings, or keep using the saved start.",
   unavailable:
-    "Your location could not be determined. The KL Sentral demo start is still in use.",
+    "Your location could not be determined. The saved start is still in use.",
   timeout:
-    "The location request timed out. The KL Sentral demo start is still in use.",
+    "The location request timed out. The saved start is still in use.",
   unsupported:
-    "This browser does not support location. The KL Sentral demo start is still in use.",
+    "This browser does not support location. The saved start is still in use.",
   insecure:
-    "Location can only be requested over a secure connection. The KL Sentral demo start is still in use.",
+    "Location can only be requested over a secure connection. The saved start is still in use.",
   error:
-    "Location could not be updated. The KL Sentral demo start is still in use.",
+    "Location could not be updated. The saved start is still in use.",
 };
 
 function roundCoord(value) {
@@ -19,30 +19,38 @@ function roundCoord(value) {
   return value.toFixed(5);
 }
 
+function sourceBadge(location) {
+  if (location.source === "device") return { label: "Device location", live: true };
+  if (location.source === "itinerary") return { label: "Saved start", live: false };
+  return { label: "Demo location", live: false };
+}
+
 export default function CurrentLocationCard({
   location,
   status,
   onRequestLocation,
   onUseDemoLocation,
+  resetLabel = "Use Demo Location",
 }) {
   const isDevice = location.source === "device";
   const isLoading = status === "loading";
   const hasError = Boolean(STATUS_MESSAGES[status]) && status !== "loading";
-  const showDemoReset = isDevice || hasError;
+  const showReset = isDevice || hasError;
+  const badge = sourceBadge(location);
   const liveMessage = isLoading
     ? STATUS_MESSAGES.loading
     : hasError
       ? STATUS_MESSAGES[status]
       : isDevice
-        ? "Current coordinates updated. Route figures remain demonstration estimates until live route services are connected."
+        ? "Current coordinates updated. This overrides the first-segment origin only."
         : "";
 
   return (
     <article className="m2-card m2-location-card" aria-label="Trip starting location">
       <div className="m2-location-head">
         <h3>Trip starting location</h3>
-        <span className={isDevice ? "m2-source-badge m2-source-badge--device" : "m2-source-badge"}>
-          {isDevice ? "Device location" : "Demo location"}
+        <span className={badge.live ? "m2-source-badge m2-source-badge--device" : "m2-source-badge"}>
+          {badge.label}
         </span>
       </div>
 
@@ -90,14 +98,14 @@ export default function CurrentLocationCard({
         >
           {isLoading ? "Getting your location…" : "Use My Current Location"}
         </button>
-        {showDemoReset ? (
+        {showReset ? (
           <button
             type="button"
             className="m2-btn m2-btn--secondary"
             onClick={onUseDemoLocation}
             disabled={isLoading}
           >
-            Use Demo Location
+            {resetLabel}
           </button>
         ) : null}
       </div>
