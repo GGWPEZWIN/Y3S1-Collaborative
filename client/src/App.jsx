@@ -26,6 +26,11 @@ import Waste from "./user/Waste&Resources/pages/WastePage";
 import EcoReportCard from "./user/EcoJourney/pages/EcoReportCard";
 import AchievementsPage from "./user/EcoJourney/pages/AchievementsPage";
 
+// Itinerary (Module 1)
+import ItineraryPage from "./user/Itinerary/pages/ItineraryPage";
+import CreateItinerary from "./user/Itinerary/pages/CreateItinerary";
+import ItineraryDetails from "./user/Itinerary/pages/ItineraryDetails";
+
 // Admin
 import AdminDashboard from "./admin/AdminDashboard";
 import RequireAdmin from "./admin/RequireAdmin";
@@ -308,8 +313,30 @@ case "/community/report":
     // --------------------------------------------------------
     case "/itinerary":
       return (
-        <ComingSoon
-          label="Itinerary"
+        <ItineraryPage
+          onNavigate={navigate}
+        />
+      );
+
+    case "/itinerary/create":
+      return (
+        <CreateItinerary
+          onNavigate={navigate}
+        />
+      );
+
+    case "/itinerary/edit":
+      return (
+        <CreateItinerary
+          onNavigate={navigate}
+          editItineraryId={selectedId}
+        />
+      );
+
+    case "/itinerary/details":
+      return (
+        <ItineraryDetails
+          itineraryId={selectedId}
           onNavigate={navigate}
         />
       );

@@ -1,8 +1,7 @@
 import React, { useMemo } from "react";
 import { ArrowRight, Check, BedDouble } from "lucide-react";
 import {
-  getAccommodationsFor,
-  getDestination,
+  getAccommodationsForMany,
   nightsBetween,
 } from "../constants/itineraryData";
 import EcoScoreBadge from "./EcoScoreBadge";
@@ -21,10 +20,13 @@ import * as w from "./wizardStyles";
 export default function Step4Accommodation({ draft, onChange, onNext, onBack }) {
   const isPhone = useMediaQuery(BREAKPOINTS.phone);
 
-  const destination = getDestination(draft.destinationId);
+  const destinationIds = useMemo(
+    () => draft.destinationIds ?? [],
+    [draft.destinationIds]
+  );
   const options = useMemo(
-    () => getAccommodationsFor(draft.destinationId),
-    [draft.destinationId]
+    () => getAccommodationsForMany(destinationIds),
+    [destinationIds]
   );
   const nights = nightsBetween(draft.startDate, draft.endDate);
 
@@ -35,8 +37,7 @@ export default function Step4Accommodation({ draft, onChange, onNext, onBack }) 
         <div>
           <h2 style={w.stepTitle}>Select Accommodation</h2>
           <p style={w.stepSub}>
-            Certified eco-stays
-            {destination ? ` in ${destination.name}` : ""}
+            Certified eco-stays across your destinations
             {nights > 0 ? ` · ${nights} ${nights === 1 ? "night" : "nights"}` : ""}
           </p>
         </div>

@@ -2,8 +2,7 @@ import React, { useMemo, useState } from "react";
 import { ArrowRight, Check, Clock } from "lucide-react";
 import {
   ACTIVITY_CATEGORIES,
-  getActivitiesFor,
-  getDestination,
+  getActivitiesForMany,
 } from "../constants/itineraryData";
 import EcoScoreBadge from "./EcoScoreBadge";
 import useMediaQuery, { BREAKPOINTS } from "../hooks/useMediaQuery";
@@ -21,10 +20,13 @@ export default function Step3Activities({ draft, onChange, onNext, onBack }) {
   const [category, setCategory] = useState("All");
   const isPhone = useMediaQuery(BREAKPOINTS.phone);
 
-  const destination = getDestination(draft.destinationId);
+  const destinationIds = useMemo(
+    () => draft.destinationIds ?? [],
+    [draft.destinationIds]
+  );
   const all = useMemo(
-    () => getActivitiesFor(draft.destinationId),
-    [draft.destinationId]
+    () => getActivitiesForMany(destinationIds),
+    [destinationIds]
   );
 
   const visible = useMemo(
@@ -49,7 +51,6 @@ export default function Step3Activities({ draft, onChange, onNext, onBack }) {
           <h2 style={w.stepTitle}>Select Activities</h2>
           <p style={w.stepSub}>
             Choose eco-friendly activities for your trip
-            {destination ? ` in ${destination.name}` : ""}
           </p>
         </div>
       </div>
