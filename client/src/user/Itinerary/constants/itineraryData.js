@@ -19,11 +19,20 @@ export const ACTIVITY_CATEGORIES = [
 
 export const ITINERARY_STATUSES = ["All", "Planning", "Active", "Completed"];
 
+/**
+ * `latitude` / `longitude` are stored as real numbers (never strings) so
+ * Module 1 can order the selected destinations by proximity and Module 2 can
+ * reuse the exact same coordinates for routing / transport calculations.
+ * `placeId` is left off on purpose — the catalogue is fixed, so a Google Place
+ * ID is optional. Add a real one here if it ever becomes available.
+ */
 export const DESTINATIONS = [
   {
     id: "penang",
     name: "Penang",
     state: "Pulau Pinang",
+    latitude: 5.4141,
+    longitude: 100.3288,
     imageUrl:
       "https://images.unsplash.com/photo-1596422846543-75c6fc197f07?w=600&q=80",
   },
@@ -31,6 +40,8 @@ export const DESTINATIONS = [
     id: "langkawi",
     name: "Langkawi",
     state: "Kedah",
+    latitude: 6.3186,
+    longitude: 99.8507,
     imageUrl:
       "https://images.unsplash.com/photo-1552465011-b4e21bf6e79a?w=600&q=80",
   },
@@ -38,6 +49,8 @@ export const DESTINATIONS = [
     id: "cameron",
     name: "Cameron Highlands",
     state: "Pahang",
+    latitude: 4.4696,
+    longitude: 101.3776,
     imageUrl:
       "https://images.unsplash.com/photo-1533050487297-09b450131914?w=600&q=80",
   },
@@ -45,6 +58,8 @@ export const DESTINATIONS = [
     id: "kl",
     name: "Kuala Lumpur",
     state: "Wilayah Persekutuan",
+    latitude: 3.139,
+    longitude: 101.6869,
     imageUrl:
       "https://images.unsplash.com/photo-1596422846543-75c6fc197f07?w=600&q=80",
   },
@@ -52,6 +67,8 @@ export const DESTINATIONS = [
     id: "ipoh",
     name: "Ipoh",
     state: "Perak",
+    latitude: 4.5975,
+    longitude: 101.0901,
     imageUrl:
       "https://images.unsplash.com/photo-1518998053901-5348d3961a04?w=600&q=80",
   },
@@ -59,8 +76,61 @@ export const DESTINATIONS = [
     id: "melaka",
     name: "Melaka",
     state: "Melaka",
+    latitude: 2.1896,
+    longitude: 102.2501,
     imageUrl:
       "https://images.unsplash.com/photo-1508050919630-b135583b29ab?w=600&q=80",
+  },
+];
+
+/**
+ * Starting points a traveller can leave from. Same fixed-catalogue idea as
+ * DESTINATIONS: numeric coordinates, `locationId` as the stable key. Step 1 of
+ * the wizard picks one of these and it is saved on the itinerary as
+ * `startLocation` for Module 2 to route from.
+ */
+export const START_LOCATIONS = [
+  {
+    id: "kl-sentral",
+    name: "KL Sentral",
+    state: "Kuala Lumpur",
+    latitude: 3.1348,
+    longitude: 101.6865,
+  },
+  {
+    id: "klia",
+    name: "KLIA (Kuala Lumpur International Airport)",
+    state: "Sepang",
+    latitude: 2.7456,
+    longitude: 101.7072,
+  },
+  {
+    id: "penang-airport",
+    name: "Penang International Airport",
+    state: "Bayan Lepas",
+    latitude: 5.2971,
+    longitude: 100.2769,
+  },
+  {
+    id: "butterworth",
+    name: "Butterworth Ferry Terminal",
+    state: "Seberang Perai",
+    latitude: 5.3936,
+    longitude: 100.3639,
+  },
+  {
+    id: "jb-sentral",
+    name: "JB Sentral",
+    state: "Johor Bahru",
+    latitude: 1.4637,
+    longitude: 103.7647,
+  },
+  {
+    id: "ipoh-station",
+    name: "Ipoh Railway Station",
+    state: "Perak",
+    latitude: 4.5976,
+    longitude: 101.0806,
   },
 ];
 
@@ -514,6 +584,96 @@ export function getDestination(destinationId) {
   return DESTINATIONS.find((d) => d.id === destinationId) ?? null;
 }
 
+export function getStartLocation(locationId) {
+  return START_LOCATIONS.find((l) => l.id === locationId) ?? null;
+}
+
+/** Activities across every chosen destination, tagged with where they belong. */
+export function getActivitiesForMany(destinationIds = []) {
+  return destinationIds.flatMap((id) =>
+    getActivitiesFor(id).map((a) => ({ ...a, destinationId: id }))
+  );
+}
+
+/** Accommodation options across every chosen destination. */
+export function getAccommodationsForMany(destinationIds = []) {
+  return destinationIds.flatMap((id) =>
+    getAccommodationsFor(id).map((a) => ({ ...a, destinationId: id }))
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Route ordering (Module 1 only — no Routes API, no transport calc)   */
+/* ------------------------------------------------------------------ */
+
+const EARTH_RADIUS_KM = 6371;
+
+/** Great-circle distance in km between two { latitude, longitude } points. */
+export function haversineKm(a, b) {
+  if (!a || !b) return 0;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+  return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/**
+ * Orders destinations into a sensible visiting sequence with a nearest-
+ * neighbour walk from the starting location. This is intentionally simple:
+ * it only needs to produce a stable `order` for each destination. Module 2
+ * does the real routing later using the coordinates saved on the itinerary.
+ */
+export function orderDestinationsByProximity(startLocation, destinations = []) {
+  const remaining = destinations.filter(
+    (d) => Number.isFinite(d?.latitude) && Number.isFinite(d?.longitude)
+  );
+  // Destinations without coordinates can't be ordered — keep them at the end.
+  const noCoords = destinations.filter((d) => !remaining.includes(d));
+
+  const ordered = [];
+  let cursor = startLocation ?? remaining[0] ?? null;
+
+  while (remaining.length > 0) {
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+    remaining.forEach((d, i) => {
+      const dist = cursor ? haversineKm(cursor, d) : 0;
+      if (dist < bestDistance) {
+        bestDistance = dist;
+        bestIndex = i;
+      }
+    });
+    const [next] = remaining.splice(bestIndex, 1);
+    ordered.push(next);
+    cursor = next;
+  }
+
+  return [...ordered, ...noCoords];
+}
+
+/**
+ * Spreads `count` ordered destinations across the trip's days as evenly as
+ * possible. Returns an array of 1-based day numbers, one per destination.
+ */
+export function assignDays(count, tripDays) {
+  const days = Math.max(1, Number(tripDays) || 1);
+  if (count <= 0) return [];
+  const perDay = Math.ceil(count / days);
+  return Array.from({ length: count }, (_, i) =>
+    Math.min(days, Math.floor(i / perDay) + 1)
+  );
+}
+
+/** Whole days a trip spans (inclusive). 1 day minimum. */
+export function tripDayCount(startDate, endDate) {
+  return nightsBetween(startDate, endDate) + 1;
+}
+
 /** Inclusive night count between two yyyy-mm-dd strings; 0 if either is missing. */
 export function nightsBetween(startDate, endDate) {
   if (!startDate || !endDate) return 0;
@@ -537,6 +697,63 @@ export function calcEcoScore(activities, accommodation) {
 export function calcCarbon(activities, nights) {
   const fromActivities = activities.reduce((sum, a) => sum + a.carbonKg, 0);
   return Number((fromActivities + nights * 1.5).toFixed(1));
+}
+
+/* ------------------------------------------------------------------ */
+/* Budget                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Estimated itinerary cost from the data Module 1 actually captures: the chosen
+ * activities' prices plus the nightly accommodation rate × nights. Transport is
+ * added by Module 2 and is not included here.
+ *
+ * Costs are treated as a trip total, not per-person — this matches the model
+ * the wizard's review step and the details page have always used.
+ *
+ * @param {object}  args
+ * @param {Array}   [args.activities]     objects with a numeric `priceMyr`
+ * @param {object}  [args.accommodation]  object with a numeric `pricePerNight`
+ * @param {number}  [args.nights]         number of nights stayed
+ * @returns {{ activityCost: number, stayCost: number, total: number }}
+ */
+export function estimateItineraryCost({
+  activities = [],
+  accommodation = null,
+  nights = 0,
+} = {}) {
+  const activityCost = (activities || []).reduce(
+    (sum, a) => sum + (Number(a?.priceMyr) || 0),
+    0
+  );
+  const nightlyRate = Number(accommodation?.pricePerNight) || 0;
+  const stayCost = nightlyRate * Math.max(0, Number(nights) || 0);
+  return { activityCost, stayCost, total: activityCost + stayCost };
+}
+
+/**
+ * Compares an estimated total against the selected budget.
+ *
+ * @param {number} estimatedTotal
+ * @param {number} budget
+ * @returns {{
+ *   hasBudget: boolean, budget: number, total: number,
+ *   overBudget: boolean, overBy: number, withinBudget: boolean
+ * }}  `overBy` is only positive when the trip is over budget.
+ */
+export function evaluateBudget(estimatedTotal, budget) {
+  const total = Number(estimatedTotal) || 0;
+  const limit = Number(budget) || 0;
+  const hasBudget = limit > 0;
+  const overBy = total - limit;
+  return {
+    hasBudget,
+    budget: limit,
+    total,
+    overBudget: hasBudget && overBy > 0,
+    overBy: overBy > 0 ? overBy : 0,
+    withinBudget: !hasBudget || overBy <= 0,
+  };
 }
 
 /** Formats yyyy-mm-dd as dd/mm/yyyy for display, matching the mockups. */

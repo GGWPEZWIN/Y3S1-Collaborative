@@ -1,6 +1,6 @@
 import React from "react";
 import { ArrowRight, Leaf } from "lucide-react";
-import { TRAVELLER_STYLES } from "../constants/itineraryData";
+import { TRAVELLER_STYLES, START_LOCATIONS } from "../constants/itineraryData";
 import useMediaQuery, { BREAKPOINTS } from "../hooks/useMediaQuery";
 import * as w from "./wizardStyles";
 
@@ -24,7 +24,11 @@ export default function Step1TripDetails({ draft, onChange, onNext }) {
     !draft.startDate || !draft.endDate || draft.endDate >= draft.startDate;
 
   const canContinue =
-    draft.name.trim() !== "" && draft.startDate && draft.endDate && datesValid;
+    draft.name.trim() !== "" &&
+    draft.startDate &&
+    draft.endDate &&
+    datesValid &&
+    Boolean(draft.startLocationId);
 
   const twoCol = { ...styles.twoCol, ...(isPhone ? styles.twoColPhone : null) };
 
@@ -84,6 +88,25 @@ export default function Step1TripDetails({ draft, onChange, onNext }) {
         {!datesValid && (
           <p style={styles.error}>End date must be on or after the start date.</p>
         )}
+
+        <label style={styles.field}>
+          <span style={styles.label}>Starting Location</span>
+          <select
+            value={draft.startLocationId || ""}
+            onChange={(e) =>
+              onChange({ startLocationId: e.target.value || null })
+            }
+            style={styles.input}
+          >
+            <option value="">Select where you're starting from…</option>
+            {START_LOCATIONS.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name}
+                {loc.state ? ` — ${loc.state}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <div style={twoCol}>
           <label style={styles.field}>
