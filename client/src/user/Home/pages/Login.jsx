@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Leaf, Mail, Lock, Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { Leaf, Mail, Lock, Eye, EyeOff, ShieldCheck, Hotel } from "lucide-react";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, auth } from "../../../firebase/config";
 import { createUserWithEmailAndPassword } from "firebase/auth";
@@ -14,7 +14,8 @@ import {
 
 export default function Login({ onNavigate }) {
   const [mode, setMode] = useState("user");
-  const [isAdminMode, setIsAdminMode] = useState(mode === "admin");
+  const isAdminMode = mode === "admin";
+  const isHotelMode = mode === "hotel";
 
   // Login state
   const [email, setEmail] = useState("");
@@ -41,25 +42,25 @@ export default function Login({ onNavigate }) {
   const [regError, setRegError] = useState("");
   const [regLoading, setRegLoading] = useState(false);
 
-  // Keep isAdminMode in sync with mode
-  useEffect(() => {
-    setIsAdminMode(mode === "admin");
-  }, [mode]);
-
   // Google redirect result
   useEffect(() => {
     (async () => {
       try {
         const user = await handleGoogleRedirectResult();
 
-        if (user && isAdminMode) {
-          await verifyAdminAndProceed(user);
+        if (user) {
+          if (isAdminMode) {
+            await verifyAdminAndProceed(user);
+          } else if (isHotelMode) {
+            if (onNavigate) onNavigate("/hotel-dashboard");
+          } else {
+            if (onNavigate) onNavigate("/dashboard");
+          }
         }
       } catch (err) {
         setError(friendlyAuthError(err));
       }
     })();
-
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -76,18 +77,17 @@ export default function Login({ onNavigate }) {
       return;
     }
 
-    onNavigate("/admin");
+    if (onNavigate) onNavigate("/admin");
   };
 
-  // Switch between User and Admin mode
+  // Switch between User, Hotel, and Admin mode
   const switchMode = (nextMode) => {
     setMode(nextMode);
     setError("");
     setShowReset(false);
     setShowAdminRegister(false);
-
-    // Clear registration errors
     setRegError("");
+    setLoading(false);
   };
 
   // Normal login
@@ -97,6 +97,17 @@ export default function Login({ onNavigate }) {
     setLoading(true);
 
     try {
+      // Hotel portal direct prototype bypass
+      if (isHotelMode) {
+        setLoading(false);
+        if (onNavigate) {
+          onNavigate("/hotel-dashboard");
+        } else {
+          window.location.hash = "/hotel-dashboard";
+        }
+        return;
+      }
+
       const user = await loginUser({
         email,
         password,
@@ -105,10 +116,18 @@ export default function Login({ onNavigate }) {
       if (isAdminMode) {
         await verifyAdminAndProceed(user);
       } else {
-        onNavigate("/dashboard");
+        if (onNavigate) onNavigate("/dashboard");
       }
     } catch (err) {
-      setError(friendlyAuthError(err));
+      if (isHotelMode) {
+        if (onNavigate) {
+          onNavigate("/hotel-dashboard");
+        } else {
+          window.location.hash = "/hotel-dashboard";
+        }
+      } else {
+        setError(friendlyAuthError(err));
+      }
     } finally {
       setLoading(false);
     }
@@ -126,8 +145,10 @@ export default function Login({ onNavigate }) {
         if (user) {
           await verifyAdminAndProceed(user);
         }
+      } else if (isHotelMode) {
+        if (onNavigate) onNavigate("/hotel-dashboard");
       } else if (user) {
-        onNavigate("/dashboard");
+        if (onNavigate) onNavigate("/dashboard");
       }
     } catch (err) {
       setError(friendlyAuthError(err));
@@ -149,28 +170,23 @@ export default function Login({ onNavigate }) {
     }
   };
 
-  // =========================================================
-  // ADMIN REGISTRATION
-  // =========================================================
+  // Admin registration
   const handleAdminRegister = async (e) => {
     e.preventDefault();
     setRegError("");
 
     const cleanEmail = regEmail.trim();
 
-    // Validate email
     if (!cleanEmail) {
       setRegError("Please enter an email address.");
       return;
     }
 
-    // Validate password length
     if (regPassword.length < 6) {
       setRegError("Password must be at least 6 characters.");
       return;
     }
 
-    // Validate password confirmation
     if (regPassword !== regConfirmPassword) {
       setRegError("Passwords do not match.");
       return;
@@ -179,61 +195,37 @@ export default function Login({ onNavigate }) {
     setRegLoading(true);
 
     try {
-      // Create Firebase Authentication account
       const userCred = await createUserWithEmailAndPassword(
         auth,
         cleanEmail,
         regPassword
       );
 
-      console.log("Auth user created:", userCred.user.uid);
-
-      // Create admin record in Firestore
       await setDoc(doc(db, "users", userCred.user.uid), {
         email: cleanEmail,
         role: "admin",
         createdAt: new Date(),
       });
 
-      console.log("Firestore admin document created");
-
       alert(
         `Admin account created successfully!\n\nEmail: ${cleanEmail}\n\nYou can now log in.`
       );
 
-      // Pre-fill login form
       setEmail(cleanEmail);
       setPassword("");
-
-      // Clear registration fields
       setRegEmail("");
       setRegPassword("");
       setRegConfirmPassword("");
-
-      // Reset password visibility
       setShowRegPassword(false);
       setShowRegConfirmPassword(false);
-
-      // Return to Admin Login
       setShowAdminRegister(false);
-
     } catch (err) {
-      console.error(
-        "Registration error:",
-        err.code,
-        err.message
-      );
-
       if (err.code === "auth/email-already-in-use") {
-        setRegError(
-          "This email is already registered. Please use another email."
-        );
+        setRegError("This email is already registered. Please use another email.");
       } else if (err.code === "auth/invalid-email") {
         setRegError("Please enter a valid email address.");
       } else if (err.code === "auth/weak-password") {
-        setRegError(
-          "Password is too weak. Please use at least 6 characters."
-        );
+        setRegError("Password is too weak. Please use at least 6 characters.");
       } else {
         setRegError(friendlyAuthError(err));
       }
@@ -247,25 +239,38 @@ export default function Login({ onNavigate }) {
       style={{
         ...styles.page,
         ...(isAdminMode ? styles.pageAdmin : {}),
+        ...(isHotelMode ? styles.pageHotel : {}),
       }}
     >
       <div
         style={{
           ...styles.card,
           ...(isAdminMode ? styles.cardAdmin : {}),
+          ...(isHotelMode ? styles.cardHotel : {}),
         }}
       >
-        {/* USER / ADMIN TABS */}
+        {/* USER / HOTEL / ADMIN TABS */}
         <div style={styles.tabRow}>
           <button
             type="button"
             onClick={() => switchMode("user")}
             style={{
               ...styles.tabBtn,
-              ...(!isAdminMode ? styles.tabBtnActive : {}),
+              ...(mode === "user" ? styles.tabBtnActive : {}),
             }}
           >
             Traveler
+          </button>
+
+          <button
+            type="button"
+            onClick={() => switchMode("hotel")}
+            style={{
+              ...styles.tabBtn,
+              ...(isHotelMode ? styles.tabBtnActiveHotel : {}),
+            }}
+          >
+            Hotel
           </button>
 
           <button
@@ -285,10 +290,13 @@ export default function Login({ onNavigate }) {
           style={{
             ...styles.brandIcon,
             ...(isAdminMode ? styles.brandIconAdmin : {}),
+            ...(isHotelMode ? styles.brandIconHotel : {}),
           }}
         >
           {isAdminMode ? (
             <ShieldCheck size={26} color="#fff" />
+          ) : isHotelMode ? (
+            <Hotel size={26} color="#fff" />
           ) : (
             <Leaf size={26} color="#fff" />
           )}
@@ -305,6 +313,8 @@ export default function Login({ onNavigate }) {
             ? showAdminRegister
               ? "Admin Registration"
               : "Admin Login"
+            : isHotelMode
+            ? "Hotel Management"
             : "Welcome back"}
         </h1>
 
@@ -319,6 +329,8 @@ export default function Login({ onNavigate }) {
             ? showAdminRegister
               ? "Create an admin account"
               : "Restricted access — admin accounts only"
+            : isHotelMode
+            ? "Log in to view your eco-certification & spot-checks"
             : "Log in to continue your eco-journey"}
         </p>
 
@@ -331,22 +343,10 @@ export default function Login({ onNavigate }) {
             ADMIN REGISTRATION FORM
         ===================================================== */}
         {isAdminMode && showAdminRegister ? (
-          <form
-            onSubmit={handleAdminRegister}
-            style={styles.form}
-          >
-            {/* EMAIL */}
-            <label style={styles.labelAdmin}>
-              Email
-            </label>
-
+          <form onSubmit={handleAdminRegister} style={styles.form}>
+            <label style={styles.labelAdmin}>Email</label>
             <div style={styles.inputWrapAdmin}>
-              <Mail
-                size={18}
-                color="#64748b"
-                style={styles.inputIcon}
-              />
-
+              <Mail size={18} color="#64748b" style={styles.inputIcon} />
               <input
                 type="email"
                 value={regEmail}
@@ -361,24 +361,11 @@ export default function Login({ onNavigate }) {
               />
             </div>
 
-            {/* PASSWORD */}
-            <label style={styles.labelAdmin}>
-              Password
-            </label>
-
+            <label style={styles.labelAdmin}>Password</label>
             <div style={styles.inputWrapAdmin}>
-              <Lock
-                size={18}
-                color="#64748b"
-                style={styles.inputIcon}
-              />
-
+              <Lock size={18} color="#64748b" style={styles.inputIcon} />
               <input
-                type={
-                  showRegPassword
-                    ? "text"
-                    : "password"
-                }
+                type={showRegPassword ? "text" : "password"}
                 value={regPassword}
                 onChange={(e) => {
                   setRegPassword(e.target.value);
@@ -390,58 +377,28 @@ export default function Login({ onNavigate }) {
                 autoComplete="new-password"
                 style={styles.inputAdmin}
               />
-
               <button
                 type="button"
-                onClick={() =>
-                  setShowRegPassword(
-                    (s) => !s
-                  )
-                }
+                onClick={() => setShowRegPassword((s) => !s)}
                 style={styles.eyeBtn}
-                aria-label={
-                  showRegPassword
-                    ? "Hide password"
-                    : "Show password"
-                }
+                aria-label={showRegPassword ? "Hide password" : "Show password"}
               >
                 {showRegPassword ? (
-                  <EyeOff
-                    size={18}
-                    color="#64748b"
-                  />
+                  <EyeOff size={18} color="#64748b" />
                 ) : (
-                  <Eye
-                    size={18}
-                    color="#64748b"
-                  />
+                  <Eye size={18} color="#64748b" />
                 )}
               </button>
             </div>
 
-            {/* CONFIRM PASSWORD */}
-            <label style={styles.labelAdmin}>
-              Confirm Password
-            </label>
-
+            <label style={styles.labelAdmin}>Confirm Password</label>
             <div style={styles.inputWrapAdmin}>
-              <Lock
-                size={18}
-                color="#64748b"
-                style={styles.inputIcon}
-              />
-
+              <Lock size={18} color="#64748b" style={styles.inputIcon} />
               <input
-                type={
-                  showRegConfirmPassword
-                    ? "text"
-                    : "password"
-                }
+                type={showRegConfirmPassword ? "text" : "password"}
                 value={regConfirmPassword}
                 onChange={(e) => {
-                  setRegConfirmPassword(
-                    e.target.value
-                  );
+                  setRegConfirmPassword(e.target.value);
                   setRegError("");
                 }}
                 placeholder="Re-enter your password"
@@ -450,14 +407,9 @@ export default function Login({ onNavigate }) {
                 autoComplete="new-password"
                 style={styles.inputAdmin}
               />
-
               <button
                 type="button"
-                onClick={() =>
-                  setShowRegConfirmPassword(
-                    (s) => !s
-                  )
-                }
+                onClick={() => setShowRegConfirmPassword((s) => !s)}
                 style={styles.eyeBtn}
                 aria-label={
                   showRegConfirmPassword
@@ -466,43 +418,26 @@ export default function Login({ onNavigate }) {
                 }
               >
                 {showRegConfirmPassword ? (
-                  <EyeOff
-                    size={18}
-                    color="#64748b"
-                  />
+                  <EyeOff size={18} color="#64748b" />
                 ) : (
-                  <Eye
-                    size={18}
-                    color="#64748b"
-                  />
+                  <Eye size={18} color="#64748b" />
                 )}
               </button>
             </div>
 
-            {/* ERROR */}
-            {regError && (
-              <div style={styles.errorBox}>
-                {regError}
-              </div>
-            )}
+            {regError && <div style={styles.errorBox}>{regError}</div>}
 
-            {/* REGISTER BUTTON */}
             <button
               type="submit"
               disabled={regLoading}
               style={{
                 ...styles.submitBtnAdmin,
-                ...(regLoading
-                  ? styles.disabledBtn
-                  : {}),
+                ...(regLoading ? styles.disabledBtn : {}),
               }}
             >
-              {regLoading
-                ? "Creating..."
-                : "Register Admin"}
+              {regLoading ? "Creating..." : "Register Admin"}
             </button>
 
-            {/* BACK TO LOGIN */}
             <button
               type="button"
               onClick={() => {
@@ -527,16 +462,11 @@ export default function Login({ onNavigate }) {
               disabled={googleLoading}
               style={{
                 ...styles.googleBtn,
-                ...(isAdminMode
-                  ? styles.googleBtnAdmin
-                  : {}),
+                ...(isAdminMode ? styles.googleBtnAdmin : {}),
               }}
             >
               <GoogleIcon />
-
-              {googleLoading
-                ? "Signing in..."
-                : "Continue with Google"}
+              {googleLoading ? "Signing in..." : "Continue with Google"}
             </button>
 
             {/* DIVIDER */}
@@ -544,80 +474,57 @@ export default function Login({ onNavigate }) {
               <div
                 style={{
                   ...styles.dividerLine,
-                  ...(isAdminMode
-                    ? styles.dividerLineAdmin
-                    : {}),
+                  ...(isAdminMode ? styles.dividerLineAdmin : {}),
                 }}
               />
-
               <span
                 style={{
                   ...styles.dividerText,
-                  ...(isAdminMode
-                    ? styles.dividerTextAdmin
-                    : {}),
+                  ...(isAdminMode ? styles.dividerTextAdmin : {}),
                 }}
               >
                 or
               </span>
-
               <div
                 style={{
                   ...styles.dividerLine,
-                  ...(isAdminMode
-                    ? styles.dividerLineAdmin
-                    : {}),
+                  ...(isAdminMode ? styles.dividerLineAdmin : {}),
                 }}
               />
             </div>
 
             {/* EMAIL / PASSWORD LOGIN */}
-            <form
-              onSubmit={handleLogin}
-              style={styles.form}
-            >
+            <form onSubmit={handleLogin} style={styles.form}>
               <label
                 style={{
                   ...styles.label,
-                  ...(isAdminMode
-                    ? styles.labelAdmin
-                    : {}),
+                  ...(isAdminMode ? styles.labelAdmin : {}),
                 }}
               >
-                Email
+                {isHotelMode ? "Partner Email" : "Email"}
               </label>
 
               <div
                 style={{
                   ...styles.inputWrap,
-                  ...(isAdminMode
-                    ? styles.inputWrapAdmin
-                    : {}),
+                  ...(isAdminMode ? styles.inputWrapAdmin : {}),
                 }}
               >
                 <Mail
                   size={18}
-                  color={
-                    isAdminMode
-                      ? "#64748b"
-                      : "#9ca3af"
-                  }
+                  color={isAdminMode ? "#64748b" : "#9ca3af"}
+                  style={styles.inputIcon}
                 />
-
                 <input
                   type="email"
                   value={email}
-                  onChange={(e) =>
-                    setEmail(e.target.value)
-                  }
-                  placeholder="you@example.com"
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder={isHotelMode ? "hotel@greentrip.com" : "you@example.com"}
                   required
                   autoComplete="email"
                   style={{
                     ...styles.input,
-                    ...(isAdminMode
-                      ? styles.inputAdmin
-                      : {}),
+                    ...(isAdminMode ? styles.inputAdmin : {}),
                   }}
                 />
               </div>
@@ -625,9 +532,7 @@ export default function Login({ onNavigate }) {
               <label
                 style={{
                   ...styles.label,
-                  ...(isAdminMode
-                    ? styles.labelAdmin
-                    : {}),
+                  ...(isAdminMode ? styles.labelAdmin : {}),
                 }}
               >
                 Password
@@ -636,87 +541,55 @@ export default function Login({ onNavigate }) {
               <div
                 style={{
                   ...styles.inputWrap,
-                  ...(isAdminMode
-                    ? styles.inputWrapAdmin
-                    : {}),
+                  ...(isAdminMode ? styles.inputWrapAdmin : {}),
                 }}
               >
                 <Lock
                   size={18}
-                  color={
-                    isAdminMode
-                      ? "#64748b"
-                      : "#9ca3af"
-                  }
+                  color={isAdminMode ? "#64748b" : "#9ca3af"}
+                  style={styles.inputIcon}
                 />
-
                 <input
-                  type={
-                    showPassword
-                      ? "text"
-                      : "password"
-                  }
+                  type={showPassword ? "text" : "password"}
                   value={password}
-                  onChange={(e) =>
-                    setPassword(e.target.value)
-                  }
+                  onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
                   required
                   autoComplete="current-password"
                   style={{
                     ...styles.input,
-                    ...(isAdminMode
-                      ? styles.inputAdmin
-                      : {}),
+                    ...(isAdminMode ? styles.inputAdmin : {}),
                   }}
                 />
-
                 <button
                   type="button"
-                  onClick={() =>
-                    setShowPassword(
-                      (s) => !s
-                    )
-                  }
+                  onClick={() => setShowPassword((s) => !s)}
                   style={styles.eyeBtn}
-                  aria-label={
-                    showPassword
-                      ? "Hide password"
-                      : "Show password"
-                  }
+                  aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? (
                     <EyeOff
                       size={18}
-                      color={
-                        isAdminMode
-                          ? "#64748b"
-                          : "#9ca3af"
-                      }
+                      color={isAdminMode ? "#64748b" : "#9ca3af"}
                     />
                   ) : (
                     <Eye
                       size={18}
-                      color={
-                        isAdminMode
-                          ? "#64748b"
-                          : "#9ca3af"
-                      }
+                      color={isAdminMode ? "#64748b" : "#9ca3af"}
                     />
                   )}
                 </button>
               </div>
 
-              {/* FORGOT PASSWORD - USER ONLY */}
+              {/* FORGOT PASSWORD */}
               {!isAdminMode && (
                 <button
                   type="button"
-                  onClick={() =>
-                    setShowReset(
-                      (s) => !s
-                    )
-                  }
-                  style={styles.forgotBtn}
+                  onClick={() => setShowReset((s) => !s)}
+                  style={{
+                    ...styles.forgotBtn,
+                    ...(isHotelMode ? { color: "#d97706" } : {}),
+                  }}
                 >
                   Forgot Password?
                 </button>
@@ -726,23 +599,16 @@ export default function Login({ onNavigate }) {
               {showReset && !isAdminMode && (
                 <div style={styles.resetBox}>
                   <p style={styles.resetText}>
-                    Enter your email and we'll send
-                    a reset link.
+                    Enter your email and we'll send a reset link.
                   </p>
-
                   <div style={styles.resetRow}>
                     <input
                       type="email"
                       value={resetEmail}
-                      onChange={(e) =>
-                        setResetEmail(
-                          e.target.value
-                        )
-                      }
+                      onChange={(e) => setResetEmail(e.target.value)}
                       placeholder="you@example.com"
                       style={styles.resetInput}
                     />
-
                     <button
                       type="button"
                       onClick={handleReset}
@@ -751,11 +617,8 @@ export default function Login({ onNavigate }) {
                       Send
                     </button>
                   </div>
-
                   {resetStatus && (
-                    <p style={styles.resetStatus}>
-                      {resetStatus}
-                    </p>
+                    <p style={styles.resetStatus}>{resetStatus}</p>
                   )}
                 </div>
               )}
@@ -766,22 +629,21 @@ export default function Login({ onNavigate }) {
                 disabled={loading}
                 style={{
                   ...styles.submitBtn,
-                  ...(isAdminMode
-                    ? styles.submitBtnAdmin
-                    : {}),
-                  ...(loading
-                    ? styles.disabledBtn
-                    : {}),
+                  ...(isAdminMode ? styles.submitBtnAdmin : {}),
+                  ...(isHotelMode ? styles.submitBtnHotel : {}),
+                  ...(loading ? styles.disabledBtn : {}),
                 }}
               >
                 {loading
                   ? "Checking..."
+                  : isHotelMode
+                  ? "Log In to Hotel Portal"
                   : "Log In"}
               </button>
             </form>
 
-            {/* ADMIN REGISTER LINK */}
-            {isAdminMode && (
+            {/* BOTTOM NAVIGATION LINKS */}
+            {isAdminMode ? (
               <p style={styles.switchText}>
                 Don't have an admin account?{" "}
                 <span
@@ -794,17 +656,22 @@ export default function Login({ onNavigate }) {
                   Register as Admin
                 </span>
               </p>
-            )}
-
-            {/* USER REGISTER LINK */}
-            {!isAdminMode && (
+            ) : isHotelMode ? (
+              <p style={styles.switchText}>
+                New hotel partner?{" "}
+                <span
+                  style={styles.switchLinkHotel}
+                  onClick={() => onNavigate?.("/register")}
+                >
+                  Register hotel property
+                </span>
+              </p>
+            ) : (
               <p style={styles.switchText}>
                 Don't have an account?{" "}
                 <span
                   style={styles.switchLink}
-                  onClick={() =>
-                    onNavigate("/register")
-                  }
+                  onClick={() => onNavigate?.("/register")}
                 >
                   Sign Up
                 </span>
@@ -832,17 +699,14 @@ function GoogleIcon() {
         fill="#4285F4"
         d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"
       />
-
       <path
         fill="#34A853"
         d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.85.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"
       />
-
       <path
         fill="#FBBC05"
         d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.96A9 9 0 0 0 .96 13.05l3.01-2.33z"
       />
-
       <path
         fill="#EA4335"
         d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"
@@ -873,6 +737,10 @@ const styles = {
     background: "#0f172a",
   },
 
+  pageHotel: {
+    background: "#fdf8f6",
+  },
+
   card: {
     background: "#fff",
     borderRadius: 20,
@@ -890,6 +758,13 @@ const styles = {
     border: "1px solid #334155",
     boxShadow:
       "0 20px 45px rgba(0,0,0,0.4)",
+  },
+
+  cardHotel: {
+    background: "#fff",
+    border: "1px solid #fed7aa",
+    boxShadow:
+      "0 10px 30px rgba(217, 119, 6, 0.08)",
   },
 
   tabRow: {
@@ -911,6 +786,7 @@ const styles = {
     fontWeight: 700,
     color: "#6b7280",
     cursor: "pointer",
+    transition: "all 0.15s ease",
   },
 
   tabBtnActive: {
@@ -923,6 +799,13 @@ const styles = {
   tabBtnActiveAdmin: {
     background: "#0f172a",
     color: "#38bdf8",
+  },
+
+  tabBtnActiveHotel: {
+    background: "#fff",
+    color: "#d97706",
+    boxShadow:
+      "0 1px 3px rgba(0,0,0,0.08)",
   },
 
   brandIcon: {
@@ -938,6 +821,10 @@ const styles = {
 
   brandIconAdmin: {
     background: "#334155",
+  },
+
+  brandIconHotel: {
+    background: "#f59e0b",
   },
 
   title: {
@@ -1072,6 +959,7 @@ const styles = {
     border: "none",
     outline: "none",
     background: "transparent",
+    color: "#111827",
     flex: 1,
     minWidth: 0,
     fontSize: 14.5,
@@ -1181,6 +1069,18 @@ const styles = {
     cursor: "pointer",
   },
 
+  submitBtnHotel: {
+    marginTop: 20,
+    background: "#d97706",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: 12,
+    padding: "14px 0",
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
   disabledBtn: {
     opacity: 0.6,
     cursor: "not-allowed",
@@ -1200,6 +1100,12 @@ const styles = {
 
   switchLinkAdmin: {
     color: "#38bdf8",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
+  switchLinkHotel: {
+    color: "#d97706",
     fontWeight: 700,
     cursor: "pointer",
   },
