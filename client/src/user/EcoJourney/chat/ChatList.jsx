@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Search,
   Plus,
+  ChevronLeft,
   Users,
   MessageCircle,
   X,
@@ -18,7 +19,9 @@ import {
 
 import { listenToFriends } from "../../../firebase/friendService";
 
+
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
 
 export default function ChatList({ onNavigate }) {
   const { authUser, profile, loading } = useCurrentUser();
@@ -35,9 +38,10 @@ export default function ChatList({ onNavigate }) {
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [error, setError] = useState("");
 
-  /* =========================================================
+
+  /* ---------------------------------------------------------
      LISTEN TO USER CHATS
-  ========================================================= */
+  --------------------------------------------------------- */
 
   useEffect(() => {
     if (!authUser?.uid) return;
@@ -49,9 +53,10 @@ export default function ChatList({ onNavigate }) {
     return () => unsubscribe?.();
   }, [authUser?.uid]);
 
-  /* =========================================================
+
+  /* ---------------------------------------------------------
      LISTEN TO FRIENDS
-  ========================================================= */
+  --------------------------------------------------------- */
 
   useEffect(() => {
     if (!authUser?.uid) return;
@@ -63,9 +68,10 @@ export default function ChatList({ onNavigate }) {
     return () => unsubscribe?.();
   }, [authUser?.uid]);
 
-  /* =========================================================
-     CURRENT USER
-  ========================================================= */
+
+  /* ---------------------------------------------------------
+     CURRENT USER OBJECT
+  --------------------------------------------------------- */
 
   const user = {
     name:
@@ -81,9 +87,10 @@ export default function ChatList({ onNavigate }) {
       "",
   };
 
-  /* =========================================================
-     GET CHAT NAME
-  ========================================================= */
+
+  /* ---------------------------------------------------------
+     GET CHAT DISPLAY NAME
+  --------------------------------------------------------- */
 
   function getChatName(chat) {
     if (chat.type === "group") {
@@ -105,9 +112,10 @@ export default function ChatList({ onNavigate }) {
     return "Chat";
   }
 
-  /* =========================================================
-     GET CHAT PHOTO
-  ========================================================= */
+
+  /* ---------------------------------------------------------
+     GET CHAT AVATAR PHOTO
+  --------------------------------------------------------- */
 
   function getChatPhoto(chat) {
     if (chat.type === "group") {
@@ -127,9 +135,10 @@ export default function ChatList({ onNavigate }) {
     return "";
   }
 
-  /* =========================================================
-     SEARCH + ALPHABET FILTER
-  ========================================================= */
+
+  /* ---------------------------------------------------------
+     SEARCH + LETTER FILTER
+  --------------------------------------------------------- */
 
   const filteredChats = useMemo(() => {
     let result = [...chats];
@@ -165,19 +174,23 @@ export default function ChatList({ onNavigate }) {
     }
 
     return result;
-  }, [
-    chats,
-    searchText,
-    activeLetter,
-    authUser?.uid,
-  ]);
+  }, [chats, searchText, activeLetter]);
 
-  /* =========================================================
+
+  /* ---------------------------------------------------------
      SORT CHATS
-  ========================================================= */
+  --------------------------------------------------------- */
 
   const sortedChats = useMemo(() => {
     return [...filteredChats].sort((a, b) => {
+      const pinnedA = a.pinnedBy?.includes(authUser?.uid) ? 1 : 0;
+      const pinnedB = b.pinnedBy?.includes(authUser?.uid) ? 1 : 0;
+
+      // Pinned chats always stay above non-pinned chats.
+      if (pinnedA !== pinnedB) {
+        return pinnedB - pinnedA;
+      }
+
       const dateA =
         a.lastMessageAt?.seconds ||
         a.created_at?.seconds ||
@@ -190,11 +203,12 @@ export default function ChatList({ onNavigate }) {
 
       return dateB - dateA;
     });
-  }, [filteredChats]);
+  }, [filteredChats, authUser?.uid]);
 
-  /* =========================================================
-     FRIENDS FOR GROUP
-  ========================================================= */
+
+  /* ---------------------------------------------------------
+     FRIENDS FOR GROUP CREATION
+  --------------------------------------------------------- */
 
   const availableFriends = useMemo(() => {
     return [...friends].sort((a, b) =>
@@ -202,9 +216,10 @@ export default function ChatList({ onNavigate }) {
     );
   }, [friends]);
 
-  /* =========================================================
-     TOGGLE FRIEND
-  ========================================================= */
+
+  /* ---------------------------------------------------------
+     TOGGLE FRIEND FOR GROUP
+  --------------------------------------------------------- */
 
   function toggleFriend(friend) {
     setSelectedFriends((current) => {
@@ -222,9 +237,10 @@ export default function ChatList({ onNavigate }) {
     });
   }
 
-  /* =========================================================
+
+  /* ---------------------------------------------------------
      CREATE GROUP
-  ========================================================= */
+  --------------------------------------------------------- */
 
   async function handleCreateGroup() {
     setError("");
@@ -261,16 +277,12 @@ export default function ChatList({ onNavigate }) {
       setSelectedFriends([]);
       setError("");
 
-      onNavigate?.(
-        "/community/chat/room",
-        chatId
-      );
+      /*
+       * Open the newly created group immediately.
+       */
+      onNavigate?.("/community/chat/room", chatId);
     } catch (err) {
-      console.error(
-        "Failed to create group:",
-        err
-      );
-
+      console.error("Failed to create group:", err);
       setError(
         err?.message ||
           "Failed to create the group. Please try again."
@@ -280,20 +292,19 @@ export default function ChatList({ onNavigate }) {
     }
   }
 
-  /* =========================================================
+
+  /* ---------------------------------------------------------
      OPEN CHAT
-  ========================================================= */
+  --------------------------------------------------------- */
 
   function openChat(chat) {
-    onNavigate?.(
-      "/community/chat/room",
-      chat.id
-    );
+    onNavigate?.("/community/chat/room", chat.id);
   }
 
-  /* =========================================================
-     LAST MESSAGE
-  ========================================================= */
+
+  /* ---------------------------------------------------------
+     FORMAT LAST MESSAGE
+  --------------------------------------------------------- */
 
   function getLastMessage(chat) {
     if (!chat.lastMessage) {
@@ -303,9 +314,10 @@ export default function ChatList({ onNavigate }) {
     return chat.lastMessage;
   }
 
-  /* =========================================================
+
+  /* ---------------------------------------------------------
      LOADING
-  ========================================================= */
+  --------------------------------------------------------- */
 
   if (loading) {
     return (
@@ -317,9 +329,10 @@ export default function ChatList({ onNavigate }) {
     );
   }
 
-  /* =========================================================
+
+  /* ---------------------------------------------------------
      NOT LOGGED IN
-  ========================================================= */
+  --------------------------------------------------------- */
 
   if (!authUser || !profile) {
     return (
@@ -341,9 +354,10 @@ export default function ChatList({ onNavigate }) {
     );
   }
 
-  /* =========================================================
+
+  /* ---------------------------------------------------------
      PAGE
-  ========================================================= */
+  --------------------------------------------------------- */
 
   return (
     <Layout
@@ -353,35 +367,48 @@ export default function ChatList({ onNavigate }) {
     >
       <div style={styles.page}>
 
-        {/* ================= HEADER ================= */}
+        {/* HEADER */}
 
-        <div style={styles.pageHeader}>
-          <div>
-            <h1 style={styles.pageTitle}>
-              Chats
-            </h1>
-
-            <p style={styles.pageSubtitle}>
-              Message your friends, or start a group
-            </p>
-          </div>
-
+        <div style={styles.chatHeaderBlock}>
           <button
             type="button"
-            style={styles.newGroupButton}
-            onClick={() => {
-              setError("");
-              setShowGroupModal(true);
-            }}
+            onClick={() => onNavigate?.("/community")}
+            style={styles.backToCommunityButton}
           >
-            <Plus size={20} />
-            New Group
+            <ChevronLeft size={20} />
+            <span>Back to Community</span>
           </button>
+
+          <div style={styles.pageHeader}>
+            <div>
+              <h1 style={styles.pageTitle}>
+                Chats
+              </h1>
+
+              <p style={styles.pageSubtitle}>
+                Message your friends, or start a group
+              </p>
+            </div>
+
+            <button
+              type="button"
+              style={styles.newGroupButton}
+              onClick={() => {
+                setError("");
+                setShowGroupModal(true);
+              }}
+            >
+              <Plus size={20} />
+              New Group
+            </button>
+          </div>
         </div>
 
-        {/* ================= SEARCH ================= */}
+
+        {/* SEARCH */}
 
         <div style={styles.searchCard}>
+
           <div style={styles.searchWrapper}>
             <Search
               size={21}
@@ -402,26 +429,22 @@ export default function ChatList({ onNavigate }) {
             {searchText && (
               <button
                 type="button"
-                onClick={() =>
-                  setSearchText("")
-                }
+                onClick={() => setSearchText("")}
                 style={styles.clearSearchButton}
               >
                 <X size={17} />
               </button>
             )}
           </div>
+
         </div>
 
-        {/* ================= CHAT AREA ================= */}
+
+        {/* CHAT AREA */}
 
         <div style={styles.chatArea}>
 
-          {/* =================================================
-              VERTICAL FILTER
-              ALL = FIXED
-              A-Z = SCROLLABLE
-          ================================================= */}
+          {/* VERTICAL FILTER */}
 
           <aside style={styles.filterSidebar}>
 
@@ -429,7 +452,6 @@ export default function ChatList({ onNavigate }) {
               Filter
             </div>
 
-            {/* ALL BUTTON - FIXED */}
             <button
               type="button"
               onClick={() =>
@@ -444,29 +466,27 @@ export default function ChatList({ onNavigate }) {
               All
             </button>
 
-            {/* A-Z SCROLL AREA */}
-            <div style={styles.alphabetScroll}>
-              {ALPHABET.map((letter) => (
-                <button
-                  key={letter}
-                  type="button"
-                  onClick={() =>
-                    setActiveLetter(letter)
-                  }
-                  style={
-                    activeLetter === letter
-                      ? styles.filterButtonActive
-                      : styles.filterButton
-                  }
-                >
-                  {letter}
-                </button>
-              ))}
-            </div>
+            {ALPHABET.map((letter) => (
+              <button
+                key={letter}
+                type="button"
+                onClick={() =>
+                  setActiveLetter(letter)
+                }
+                style={
+                  activeLetter === letter
+                    ? styles.filterButtonActive
+                    : styles.filterButton
+                }
+              >
+                {letter}
+              </button>
+            ))}
 
           </aside>
 
-          {/* ================= RESULTS ================= */}
+
+          {/* CHAT RESULTS */}
 
           <section style={styles.resultsSection}>
 
@@ -491,7 +511,6 @@ export default function ChatList({ onNavigate }) {
               )}
             </div>
 
-            {/* ================= EMPTY ================= */}
 
             {sortedChats.length === 0 ? (
               <div style={styles.emptyCard}>
@@ -517,9 +536,6 @@ export default function ChatList({ onNavigate }) {
 
               </div>
             ) : (
-
-              /* ================= CHAT LIST ================= */
-
               <div style={styles.chatList}>
 
                 {sortedChats.map((chat) => {
@@ -548,9 +564,7 @@ export default function ChatList({ onNavigate }) {
                         <img
                           src={chatPhoto}
                           alt={chatName}
-                          style={
-                            styles.chatAvatarImage
-                          }
+                          style={styles.chatAvatarImage}
                         />
                       ) : (
                         <div
@@ -573,15 +587,13 @@ export default function ChatList({ onNavigate }) {
                         </div>
                       )}
 
-                      {/* CHAT INFO */}
+
+                      {/* CHAT INFORMATION */}
 
                       <div style={styles.chatInfo}>
 
-                        <div
-                          style={
-                            styles.chatNameRow
-                          }
-                        >
+                        <div style={styles.chatNameRow}>
+
                           <span
                             style={
                               styles.chatName
@@ -599,6 +611,16 @@ export default function ChatList({ onNavigate }) {
                               Group
                             </span>
                           )}
+
+                          {chat.pinnedBy?.includes(authUser?.uid) && (
+                            <span
+                              style={styles.pinnedIndicator}
+                              title="Pinned"
+                            >
+                              📌
+                            </span>
+                          )}
+
                         </div>
 
                         <div
@@ -611,7 +633,8 @@ export default function ChatList({ onNavigate }) {
 
                       </div>
 
-                      {/* ARROW */}
+
+                      {/* CHEVRON */}
 
                       <div
                         style={
@@ -629,8 +652,11 @@ export default function ChatList({ onNavigate }) {
             )}
 
           </section>
+
         </div>
+
       </div>
+
 
       {/* =====================================================
           NEW GROUP MODAL
@@ -667,6 +693,7 @@ export default function ChatList({ onNavigate }) {
 
             </div>
 
+
             {/* GROUP NAME */}
 
             <label style={styles.inputLabel}>
@@ -683,10 +710,10 @@ export default function ChatList({ onNavigate }) {
               style={styles.groupNameInput}
             />
 
-            {/* FRIEND HEADER */}
+
+            {/* FRIEND LIST */}
 
             <div style={styles.friendHeader}>
-
               <span style={styles.inputLabel}>
                 Select friends
               </span>
@@ -694,16 +721,13 @@ export default function ChatList({ onNavigate }) {
               <span style={styles.selectedCount}>
                 {selectedFriends.length} selected
               </span>
-
             </div>
 
-            {/* FRIEND LIST */}
 
             <div style={styles.friendList}>
 
               {availableFriends.length === 0 ? (
                 <div style={styles.noFriends}>
-
                   <Users
                     size={24}
                     color="#94a3b8"
@@ -712,10 +736,8 @@ export default function ChatList({ onNavigate }) {
                   <span>
                     You don't have any friends yet.
                   </span>
-
                 </div>
               ) : (
-
                 availableFriends.map((friend) => {
 
                   const selected =
@@ -739,11 +761,7 @@ export default function ChatList({ onNavigate }) {
                       }}
                     >
 
-                      <div
-                        style={
-                          styles.friendAvatar
-                        }
-                      >
+                      <div style={styles.friendAvatar}>
                         {(friend.name || "?")
                           .charAt(0)
                           .toUpperCase()}
@@ -794,6 +812,7 @@ export default function ChatList({ onNavigate }) {
 
             </div>
 
+
             {/* ERROR */}
 
             {error && (
@@ -801,6 +820,7 @@ export default function ChatList({ onNavigate }) {
                 {error}
               </div>
             )}
+
 
             {/* ACTIONS */}
 
@@ -832,19 +852,20 @@ export default function ChatList({ onNavigate }) {
             </div>
 
           </div>
+
         </div>
       )}
+
     </Layout>
   );
 }
+
 
 /* ============================================================
    STYLES
 ============================================================ */
 
 const styles = {
-
-  /* ================= LOADING ================= */
 
   loadingPage: {
     minHeight: "100vh",
@@ -871,8 +892,6 @@ const styles = {
     cursor: "pointer",
   },
 
-  /* ================= PAGE ================= */
-
   page: {
     padding: "28px 32px 48px",
     maxWidth: 1180,
@@ -881,12 +900,29 @@ const styles = {
     boxSizing: "border-box",
   },
 
+  chatHeaderBlock: {
+    marginBottom: 26,
+  },
+
+  backToCommunityButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    border: "none",
+    background: "transparent",
+    color: "#334155",
+    fontSize: 16,
+    fontWeight: 500,
+    cursor: "pointer",
+    padding: "2px 0",
+    marginBottom: 20,
+  },
+
   pageHeader: {
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 20,
-    marginBottom: 26,
   },
 
   pageTitle: {
@@ -919,7 +955,7 @@ const styles = {
     whiteSpace: "nowrap",
   },
 
-  /* ================= SEARCH ================= */
+  /* SEARCH */
 
   searchCard: {
     background: "#fff",
@@ -972,9 +1008,9 @@ const styles = {
     cursor: "pointer",
   },
 
-  /* =========================================================
+  /* ==========================================================
      CHAT AREA
-  ========================================================= */
+  ========================================================== */
 
   chatArea: {
     display: "flex",
@@ -982,9 +1018,7 @@ const styles = {
     gap: 20,
   },
 
-  /* =========================================================
-     FILTER SIDEBAR
-  ========================================================= */
+  /* VERTICAL FILTER */
 
   filterSidebar: {
     width: 58,
@@ -992,6 +1026,7 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
+    gap: 5,
     padding: "4px 0",
   },
 
@@ -999,18 +1034,13 @@ const styles = {
     fontSize: 13,
     fontWeight: 800,
     color: "#475569",
-    marginBottom: 7,
+    marginBottom: 5,
   },
-
-  /* =========================================================
-     FILTER BUTTONS
-  ========================================================= */
 
   filterButton: {
     width: 42,
-    height: 38,
-    flexShrink: 0,
-    borderRadius: 9,
+    height: 32,
+    borderRadius: 8,
     border: "1px solid #dbe1e8",
     background: "#fff",
     color: "#64748b",
@@ -1020,14 +1050,12 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    boxSizing: "border-box",
   },
 
   filterButtonActive: {
     width: 42,
-    height: 38,
-    flexShrink: 0,
-    borderRadius: 9,
+    height: 32,
+    borderRadius: 8,
     border: "1px solid #16a34a",
     background: "#16a34a",
     color: "#fff",
@@ -1037,38 +1065,9 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    boxSizing: "border-box",
   },
 
-  /* =========================================================
-     ⭐ IMPORTANT:
-     ONLY A-Z SCROLLS
-     
-     All stays visible.
-     Filter sidebar does not make the whole page huge.
-  ========================================================= */
-
-  alphabetScroll: {
-    width: 48,
-    maxHeight: 390,
-    overflowY: "auto",
-    overflowX: "hidden",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 6,
-    paddingTop: 6,
-    paddingBottom: 6,
-    boxSizing: "border-box",
-
-    /* Firefox */
-    scrollbarWidth: "thin",
-
-    /* Prevent scrollbar from changing layout */
-    scrollbarColor: "#cbd5e1 transparent",
-  },
-
-  /* ================= RESULTS ================= */
+  /* RESULTS */
 
   resultsSection: {
     flex: 1,
@@ -1092,8 +1091,6 @@ const styles = {
     fontWeight: 700,
     cursor: "pointer",
   },
-
-  /* ================= CHAT LIST ================= */
 
   chatList: {
     display: "flex",
@@ -1191,6 +1188,12 @@ const styles = {
     whiteSpace: "nowrap",
   },
 
+  pinnedIndicator: {
+    fontSize: 12,
+    lineHeight: 1,
+    marginLeft: 2,
+  },
+
   chatArrow: {
     flexShrink: 0,
     color: "#94a3b8",
@@ -1198,7 +1201,7 @@ const styles = {
     lineHeight: 1,
   },
 
-  /* ================= EMPTY ================= */
+  /* EMPTY */
 
   emptyCard: {
     minHeight: 240,
@@ -1236,9 +1239,9 @@ const styles = {
     fontSize: 14,
   },
 
-  /* =========================================================
+  /* ==========================================================
      MODAL
-  ========================================================= */
+  ========================================================== */
 
   modalOverlay: {
     position: "fixed",
@@ -1260,8 +1263,7 @@ const styles = {
     borderRadius: 18,
     padding: 24,
     boxSizing: "border-box",
-    boxShadow:
-      "0 20px 50px rgba(0,0,0,0.15)",
+    boxShadow: "0 20px 50px rgba(0,0,0,0.15)",
   },
 
   modalHeader: {

@@ -95,8 +95,8 @@ const FEATURE_CARDS = [
     icon: FileText,
     iconColor: "#0d9488",
     title: "Eco-Report Card",
-    desc: "Download & share trip sustainability reports",
-    cta: "View Report",
+    desc: "View, download and share your trip sustainability reports",
+    cta: "View Reports",
     variant: "outline",
   },
 
@@ -696,7 +696,7 @@ export default function CommunityPage({
       "/community/progress",
 
     "Eco-Report Card":
-      "/community/report",
+      "/community/reports",
 
     "Challenge Team":
       "/community/challenges",

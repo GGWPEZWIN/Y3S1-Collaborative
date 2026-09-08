@@ -8,7 +8,6 @@ import {
   MapPin,
   Search,
   ChevronLeft,
-  ChevronRight,
   TrendingDown,
   Award,
 } from "lucide-react";
@@ -159,29 +158,6 @@ export default function TravelHistory({
       background: "#fee2e2",
       color: "#dc2626",
     };
-  };
-
-
-  // ==========================================================
-  // VIEW ECO REPORT CARD
-  // ==========================================================
-
-  const handleViewReport = (trip) => {
-
-    if (!trip?.id) {
-
-      alert(
-        "This trip does not have a valid Trip ID."
-      );
-
-      return;
-    }
-
-    // THIS OPENS THE REAL ECO REPORT PAGE
-    onNavigate?.(
-      "/community/report",
-      trip.id
-    );
   };
 
 
@@ -708,40 +684,6 @@ export default function TravelHistory({
                   </div>
 
 
-                  {/* ACTIONS */}
-
-                  <div
-                    style={
-                      styles.actionsRow
-                    }
-                  >
-
-                    <button
-                      onClick={() =>
-                        handleViewReport(
-                          trip
-                        )
-                      }
-                      style={
-                        styles.btnPrimary
-                      }
-                    >
-
-                      View Eco-Report Card
-
-                      <ChevronRight
-                        size={16}
-                      />
-
-                    </button>
-
-
-
-
-
-
-
-                  </div>
 
                 </div>
 
@@ -1111,40 +1053,5 @@ const styles = {
     height: "100%",
     background: "#111827",
     borderRadius: 999,
-  },
-
-  actionsRow: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 12,
-  },
-
-  btnPrimary: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    background: "#16a34a",
-    color: "#fff",
-    border: "none",
-    fontSize: 14,
-    fontWeight: 600,
-    padding: "11px 18px",
-    borderRadius: 999,
-    cursor: "pointer",
-  },
-
-  btnOutline: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    background: "#fff",
-    color: "#374151",
-    border:
-      "1px solid #e5e7eb",
-    fontSize: 14,
-    fontWeight: 600,
-    padding: "11px 18px",
-    borderRadius: 999,
-    cursor: "pointer",
   },
 };
