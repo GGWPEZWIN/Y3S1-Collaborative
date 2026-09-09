@@ -1,91 +1,50 @@
-import { FOOD_PROFILE, PLATE_DIAMETER_CM } from "../constants/waste";
-
 /* ==================================================================
    COMPUTER VISION PIPELINE  (F1 + F2)
    ------------------------------------------------------------------
-   runInference() is the single integration point. Swap the mock body
-   for a tfjs / onnxruntime-web session and keep the return shape:
-   boxes are normalised 0–1 so the overlay scales to any canvas size.
+   All inference happens in the Python vision service. There is no
+   local fallback and no synthetic data: if the service cannot read a
+   photo, the user is told why and offered manual entry.
+
+   An earlier version substituted a mock result on any failure. That
+   put invented masses into the ledger indistinguishably from real
+   measurements, which is worse than showing an error.
    ================================================================== */
-
-const MOCK_SCENES = [
-  {
-    plate: { x: 0.08, y: 0.1, w: 0.84, h: 0.8 },
-    items: [
-      { cls: "rice", x: 0.2, y: 0.24, w: 0.34, h: 0.3, fill: 0.72, depthCm: 1.5, conf: 0.94 },
-      { cls: "sambal", x: 0.56, y: 0.3, w: 0.16, h: 0.14, fill: 0.8, depthCm: 0.8, conf: 0.88 },
-      { cls: "egg", x: 0.3, y: 0.58, w: 0.2, h: 0.18, fill: 0.68, depthCm: 1.1, conf: 0.91 },
-    ],
-    dish: "Nasi Lemak",
-  },
-  {
-    plate: { x: 0.06, y: 0.08, w: 0.88, h: 0.84 },
-    items: [
-      { cls: "noodle", x: 0.22, y: 0.3, w: 0.4, h: 0.32, fill: 0.66, depthCm: 1.3, conf: 0.9 },
-      { cls: "vegetable", x: 0.58, y: 0.26, w: 0.2, h: 0.2, fill: 0.6, depthCm: 1.0, conf: 0.83 },
-    ],
-    dish: "Char Kway Teow",
-  },
-  {
-    plate: { x: 0.1, y: 0.12, w: 0.8, h: 0.76 },
-    items: [
-      { cls: "rice", x: 0.24, y: 0.28, w: 0.28, h: 0.26, fill: 0.6, depthCm: 1.2, conf: 0.92 },
-      { cls: "curry", x: 0.52, y: 0.34, w: 0.24, h: 0.22, fill: 0.85, depthCm: 1.0, conf: 0.87 },
-      { cls: "meat", x: 0.3, y: 0.6, w: 0.18, h: 0.16, fill: 0.7, depthCm: 1.6, conf: 0.89 },
-      { cls: "bone", x: 0.6, y: 0.62, w: 0.12, h: 0.1, fill: 0.55, depthCm: 1.2, conf: 0.76 },
-    ],
-    dish: "Nasi Kandar",
-  },
-];
-
-/**
- * Area x depth x density, calibrated against the detected plate.
- * @param {object} det      normalised detection
- * @param {number} pxPerCm  scale derived from the plate bounding box
- * @param {number} imgW     captured image width in px
- * @param {number} imgH     captured image height in px
- */
-function estimateMass(det, pxPerCm, imgW, imgH) {
-  const profile = FOOD_PROFILE[det.cls];
-  const areaPx = det.w * imgW * det.h * imgH * det.fill; // segmentation fill inside the box
-  const areaCm2 = areaPx / (pxPerCm * pxPerCm);
-  const volumeCm3 = areaCm2 * det.depthCm * profile.shape;
-  return volumeCm3 * profile.density; // grams
-}
-
-/* ------------------------------------------------------------------
-   INFERENCE
-   ------------------------------------------------------------------
-   Set VITE_VISION_API_URL to point at the Python service (see the
-   vision-service folder). When it is unset or unreachable the mock
-   runs instead, so the UI is demonstrable without a GPU box running.
-
-   The two paths return the SAME shape, so nothing downstream cares
-   which produced the result. `source` records which one did, and the
-   UI surfaces it — presenting a mock as a model would be dishonest.
-   ------------------------------------------------------------------ */
 
 const API_URL = import.meta.env.VITE_VISION_API_URL || "";
 const INFERENCE_TIMEOUT_MS = 30000;
 
 /**
- * @param {HTMLCanvasElement} canvas  the captured frame
- * @returns {Promise<object>} { dish, plate, detections, totalGrams, pxPerCm, source }
+ * The service was reached and rejected the PHOTO, not the request.
+ * Carries guidance the user can act on ("no plate detected").
  */
-export async function runInference(canvas) {
-  if (API_URL) {
-    try {
-      return await runRemoteInference(canvas);
-    } catch (err) {
-      // Fall through to the mock rather than dead-ending the user, but
-      // make the failure visible in the console for debugging.
-      console.warn("Vision service unavailable, using mock:", err.message);
-    }
+export class VisionInputError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "VisionInputError";
   }
-  return runMockInference(canvas.width, canvas.height);
 }
 
-async function runRemoteInference(canvas) {
+/** The service could not be reached at all. */
+export class VisionUnavailableError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "VisionUnavailableError";
+  }
+}
+
+/**
+ * @param {HTMLCanvasElement} canvas  the captured frame
+ * @returns {Promise<object>} { dish, plate, detections, totalGrams, pxPerCm }
+ * @throws {VisionInputError}       photo rejected, message is user-facing
+ * @throws {VisionUnavailableError} service unreachable or misconfigured
+ */
+export async function runInference(canvas) {
+  if (!API_URL) {
+    throw new VisionUnavailableError(
+      "The scanner is not configured. Set VITE_VISION_API_URL and restart the app."
+    );
+  }
+
   const blob = await new Promise((resolve, reject) =>
     canvas.toBlob(
       (b) => (b ? resolve(b) : reject(new Error("Could not encode frame"))),
@@ -101,77 +60,46 @@ async function runRemoteInference(canvas) {
   const timer = setTimeout(() => controller.abort(), INFERENCE_TIMEOUT_MS);
 
   try {
-    const res = await fetch(`${API_URL.replace(/\/$/, "")}/infer`, {
-      method: "POST",
-      body: form,
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`Vision service responded ${res.status}`);
+    let res;
+    try {
+      res = await fetch(`${API_URL.replace(/\/$/, "")}/infer`, {
+        method: "POST",
+        body: form,
+        signal: controller.signal,
+      });
+    } catch {
+      throw new VisionUnavailableError(
+        "Could not reach the scanner service. Check it is running, then try again."
+      );
+    }
+
+    if (!res.ok) {
+      // 4xx means the service ran and rejected this photo. Its message
+      // tells the user what to change, so surface it verbatim.
+      if (res.status >= 400 && res.status < 500) {
+        const body = await res.json().catch(() => ({}));
+        throw new VisionInputError(
+          body.detail || "That photo could not be analysed. Try another angle."
+        );
+      }
+      throw new VisionUnavailableError(`Scanner service error (${res.status}).`);
+    }
 
     const result = await res.json();
-    if (!Array.isArray(result.detections)) throw new Error("Malformed response");
+    if (!Array.isArray(result.detections)) {
+      throw new VisionUnavailableError("The scanner returned an unexpected response.");
+    }
 
-    return { ...result, source: "model" };
+    if (result.detections.length === 0) {
+      throw new VisionInputError(
+        "No food was recognised on the plate. Try a clearer photo, or enter the weight yourself."
+      );
+    }
+
+    return result;
   } finally {
     clearTimeout(timer);
   }
-}
-
-function runMockInference(imgW, imgH) {
-  const scene = MOCK_SCENES[Math.floor(Math.random() * MOCK_SCENES.length)];
-  const pxPerCm = (scene.plate.w * imgW) / PLATE_DIAMETER_CM;
-
-  const detections = scene.items.map((it, i) => {
-    const jitter = 0.85 + Math.random() * 0.3;
-    const grams = estimateMass(it, pxPerCm, imgW, imgH) * jitter;
-    return {
-      id: i,
-      cls: it.cls,
-      label: FOOD_PROFILE[it.cls].label,
-      colour: FOOD_PROFILE[it.cls].colour,
-      box: { x: it.x, y: it.y, w: it.w, h: it.h },
-      confidence: it.conf,
-      grams: Math.round(grams),
-      edible: it.cls !== "bone",
-    };
-  });
-
-  const totalGrams = detections
-    .filter((d) => d.edible)
-    .reduce((s, d) => s + d.grams, 0);
-
-  return {
-    dish: scene.dish,
-    plate: scene.plate,
-    detections,
-    totalGrams,
-    pxPerCm,
-    source: "mock",
-  };
-}
-
-/** Draws a synthetic plate so the pipeline is demonstrable without a camera. */
-export function drawSamplePlate(ctx, w, h) {
-  ctx.fillStyle = "#1F2937";
-  ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#F8FAFC";
-  ctx.beginPath();
-  ctx.ellipse(w / 2, h / 2, w * 0.42, h * 0.4, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#E2E8F0";
-  ctx.lineWidth = w * 0.02;
-  ctx.stroke();
-  const blobs = [
-    { x: 0.38, y: 0.4, r: 0.13, c: "#FDE68A" },
-    { x: 0.62, y: 0.38, r: 0.08, c: "#DC2626" },
-    { x: 0.44, y: 0.64, r: 0.09, c: "#FCD34D" },
-  ];
-  blobs.forEach((b) => {
-    ctx.fillStyle = b.c;
-    ctx.beginPath();
-    ctx.ellipse(b.x * w, b.y * h, b.r * w, b.r * h * 0.9, 0, 0, Math.PI * 2);
-    ctx.fill();
-  });
 }
 
 /**

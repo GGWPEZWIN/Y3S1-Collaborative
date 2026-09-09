@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, ArrowLeft, Camera, Upload } from "lucide-react";
+import { AlertCircle, ArrowLeft, Camera, Pencil, Upload } from "lucide-react";
 import DetectionCanvas from "./DetectionCanvas";
+import NumberField from "./NumberField";
 import { PLATE_DIAMETER_CM } from "../constants/waste";
 import { getBenchmarks } from "../services/baselineService";
-import { runInference } from "../services/visionService";
+import { VisionInputError, runInference } from "../services/visionService";
 import {
   CAMERA_DENIED_MESSAGE,
   NO_CAMERA_MESSAGE,
@@ -11,7 +12,6 @@ import {
   fileToCanvas,
   isCameraSupported,
   openRearCamera,
-  sampleFrame,
   stopStream,
   toStoredImage,
 } from "../services/cameraService";
@@ -22,10 +22,9 @@ import {
    Capture -> segment -> estimate depth -> convert to mass, calibrated
    against the plate rim as a known physical reference.
 
-   runInference() posts the frame to the Python vision service when
-   VITE_VISION_API_URL is configured, and falls back to the mock
-   otherwise. Which one ran is shown in the UI: a mock result presented
-   as a model output would be misleading.
+   There is no fallback estimate. When the scanner cannot read a photo
+   the user is told why and offered manual entry, because an invented
+   mass in the ledger is worse than no reading at all.
    ================================================================== */
 
 export default function ScannerView({ onBack, onCommit }) {
@@ -37,10 +36,15 @@ export default function ScannerView({ onBack, onCommit }) {
   const [phase, setPhase] = useState("camera"); // camera | analysing | result
   const [result, setResult] = useState(null);
   const [imageData, setImageData] = useState(null);
+  const [hasLiveCamera, setHasLiveCamera] = useState(false);
 
-  const [cameraError, setCameraError] = useState(() =>
+  const [error, setError] = useState(() =>
     isCameraSupported() ? "" : NO_CAMERA_MESSAGE
   );
+
+  // Manual entry: the honest path when the scanner cannot help.
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualGrams, setManualGrams] = useState(0);
 
   const benchmarks = getBenchmarks();
 
@@ -51,10 +55,8 @@ export default function ScannerView({ onBack, onCommit }) {
     };
   }, []);
 
-  /* --- WebRTC capture --- */
   useEffect(() => {
     if (phase !== "camera" || !isCameraSupported()) return undefined;
-
     let cancelled = false;
 
     (async () => {
@@ -66,8 +68,12 @@ export default function ScannerView({ onBack, onCommit }) {
         }
         streamRef.current = stream;
         if (videoRef.current) videoRef.current.srcObject = stream;
+        setHasLiveCamera(true);
       } catch {
-        if (!cancelled) setCameraError(CAMERA_DENIED_MESSAGE);
+        if (!cancelled) {
+          setHasLiveCamera(false);
+          setError(CAMERA_DENIED_MESSAGE);
+        }
       }
     })();
 
@@ -75,20 +81,30 @@ export default function ScannerView({ onBack, onCommit }) {
       cancelled = true;
       stopStream(streamRef.current);
       streamRef.current = null;
+      setHasLiveCamera(false);
     };
   }, [phase]);
 
   const analyse = useCallback(async (canvas) => {
+    if (!canvas) {
+      setError("No camera frame available. Upload a photo instead.");
+      return;
+    }
+    setError("");
     setImageData(toStoredImage(canvas));
     setPhase("analysing");
+
     try {
       const inference = await runInference(canvas);
       if (!aliveRef.current) return;
       setResult(inference);
       setPhase("result");
-    } catch {
+    } catch (err) {
       if (!aliveRef.current) return;
-      setCameraError("Analysis failed. Try again.");
+      // VisionInputError carries actionable guidance from the service.
+      // Anything else is an infrastructure problem, phrased differently.
+      setError(err instanceof VisionInputError ? err.message : err.message);
+      setManualOpen(true);
       setPhase("camera");
     }
   }, []);
@@ -101,16 +117,28 @@ export default function ScannerView({ onBack, onCommit }) {
       try {
         await analyse(await fileToCanvas(file));
       } catch {
-        setCameraError("Could not read that image. Try another photo.");
+        setError("Could not read that image. Try another photo.");
       }
     },
     [analyse]
   );
 
+  const saveManual = () => {
+    onCommit({
+      type: "Food",
+      // Recorded as manual, not cv — the ledger must never imply a
+      // measurement the scanner did not make.
+      source: "manual",
+      foodWaste: manualGrams,
+      plastic: 0,
+      water: 0,
+      disposables: 0,
+      detections: null,
+    });
+  };
+
   const edible = result ? result.detections.filter((d) => d.edible) : [];
   const grams = result ? Math.round(result.totalGrams) : 0;
-
-  // The baseline is per person per day; a single plate is one part of that.
   const dailyPct = benchmarks.foodWaste
     ? Math.round((grams / benchmarks.foodWaste) * 100)
     : 0;
@@ -135,11 +163,10 @@ export default function ScannerView({ onBack, onCommit }) {
             Take a photo of your plate to automatically calculate waste
           </p>
 
-          {/* ---------- Frame ---------- */}
           <div className="mt-4">
             {phase === "camera" && (
               <div className="relative aspect-video bg-slate-100 rounded-lg overflow-hidden flex items-center justify-center">
-                {!cameraError ? (
+                {hasLiveCamera ? (
                   <>
                     <video
                       ref={videoRef}
@@ -154,8 +181,10 @@ export default function ScannerView({ onBack, onCommit }) {
                   </>
                 ) : (
                   <div className="text-center px-6">
-                    <AlertCircle size={40} className="text-slate-400 mx-auto" aria-hidden="true" />
-                    <p className="mt-3 text-slate-600">{cameraError}</p>
+                    <Camera size={40} className="text-slate-400 mx-auto" aria-hidden="true" />
+                    <p className="mt-3 text-slate-600">
+                      Camera not available. Upload a photo instead.
+                    </p>
                   </div>
                 )}
               </div>
@@ -184,17 +213,31 @@ export default function ScannerView({ onBack, onCommit }) {
             )}
           </div>
 
-          {/* ---------- Capture controls ---------- */}
           {phase === "camera" && (
             <>
+              {error && (
+                <div className="mt-4 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                  <AlertCircle
+                    size={20}
+                    className="text-amber-600 mt-0.5 shrink-0"
+                    aria-hidden="true"
+                  />
+                  <p className="text-amber-900">{error}</p>
+                </div>
+              )}
+
               <p className="mt-3 text-sm text-slate-500">
-                Frame the whole plate. The rim is used as a {PLATE_DIAMETER_CM}cm reference
-                to convert pixels into real area.
+                Frame the whole plate against a contrasting surface, shot at an angle
+                rather than straight down. The rim is used as a {PLATE_DIAMETER_CM}cm
+                reference to convert pixels into real area.
               </p>
-              <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <button
                   onClick={() => analyse(captureFrame(videoRef.current))}
-                  className="flex items-center justify-center gap-2.5 rounded-lg bg-slate-950 hover:bg-slate-800 text-white py-3.5 text-base font-medium transition-colors"
+                  disabled={!hasLiveCamera}
+                  title={hasLiveCamera ? undefined : "No camera available"}
+                  className="flex items-center justify-center gap-2.5 rounded-lg bg-slate-950 hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-slate-950 text-white py-3.5 text-base font-medium transition-colors"
                 >
                   <Camera size={19} aria-hidden="true" />
                   Capture Photo
@@ -206,12 +249,6 @@ export default function ScannerView({ onBack, onCommit }) {
                   <Upload size={19} aria-hidden="true" />
                   Upload photo
                 </button>
-                <button
-                  onClick={() => analyse(sampleFrame())}
-                  className="flex items-center justify-center gap-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 py-3.5 text-base font-medium transition-colors"
-                >
-                  Sample plate
-                </button>
               </div>
               <input
                 ref={fileRef}
@@ -221,10 +258,45 @@ export default function ScannerView({ onBack, onCommit }) {
                 onChange={onFile}
                 className="hidden"
               />
+
+              {/* --- Manual fallback --- */}
+              {!manualOpen ? (
+                <button
+                  onClick={() => setManualOpen(true)}
+                  className="mt-4 flex items-center gap-2 text-base text-slate-700 hover:text-slate-950 transition-colors focus:outline-none focus:underline"
+                >
+                  <Pencil size={17} aria-hidden="true" />
+                  Enter the weight yourself
+                </button>
+              ) : (
+                <div className="mt-5 rounded-lg border border-slate-200 p-5">
+                  <NumberField
+                    label="Food waste"
+                    hint="Weigh the leftovers, or estimate against a 200g rice portion."
+                    suffix="g"
+                    value={manualGrams}
+                    onChange={setManualGrams}
+                  />
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => setManualOpen(false)}
+                      className="rounded-lg border border-slate-200 hover:bg-slate-50 py-3 text-base font-medium transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={saveManual}
+                      disabled={manualGrams <= 0}
+                      className="rounded-lg bg-slate-950 hover:bg-slate-800 disabled:opacity-40 text-white py-3 text-base font-medium transition-colors"
+                    >
+                      Save Log
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
 
-          {/* ---------- Results ---------- */}
           {phase === "result" && result && (
             <div className="mt-4 space-y-4">
               <div className="bg-blue-50 p-4 rounded-lg">
@@ -233,7 +305,7 @@ export default function ScannerView({ onBack, onCommit }) {
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-slate-600">Detected Food</span>
                     <span className="rounded-md bg-slate-950 text-white text-sm font-medium px-2.5 py-1">
-                      Leftover {result.dish}
+                      {result.dish}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
@@ -268,13 +340,9 @@ export default function ScannerView({ onBack, onCommit }) {
                 </p>
               </div>
 
-              {/* Estimates carry real uncertainty; saying so is not a caveat
-                  for its own sake, it is what makes the edit affordance make
-                  sense to the user. */}
               <p className="text-sm text-slate-500">
-                {result.source === "model"
-                  ? "Estimated by the vision model — accurate to roughly ±25%. Edit the log if it looks wrong."
-                  : "Demonstration result. Connect the vision service for real estimates."}
+                Estimated by the vision model. Accurate to roughly ±25%, so edit the log
+                if it looks wrong.
               </p>
 
               <div className="flex gap-3">

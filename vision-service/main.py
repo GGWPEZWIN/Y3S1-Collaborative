@@ -17,6 +17,7 @@ Run:
 """
 
 import io
+import logging
 import os
 import cv2
 import numpy as np
@@ -25,12 +26,16 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
+from starlette.concurrency import run_in_threadpool
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 from ultralytics import YOLO
 from mass_model import estimate_grams, load_profile
 from plate_scale import DEFAULT_PLATE_DIAMETER_CM, detect_plate
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("vision-service")
 
 SEG_WEIGHTS = os.environ.get("SEG_WEIGHTS", "weights/food-seg.pt")
 DEPTH_MODEL = os.environ.get("DEPTH_MODEL", "depth-anything/Depth-Anything-V2-Small-hf")
@@ -154,7 +159,18 @@ def mask_iou(a, b):
 
 @app.post("/infer")
 async def infer(image: UploadFile = File(...)):
+    """
+    The upload read is genuinely async; everything after it (OpenCV, YOLO,
+    the depth model) is blocking CPU/GPU work with no awaits of its own. An
+    `async def` body that blocks freezes the whole event loop — including
+    /health and every other in-flight request — until it returns, so that
+    work runs in a worker thread instead via run_in_threadpool.
+    """
     raw = await image.read()
+    return await run_in_threadpool(_infer_sync, raw)
+
+
+def _infer_sync(raw: bytes) -> dict:
     bgr = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
     if bgr is None:
         raise HTTPException(status_code=400, detail="Could not decode image")
@@ -182,13 +198,20 @@ async def infer(image: UploadFile = File(...)):
         "w": plate["bbox"][2], "h": plate["bbox"][3],
     }
 
+    logger.info(
+        "[infer] image=%dx%d plate tilt=%.3f px_per_cm=%.2f",
+        width, height, plate["tilt"], px_per_cm,
+    )
+
     # --- 2. Segmentation ---
     predictions = seg_model.predict(bgr, conf=MIN_CONFIDENCE, verbose=False)[0]
     if predictions.masks is None:
+        logger.info("[infer] no masks at all (conf>=%.2f) -> Unrecognised", MIN_CONFIDENCE)
         return {
             "dish": "Unrecognised", "plate": plate_payload, "detections": [],
             "totalGrams": 0, "pxPerCm": round(px_per_cm, 2),
         }
+    logger.info("[infer] raw detections=%d", len(predictions.boxes))
 
     # --- 3. Depth, raw. The plane fit below supplies the reference. ---
     depth = raw_depth(rgb)
@@ -205,18 +228,26 @@ async def infer(image: UploadFile = File(...)):
         cls = names.get(cls_id, str(cls_id))
         spec = profile.get(cls)
         if spec is None:
+            logger.info("[infer]   reject %-10s conf=%.2f: not in food profile", cls, conf)
             continue
 
         binary = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST) > 0.5
         total_px = int(binary.sum())
         if total_px < 200:
+            logger.info("[infer]   reject %-10s conf=%.2f: mask too small (%dpx)", cls, conf, total_px)
             continue
 
         # Reject anything mostly off the plate: hands, cutlery, table.
         on_plate = np.logical_and(binary, plate_mask)
-        if on_plate.sum() / total_px < MIN_ON_PLATE_FRACTION:
+        on_plate_frac = on_plate.sum() / total_px
+        if on_plate_frac < MIN_ON_PLATE_FRACTION:
+            logger.info(
+                "[infer]   reject %-10s conf=%.2f: only %.0f%% on plate (need %.0f%%)",
+                cls, conf, on_plate_frac * 100, MIN_ON_PLATE_FRACTION * 100,
+            )
             continue
 
+        logger.info("[infer]   keep   %-10s conf=%.2f px=%d", cls, conf, int(on_plate.sum()))
         candidates.append({
             "cls": cls, "spec": spec, "mask": on_plate,
             "box": box, "conf": float(conf), "px": int(on_plate.sum()),
@@ -234,6 +265,7 @@ async def infer(image: UploadFile = File(...)):
         kept.append(cand)
 
     if not kept:
+        logger.info("[infer] all candidates filtered out -> Unrecognised")
         return {
             "dish": "Unrecognised", "plate": plate_payload, "detections": [],
             "totalGrams": 0, "pxPerCm": round(px_per_cm, 2),
@@ -265,8 +297,16 @@ async def infer(image: UploadFile = File(...)):
         peak = float(np.percentile(residual[food_union], 98)) if food_union.any() else 0.0
         units_per_cm = (peak / MAX_FOOD_DEPTH_CM) if peak > 1e-9 else None
         scale_basis = "relative (head-on, no tilt reference)"
+        logger.info(
+            "[infer] scale=relative gradient=%s tilt=%.3f peak_residual=%.5f units_per_cm=%s",
+            gradient, plate["tilt"], peak, units_per_cm,
+        )
     else:
         scale_basis = "geometric (plate tilt)"
+        logger.info(
+            "[infer] scale=geometric gradient=%.5f tilt=%.3f units_per_cm=%.5f",
+            gradient, plate["tilt"], units_per_cm,
+        )
 
     detections = []
     for i, cand in enumerate(kept):
@@ -283,7 +323,12 @@ async def infer(image: UploadFile = File(...)):
             mean_depth_cm = float(np.clip(mean_depth_cm, 0.15, 8.0))
 
         grams = estimate_grams(cand["cls"], area_cm2, mean_depth_cm, profile)
+        logger.info(
+            "[infer]   %-10s area=%.1fcm2 depth=%.2fcm -> %.1fg",
+            cand["cls"], area_cm2, mean_depth_cm, grams,
+        )
         if grams > MAX_REGION_GRAMS:
+            logger.info("[infer]   %-10s dropped: %.1fg exceeds MAX_REGION_GRAMS=%.0f", cand["cls"], grams, MAX_REGION_GRAMS)
             continue  # not food; a misfired mask
 
         x1, y1, x2, y2 = cand["box"]

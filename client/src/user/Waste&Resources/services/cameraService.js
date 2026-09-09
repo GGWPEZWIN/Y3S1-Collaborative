@@ -1,5 +1,3 @@
-import { drawSamplePlate } from "./visionService";
-
 /* ==================================================================
    WebRTC CAPTURE ADAPTER  (F1)
    ================================================================== */
@@ -29,26 +27,19 @@ export function stopStream(stream) {
   if (stream) stream.getTracks().forEach((t) => t.stop());
 }
 
-/** Grabs the current video frame, falling back to a synthetic plate. */
+/**
+ * Grabs the current video frame, or null when there is no live stream.
+ *
+ * Returns null rather than synthesising a placeholder: a generated
+ * image would flow through the pipeline and land in the ledger looking
+ * exactly like a real measurement.
+ */
 export function captureFrame(video) {
+  if (!video || !video.videoWidth) return null;
   const canvas = document.createElement("canvas");
-  if (video && video.videoWidth) {
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
-  } else {
-    canvas.width = 960;
-    canvas.height = 720;
-    drawSamplePlate(canvas.getContext("2d"), canvas.width, canvas.height);
-  }
-  return canvas;
-}
-
-export function sampleFrame() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 960;
-  canvas.height = 720;
-  drawSamplePlate(canvas.getContext("2d"), canvas.width, canvas.height);
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0);
   return canvas;
 }
 
