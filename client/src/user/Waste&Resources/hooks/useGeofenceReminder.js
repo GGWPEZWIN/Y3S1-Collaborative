@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { LODGING } from "../constants/waste";
 import {
   clearWatch,
   ensureNotificationPermission,
@@ -13,7 +12,13 @@ import {
 
 const IDLE_WATCH = { denied: false, distance: null };
 
-export default function useGeofenceReminder({ enabled, hasLoggedToday, onTrigger }) {
+/**
+ * @param {object} opts
+ * @param {{name: string, lat: number, lng: number, radiusM: number}|null} opts.lodging
+ *   The traveller's registered lodging. The geofence has nothing to
+ *   measure against until this is set — see ReminderSettings.
+ */
+export default function useGeofenceReminder({ enabled, hasLoggedToday, onTrigger, lodging }) {
   // Capability probe runs once, lazily, during the first render.
   // A lazy initialiser is not a setState, so the linter is satisfied and
   // we avoid a render → effect → render round trip just to learn support.
@@ -41,7 +46,7 @@ export default function useGeofenceReminder({ enabled, hasLoggedToday, onTrigger
   });
 
   useEffect(() => {
-    if (!enabled || !supported) return undefined;
+    if (!enabled || !supported || !lodging) return undefined;
 
     // Side effects on external systems — the legitimate use of an effect.
     ensureServiceWorker();
@@ -52,11 +57,11 @@ export default function useGeofenceReminder({ enabled, hasLoggedToday, onTrigger
       (pos) => {
         const metres = haversineM(
           { lat: pos.coords.latitude, lng: pos.coords.longitude },
-          LODGING
+          lodging
         );
         setWatch({ denied: false, distance: Math.round(metres) });
 
-        const inside = metres <= LODGING.radiusM;
+        const inside = metres <= lodging.radiusM;
         if (inside && wasOutside.current && !latest.current.hasLoggedToday) {
           latest.current.onTrigger();
           notify("GreenTrip Malaysia", {
@@ -70,11 +75,12 @@ export default function useGeofenceReminder({ enabled, hasLoggedToday, onTrigger
     );
 
     return () => clearWatch(id);
-  }, [enabled, supported]);
+  }, [enabled, supported, lodging]);
 
-  // idle | watching | denied | unsupported
+  // idle | watching | denied | unsupported | no-lodging
   let status = "watching";
   if (!supported) status = "unsupported";
+  else if (!lodging) status = "no-lodging";
   else if (!enabled) status = "idle";
   else if (watch.denied) status = "denied";
 

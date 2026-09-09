@@ -19,7 +19,7 @@
     "react-dom": "^18.3.1",
     "react-geofencing": "^1.0.2",
     "react-leaflet": "^4.2.1",
-    "recharts": "^3.10.1",
+    "recharts": "^2.15.2",
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {

@@ -11,9 +11,14 @@ import useNearbyPois from "../hooks/useNearbyPois";
    every nudge on page load would be both slow and impolite.
    ================================================================== */
 
-export default function EcoNudge({ nudge }) {
+export default function EcoNudge({ nudge, lodging }) {
   const [open, setOpen] = useState(false);
-  const { status, pois, centre, approximate } = useNearbyPois(nudge.poiKind, open);
+  const fallbackCentre = lodging ? { lat: lodging.lat, lng: lodging.lng } : null;
+  const { status, pois, centre, approximate, live } = useNearbyPois(
+    nudge.poiKind,
+    open,
+    fallbackCentre
+  );
   const Icon = nudge.icon;
 
   return (
@@ -63,6 +68,12 @@ export default function EcoNudge({ nudge }) {
                         <p className="mt-2 text-sm text-slate-500">
                           Showing results near your lodging — location access was
                           unavailable.
+                        </p>
+                      )}
+
+                      {live && (
+                        <p className="mt-2 text-sm text-slate-500">
+                          Updating as you move.
                         </p>
                       )}
 

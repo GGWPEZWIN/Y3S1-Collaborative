@@ -53,12 +53,71 @@ function estimateMass(det, pxPerCm, imgW, imgH) {
   return volumeCm3 * profile.density; // grams
 }
 
-export function runInference(imgW, imgH) {
-  // === INTEGRATION POINT =========================================
-  // const seg   = await segmentationModel.executeAsync(tensor);
-  // const depth = await depthModel.executeAsync(tensor);
-  // return decode(seg, depth);
-  // ===============================================================
+/* ------------------------------------------------------------------
+   INFERENCE
+   ------------------------------------------------------------------
+   Set VITE_VISION_API_URL to point at the Python service (see the
+   vision-service folder). When it is unset or unreachable the mock
+   runs instead, so the UI is demonstrable without a GPU box running.
+
+   The two paths return the SAME shape, so nothing downstream cares
+   which produced the result. `source` records which one did, and the
+   UI surfaces it — presenting a mock as a model would be dishonest.
+   ------------------------------------------------------------------ */
+
+const API_URL = import.meta.env.VITE_VISION_API_URL || "";
+const INFERENCE_TIMEOUT_MS = 30000;
+
+/**
+ * @param {HTMLCanvasElement} canvas  the captured frame
+ * @returns {Promise<object>} { dish, plate, detections, totalGrams, pxPerCm, source }
+ */
+export async function runInference(canvas) {
+  if (API_URL) {
+    try {
+      return await runRemoteInference(canvas);
+    } catch (err) {
+      // Fall through to the mock rather than dead-ending the user, but
+      // make the failure visible in the console for debugging.
+      console.warn("Vision service unavailable, using mock:", err.message);
+    }
+  }
+  return runMockInference(canvas.width, canvas.height);
+}
+
+async function runRemoteInference(canvas) {
+  const blob = await new Promise((resolve, reject) =>
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("Could not encode frame"))),
+      "image/jpeg",
+      0.9
+    )
+  );
+
+  const form = new FormData();
+  form.append("image", blob, "plate.jpg");
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), INFERENCE_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${API_URL.replace(/\/$/, "")}/infer`, {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Vision service responded ${res.status}`);
+
+    const result = await res.json();
+    if (!Array.isArray(result.detections)) throw new Error("Malformed response");
+
+    return { ...result, source: "model" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function runMockInference(imgW, imgH) {
   const scene = MOCK_SCENES[Math.floor(Math.random() * MOCK_SCENES.length)];
   const pxPerCm = (scene.plate.w * imgW) / PLATE_DIAMETER_CM;
 
@@ -81,7 +140,14 @@ export function runInference(imgW, imgH) {
     .filter((d) => d.edible)
     .reduce((s, d) => s + d.grams, 0);
 
-  return { dish: scene.dish, plate: scene.plate, detections, totalGrams, pxPerCm };
+  return {
+    dish: scene.dish,
+    plate: scene.plate,
+    detections,
+    totalGrams,
+    pxPerCm,
+    source: "mock",
+  };
 }
 
 /** Draws a synthetic plate so the pipeline is demonstrable without a camera. */
