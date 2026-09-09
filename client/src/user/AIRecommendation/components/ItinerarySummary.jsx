@@ -1,8 +1,22 @@
 function formatDateRange(itinerary) {
-  if (itinerary.startDate && itinerary.endDate) {
+  if (itinerary?.startDate && itinerary?.endDate) {
     return `${itinerary.startDate} – ${itinerary.endDate}`;
   }
-  return itinerary.startDate || itinerary.date || "Dates not provided";
+  return itinerary?.startDate || itinerary?.date || "Dates not provided";
+}
+
+function formatCoordinatePair(latitude, longitude, routeable) {
+  if (!routeable) return "Coordinates unavailable";
+  return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+}
+
+function formatOptionalNumber(value, suffix = "") {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "Unavailable";
+  return `${value}${suffix}`;
+}
+
+function activityLabel(activity) {
+  return activity.name || activity.activityId;
 }
 
 export default function ItinerarySummary({
@@ -16,6 +30,8 @@ export default function ItinerarySummary({
   onPreview,
 }) {
   const destinations = itinerary?.destinations ?? [];
+  const accommodations = itinerary?.accommodations ?? [];
+  const activities = itinerary?.activities ?? [];
   const recommendedOption = recommendation?.transportationOptions?.find(
     (option) => option.isRecommended
   );
@@ -40,6 +56,18 @@ export default function ItinerarySummary({
               {startLocationName ??
                 itinerary?.startLocation?.name ??
                 "Not provided"}
+            </dd>
+          </div>
+          <div className="m2-stat">
+            <dt>Start coordinates</dt>
+            <dd>
+              {itinerary?.startLocation
+                ? formatCoordinatePair(
+                    itinerary.startLocation.latitude,
+                    itinerary.startLocation.longitude,
+                    itinerary.startLocation.routeable
+                  )
+                : "Coordinates unavailable"}
             </dd>
           </div>
           <div className="m2-stat">
@@ -76,10 +104,25 @@ export default function ItinerarySummary({
               </div>
             </>
           ) : (
-            <div className="m2-stat">
-              <dt>Trip Eco-Score</dt>
-              <dd>Not calculated yet</dd>
-            </div>
+            <>
+              <div className="m2-stat">
+                <dt>Module 1 Eco-Score</dt>
+                <dd>{formatOptionalNumber(itinerary?.ecoScore)}</dd>
+              </div>
+              <div className="m2-stat">
+                <dt>Activities / stay carbon</dt>
+                <dd>
+                  {formatOptionalNumber(
+                    itinerary?.activitiesStayCarbonKg,
+                    " kg CO₂e"
+                  )}
+                </dd>
+              </div>
+              <div className="m2-stat">
+                <dt>Transportation carbon</dt>
+                <dd>Not calculated yet</dd>
+              </div>
+            </>
           )}
         </dl>
       </article>
@@ -99,6 +142,13 @@ export default function ItinerarySummary({
               <div>
                 <div>{itinerary.startLocation.name}</div>
                 <div className="m2-chip">Starting point</div>
+                <div className="m2-muted">
+                  {formatCoordinatePair(
+                    itinerary.startLocation.latitude,
+                    itinerary.startLocation.longitude,
+                    itinerary.startLocation.routeable
+                  )}
+                </div>
               </div>
             </li>
           ) : null}
@@ -117,11 +167,58 @@ export default function ItinerarySummary({
                     ? `Day ${destination.day} · Stop ${destination.order}`
                     : "Coordinates needed"}
                 </div>
+                <div className="m2-muted">
+                  {formatCoordinatePair(
+                    destination.latitude,
+                    destination.longitude,
+                    destination.routeable
+                  )}
+                </div>
               </div>
             </li>
           ))}
         </ol>
       </article>
+
+      {!isDemo ? (
+        <article className="m2-card" style={{ gridColumn: "1 / -1" }}>
+          <h3>Activities and stay</h3>
+          <p className="m2-muted">
+            These values come from the saved Module 1 itinerary. Missing
+            sustainability figures are shown as unavailable, not zero.
+            Transportation impact is calculated separately.
+          </p>
+          <dl className="m2-stat-row" style={{ marginTop: 12 }}>
+            <div className="m2-stat">
+              <dt>Accommodation</dt>
+              <dd>
+                {accommodations[0]?.name || "Unavailable"}
+              </dd>
+            </div>
+            <div className="m2-stat">
+              <dt>Activities</dt>
+              <dd>
+                {activities.length > 0
+                  ? activities.map(activityLabel).join(", ")
+                  : "None saved"}
+              </dd>
+            </div>
+            <div className="m2-stat">
+              <dt>Activities / stay carbon</dt>
+              <dd>
+                {formatOptionalNumber(
+                  itinerary?.activitiesStayCarbonKg,
+                  " kg CO₂e"
+                )}
+              </dd>
+            </div>
+            <div className="m2-stat">
+              <dt>Module 1 Eco-Score</dt>
+              <dd>{formatOptionalNumber(itinerary?.ecoScore)}</dd>
+            </div>
+          </dl>
+        </article>
+      ) : null}
 
       {issues.length > 0 ? (
         <article className="m2-card" style={{ gridColumn: "1 / -1" }}>

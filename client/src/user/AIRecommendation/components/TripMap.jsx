@@ -73,6 +73,7 @@ export default function TripMap({
   destinations = [],
   encodedPolyline = null,
   routeTravelMode = null,
+  markerSource = "demo",
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -261,17 +262,20 @@ export default function TripMap({
     };
   }, [encodedPolyline, routeTravelMode, status]);
 
+  const savedMarkers = markerSource === "saved";
   const statusMessage =
     status === "loading"
       ? "Loading Google Map…"
       : status === "missing-key"
         ? "Add VITE_GOOGLE_MAPS_API_KEY to client/.env and restart the Vite dev server to show the map."
         : status === "error"
-          ? "The map could not be loaded. You can keep using the rest of this demonstration."
+          ? savedMarkers
+            ? "The map could not be loaded. You can keep using the rest of this itinerary."
+            : "The map could not be loaded. You can keep using the rest of this demonstration."
           : "";
 
   return (
-    <section className="m2-map" aria-label="Demonstration itinerary map">
+    <section className="m2-map" aria-label={savedMarkers ? "Saved itinerary map" : "Demonstration itinerary map"}>
       <div className="m2-map-frame">
         {status !== "ready" ? (
           <div className="m2-map-status" aria-live="polite" role="status">
@@ -287,14 +291,20 @@ export default function TripMap({
           </div>
         ) : (
           <span className="m2-sr-only" aria-live="polite">
-            Google Map loaded with demonstration itinerary markers.
+            {savedMarkers
+              ? "Google Map loaded with saved itinerary markers."
+              : "Google Map loaded with demonstration itinerary markers."}
           </span>
         )}
         <div
           ref={containerRef}
           className="m2-map-canvas"
           role="region"
-          aria-label="Map showing the trip starting point and demonstration destinations"
+          aria-label={
+            savedMarkers
+              ? "Map showing the saved starting location and destinations"
+              : "Map showing the trip starting point and demonstration destinations"
+          }
         />
       </div>
       {encodedPolyline && routeTravelMode ? (
@@ -308,8 +318,12 @@ export default function TripMap({
       ) : null}
       <p className="m2-map-note">
         {encodedPolyline
-          ? "The coloured line is the selected live route for the first itinerary segment only. Other markers remain demonstration destinations."
-          : "The Google basemap is shown when a Maps JavaScript API key is configured. Markers use the demonstration itinerary. A live route line is drawn only after a selected first-segment route is available."}
+          ? savedMarkers
+            ? "The coloured line is the selected live route for the first itinerary segment only. Markers stay on the saved starting location and destinations."
+            : "The coloured line is the selected live route for the first itinerary segment only. Other markers remain demonstration destinations."
+          : savedMarkers
+            ? "Markers use the saved Module 1 starting location and destinations. A live route line is drawn only after a selected first-segment route is requested."
+            : "The Google basemap is shown when a Maps JavaScript API key is configured. Markers use the demonstration itinerary. A live route line is drawn only after a selected first-segment route is available."}
       </p>
     </section>
   );

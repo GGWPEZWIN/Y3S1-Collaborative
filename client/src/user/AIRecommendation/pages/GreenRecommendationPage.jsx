@@ -4,8 +4,10 @@ import { mockGreenRecommendation } from "../data/mockModule2Data";
 import useCurrentLocation from "../hooks/useCurrentLocation";
 import useLiveSelectedRoute from "../hooks/useLiveSelectedRoute";
 import useLiveTransportComparison from "../hooks/useLiveTransportComparison";
+import useResolvedItinerary from "../hooks/useResolvedItinerary";
 import { isRouteableCoordinate } from "../services/itinerary/normalizeItinerary.js";
-import { resolveItineraryContext } from "../services/itinerary/resolveItinerary.js";
+import { firstRouteableSegment } from "../services/itinerary/buildRouteSegments.js";
+import { ITINERARY_LOAD_STATUS } from "../services/itinerary/resolveItinerary.js";
 import CurrentLocationCard from "../components/CurrentLocationCard";
 import ItinerarySummary from "../components/ItinerarySummary";
 import TransportationComparison from "../components/TransportationComparison";
@@ -108,6 +110,26 @@ function mapDestinationsForMap(itinerary) {
     }));
 }
 
+function mapStartForMap(itinerary) {
+  if (!itinerary?.startLocation) return null;
+  return {
+    latitude: itinerary.startLocation.latitude,
+    longitude: itinerary.startLocation.longitude,
+    label: itinerary.startLocation.name,
+  };
+}
+
+function firstLiveDestinationFromSegments(segments) {
+  const firstSegment = firstRouteableSegment(segments);
+  if (!firstSegment) return null;
+  return {
+    destinationId: firstSegment.destination.id,
+    name: firstSegment.destination.name,
+    latitude: firstSegment.destination.latitude,
+    longitude: firstSegment.destination.longitude,
+  };
+}
+
 function mapStops(itinerary) {
   if (!itinerary) return [];
   const stops = [];
@@ -137,22 +159,26 @@ export default function GreenRecommendationPage({
   const [selectedMode, setSelectedMode] = useState(RECOMMENDED_MODE);
   const [navIndex, setNavIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [activeItineraryId, setActiveItineraryId] = useState(itineraryId);
 
-  const context = useMemo(
-    () => resolveItineraryContext({ itineraryId, itinerary }),
-    [itineraryId, itinerary]
-  );
+  if (activeItineraryId !== itineraryId) {
+    setActiveItineraryId(itineraryId);
+    setView("recommendation");
+    setSelectedMode(RECOMMENDED_MODE);
+    setNavIndex(0);
+    setPaused(false);
+  }
+
+  const context = useResolvedItinerary({ itineraryId, itinerary });
+  const requestedId =
+    typeof itineraryId === "string" ? itineraryId.trim() : "";
   const contextKey =
-    context.itinerary?.itineraryId || itineraryId || context.source;
-  const firstDestination = context.itinerary?.destinations?.[0] || null;
-  const firstLiveDestination = firstDestination?.routeable
-    ? {
-        destinationId: firstDestination.destinationId,
-        name: firstDestination.name,
-        latitude: firstDestination.latitude,
-        longitude: firstDestination.longitude,
-      }
-    : null;
+    context.status === ITINERARY_LOAD_STATUS.LOADING
+      ? `loading:${requestedId}`
+      : context.itinerary?.itineraryId || requestedId || context.source;
+  const firstLiveDestination = firstLiveDestinationFromSegments(
+    context.segments
+  );
 
   const {
     location,
@@ -170,7 +196,11 @@ export default function GreenRecommendationPage({
     location.latitude,
     location.longitude
   );
-  const canRequestFirstSegment = Boolean(firstLiveDestination) && originHasCoords;
+  const canRequestFirstSegment =
+    (context.status === ITINERARY_LOAD_STATUS.SUCCESS ||
+      context.status === ITINERARY_LOAD_STATUS.DEMO) &&
+    Boolean(firstLiveDestination) &&
+    originHasCoords;
 
   const {
     status: directRouteStatus,
@@ -222,7 +252,11 @@ export default function GreenRecommendationPage({
 
   const stops = mapStops(context.itinerary);
   const lastIndex = Math.max(stops.length - 1, 0);
-  const isDemo = context.source === "demo";
+  const isDemo = context.status === ITINERARY_LOAD_STATUS.DEMO;
+  const isReady =
+    context.status === ITINERARY_LOAD_STATUS.SUCCESS || isDemo;
+  const isLoadError = !isReady && context.status !== ITINERARY_LOAD_STATUS.LOADING;
+  const mapStartLocation = mapStartForMap(context.itinerary) || location;
 
   function showRecommendation() {
     setView("recommendation");
@@ -247,141 +281,164 @@ export default function GreenRecommendationPage({
         <header className="m2-header">
           <div className="m2-title-row">
             <h1 className="m2-title">AI Green Recommendation</h1>
-            <span className={isDemo ? "m2-badge m2-badge--demo" : "m2-badge"}>
-              {isDemo ? "Demonstration itinerary" : "Module 1 itinerary"}
+            <span
+              className={
+                isDemo
+                  ? "m2-badge m2-badge--demo"
+                  : isReady
+                    ? "m2-badge"
+                    : "m2-badge m2-badge--demo"
+              }
+            >
+              {isDemo
+                ? "Demonstration itinerary"
+                : isReady
+                  ? "Module 1 itinerary"
+                  : "Saved itinerary"}
             </span>
           </div>
         </header>
 
-        <p className="m2-notice" role="note">
-          {isDemo
-            ? "Demonstration itinerary is shown because no Module 1 itinerary is selected."
-            : "This itinerary was loaded from Module 1. Destinations stay in the saved order and are not mixed with demonstration stops."}
-        </p>
+        {context.status === ITINERARY_LOAD_STATUS.LOADING ? (
+          <p className="m2-status m2-status--loading" role="status">
+            {context.message}
+          </p>
+        ) : null}
 
-        <div className="m2-tabs" role="tablist" aria-label="Module 2 views">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              id={`m2-tab-${tab.id}`}
-              aria-selected={view === tab.id}
-              aria-controls={`m2-panel-${tab.id}`}
-              className="m2-tab"
-              onClick={() => setView(tab.id)}
+        {isLoadError ? (
+          <article className="m2-card" role="alert">
+            <h3>Itinerary unavailable</h3>
+            <p className="m2-status m2-status--error">{context.message}</p>
+            <p className="m2-muted" style={{ marginTop: 12 }}>
+              Demonstration destinations were not added.
+            </p>
+          </article>
+        ) : null}
+
+        {isReady ? (
+          <>
+            <p className="m2-notice" role="note">
+              {isDemo
+                ? "Demonstration itinerary is shown because no Module 1 itinerary is selected."
+                : "This itinerary was loaded from Module 1. Destinations stay in the saved order and are not mixed with demonstration stops."}
+            </p>
+
+            <div className="m2-tabs" role="tablist" aria-label="Module 2 views">
+              {TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  id={`m2-tab-${tab.id}`}
+                  aria-selected={view === tab.id}
+                  aria-controls={`m2-panel-${tab.id}`}
+                  className="m2-tab"
+                  onClick={() => setView(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div
+              id={`m2-panel-${view}`}
+              role="tabpanel"
+              aria-labelledby={`m2-tab-${view}`}
             >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+              {view === "recommendation" ? (
+                <>
+                  <CurrentLocationCard
+                    location={location}
+                    status={locationStatus}
+                    onRequestLocation={requestCurrentLocation}
+                    onUseDemoLocation={useDemoLocation}
+                    resetLabel={isDemo ? "Use Demo Location" : "Use Saved Start"}
+                  />
+                  <ItinerarySummary
+                    itinerary={context.itinerary}
+                    recommendation={mockGreenRecommendation}
+                    startLocationName={startLocationName}
+                    source={context.source}
+                    issues={context.issues}
+                    routeableSegmentCount={context.routeableSegmentCount}
+                    onCompare={showCompare}
+                    onPreview={showNavigation}
+                  />
+                  <div style={{ marginTop: 16 }}>
+                    <RouteInformationPanel
+                      segments={
+                        isDemo
+                          ? mockGreenRecommendation.routeSegments
+                          : context.segments
+                      }
+                      structural={!isDemo}
+                    />
+                  </div>
+                </>
+              ) : null}
 
-        <div
-          id={`m2-panel-${view}`}
-          role="tabpanel"
-          aria-labelledby={`m2-tab-${view}`}
-        >
-          {view === "recommendation" ? (
-            <>
-              <CurrentLocationCard
-                location={location}
-                status={locationStatus}
-                onRequestLocation={requestCurrentLocation}
-                onUseDemoLocation={useDemoLocation}
-                resetLabel={isDemo ? "Use Demo Location" : "Use Saved Start"}
-              />
-              <ItinerarySummary
-                itinerary={context.itinerary}
-                recommendation={mockGreenRecommendation}
-                startLocationName={startLocationName}
-                source={context.source}
-                issues={context.issues}
-                routeableSegmentCount={context.routeableSegmentCount}
-                onCompare={showCompare}
-                onPreview={showNavigation}
-              />
-              <div style={{ marginTop: 16 }}>
-                <RouteInformationPanel
+              {view === "compare" ? (
+                <TransportationComparison
+                  options={mockGreenRecommendation.transportationOptions}
+                  selectedMode={selectedMode}
+                  onSelect={setSelectedMode}
+                  onUseRecommended={(mode) =>
+                    setSelectedMode(mode || RECOMMENDED_MODE)
+                  }
+                  onBack={showRecommendation}
+                  liveOriginName={startLocationName}
+                  liveDestinationName={
+                    firstLiveDestination?.name || "First destination"
+                  }
+                  liveComparisonStatus={liveComparisonStatus}
+                  liveComparisonError={liveComparisonError}
+                  liveComparisonResults={liveComparisonResults}
+                  onLoadComparison={
+                    canRequestFirstSegment
+                      ? loadLiveTransportComparison
+                      : undefined
+                  }
+                />
+              ) : null}
+
+              {view === "navigation" ? (
+                <NavigationPreview
+                  stops={stops}
                   segments={
                     isDemo
                       ? mockGreenRecommendation.routeSegments
                       : context.segments
                   }
-                  structural={!isDemo}
+                  startLocation={mapStartLocation}
+                  destinations={mapDestinationsForMap(context.itinerary)}
+                  currentIndex={navIndex}
+                  paused={paused}
+                  onPause={() => setPaused(true)}
+                  onResume={() => setPaused(false)}
+                  onNext={handleNextDestination}
+                  onBack={showRecommendation}
+                  liveOriginName={startLocationName}
+                  liveDestinationName={
+                    firstLiveDestination?.name || "First destination"
+                  }
+                  selectedTravelMode={selectedTravelMode}
+                  liveRouteStatus={navigationLive.status}
+                  liveRoute={navigationLive.route}
+                  liveRouteError={navigationLive.errorCode}
+                  liveRouteSource={navigationLive.sourceKind}
+                  markerSource={isDemo ? "demo" : "saved"}
+                  onLoadLiveRoute={
+                    !canRequestFirstSegment ||
+                    navigationLive.sourceKind === "comparison" ||
+                    liveComparisonStatus === "loading"
+                      ? undefined
+                      : loadSelectedLiveRoute
+                  }
                 />
-              </div>
-            </>
-          ) : null}
-
-          {view === "compare" ? (
-            <TransportationComparison
-              options={mockGreenRecommendation.transportationOptions}
-              selectedMode={selectedMode}
-              onSelect={setSelectedMode}
-              onUseRecommended={(mode) =>
-                setSelectedMode(mode || RECOMMENDED_MODE)
-              }
-              onBack={showRecommendation}
-              liveOriginName={startLocationName}
-              liveDestinationName={
-                firstLiveDestination?.name || "First destination"
-              }
-              liveComparisonStatus={liveComparisonStatus}
-              liveComparisonError={liveComparisonError}
-              liveComparisonResults={liveComparisonResults}
-              onLoadComparison={
-                canRequestFirstSegment
-                  ? loadLiveTransportComparison
-                  : undefined
-              }
-            />
-          ) : null}
-
-          {view === "navigation" ? (
-            <NavigationPreview
-              stops={stops}
-              segments={
-                isDemo
-                  ? mockGreenRecommendation.routeSegments
-                  : context.segments.map((segment) => ({
-                      ...segment,
-                      origin: segment.origin.name,
-                      destination: segment.destination.name,
-                      modeLabel: segment.routeable
-                        ? "Not requested yet"
-                        : "Not yet routeable",
-                      estimatedDistanceKm: "—",
-                      estimatedDurationMinutes: "—",
-                      estimatedCarbonKg: "—",
-                    }))
-              }
-              startLocation={location}
-              destinations={mapDestinationsForMap(context.itinerary)}
-              currentIndex={navIndex}
-              paused={paused}
-              onPause={() => setPaused(true)}
-              onResume={() => setPaused(false)}
-              onNext={handleNextDestination}
-              onBack={showRecommendation}
-              liveOriginName={startLocationName}
-              liveDestinationName={
-                firstLiveDestination?.name || "First destination"
-              }
-              selectedTravelMode={selectedTravelMode}
-              liveRouteStatus={navigationLive.status}
-              liveRoute={navigationLive.route}
-              liveRouteError={navigationLive.errorCode}
-              liveRouteSource={navigationLive.sourceKind}
-              onLoadLiveRoute={
-                !canRequestFirstSegment ||
-                navigationLive.sourceKind === "comparison" ||
-                liveComparisonStatus === "loading"
-                  ? undefined
-                  : loadSelectedLiveRoute
-              }
-            />
-          ) : null}
-        </div>
+              ) : null}
+            </div>
+          </>
+        ) : null}
       </div>
     </Layout>
   );

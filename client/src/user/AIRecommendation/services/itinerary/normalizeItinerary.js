@@ -28,6 +28,49 @@ function optionalString(value) {
   return trimmed === "" ? null : trimmed;
 }
 
+function asOrderNumber(value, fallback) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return fallback;
+}
+
+function asDateString(value) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed === "" ? null : trimmed;
+  }
+  if (value == null || typeof value !== "object") return null;
+
+  try {
+    if (typeof value.toDate === "function") {
+      const date = value.toDate();
+      if (date instanceof Date && Number.isFinite(date.getTime())) {
+        return date.toISOString().slice(0, 10);
+      }
+    }
+    if (typeof value.seconds === "number" && Number.isFinite(value.seconds)) {
+      const date = new Date(value.seconds * 1000);
+      if (Number.isFinite(date.getTime())) {
+        return date.toISOString().slice(0, 10);
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function readDateRange(raw) {
+  const nested = raw?.dates && typeof raw.dates === "object" ? raw.dates : null;
+  return {
+    startDate:
+      asDateString(nested?.startDate) ||
+      asDateString(raw?.startDate) ||
+      asDateString(raw?.date),
+    endDate: asDateString(nested?.endDate) || asDateString(raw?.endDate),
+  };
+}
+
 function readId(raw, ...keys) {
   for (const key of keys) {
     if (isNonEmptyString(raw?.[key])) return raw[key].trim();
@@ -90,13 +133,14 @@ function normalizeStartLocation(rawStart) {
 }
 
 function destinationDay(raw) {
-  if (isFiniteCoordinate(raw.day)) return raw.day;
-  return 1;
+  return asOrderNumber(raw.day, 1);
 }
 
 function destinationOrder(raw, index) {
-  if (isFiniteCoordinate(raw.order)) return raw.order;
-  if (isFiniteCoordinate(raw.plannedOrder)) return raw.plannedOrder;
+  const order = asOrderNumber(raw.order, null);
+  if (order != null) return order;
+  const planned = asOrderNumber(raw.plannedOrder, null);
+  if (planned != null) return planned;
   return index + 1;
 }
 
@@ -191,12 +235,54 @@ function normalizeAccommodation(entry, index) {
     longitude: isRouteableCoordinate(entry.latitude, entry.longitude)
       ? entry.longitude
       : null,
-    day: isFiniteCoordinate(entry.day) ? entry.day : null,
-    nights: isFiniteCoordinate(entry.nights) ? entry.nights : null,
+    day: asOrderNumber(entry.day, null),
+    nights: asOrderNumber(entry.nights, null),
+    type: optionalString(entry.type),
+    destinationId: readId(entry, "destinationId"),
+    pricePerNight: optionalNumber(entry.pricePerNight),
     sustainability: normalizeAccommodationSustainability(
-      entry.sustainability || entry
+      entry.sustainability && typeof entry.sustainability === "object"
+        ? entry.sustainability
+        : { certifications: entry.certifications }
     ),
   };
+}
+
+function asAccommodationEntries(raw) {
+  if (Array.isArray(raw.accommodations)) return raw.accommodations;
+  if (raw.accommodation && typeof raw.accommodation === "object") {
+    return [raw.accommodation];
+  }
+  return [];
+}
+
+function normalizeActivities(raw) {
+  if (Array.isArray(raw.activities)) {
+    return raw.activities
+      .map((entry, index) => {
+        if (entry == null || typeof entry !== "object") return null;
+        const activityId =
+          readId(entry, "activityId", "id") || `activity-${index + 1}`;
+        return {
+          activityId,
+          name: optionalString(entry.name) || optionalString(entry.title),
+          destinationId: readId(entry, "destinationId"),
+          sustainability: normalizeSustainability(entry.sustainability || entry),
+        };
+      })
+      .filter(Boolean);
+  }
+
+  if (!Array.isArray(raw.activityIds)) return [];
+  return raw.activityIds
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean)
+    .map((activityId) => ({
+      activityId,
+      name: null,
+      destinationId: null,
+      sustainability: normalizeSustainability(null),
+    }));
 }
 
 /**
@@ -290,11 +376,16 @@ export function normalizeModule1Itinerary(raw) {
     });
   }
 
-  const accommodations = Array.isArray(raw.accommodations)
-    ? raw.accommodations
-        .map((entry, index) => normalizeAccommodation(entry, index))
-        .filter(Boolean)
-    : [];
+  const accommodations = asAccommodationEntries(raw)
+    .map((entry, index) => normalizeAccommodation(entry, index))
+    .filter(Boolean);
+
+  const activities = normalizeActivities(raw);
+  const dates = readDateRange(raw);
+  const ecoScore = optionalNumber(raw.ecoScore);
+  const activitiesStayCarbonKg = optionalNumber(
+    raw.activitiesStayCarbonKg ?? raw.stayCarbonKg ?? raw.carbonKg
+  );
 
   if (!itineraryId || !title) {
     return { itinerary: null, issues };
@@ -305,11 +396,14 @@ export function normalizeModule1Itinerary(raw) {
       itineraryId,
       userId,
       title,
-      startDate: optionalString(raw.startDate) || optionalString(raw.date),
-      endDate: optionalString(raw.endDate),
+      startDate: dates.startDate,
+      endDate: dates.endDate,
       startLocation: start.location,
       destinations,
       accommodations,
+      activities,
+      ecoScore,
+      activitiesStayCarbonKg,
     },
     issues,
   };

@@ -1,4 +1,11 @@
 import TripMap from "./TripMap";
+import {
+  formatKilometres,
+  formatMetersAsKilometres,
+  formatMinutes,
+  formatSecondsAsMinutes,
+  sumFiniteNumbers,
+} from "../services/formatMeasurement.js";
 
 const TRAVEL_MODE_LABEL = {
   WALK: "Walking",
@@ -29,16 +36,6 @@ const LIVE_ERROR_MESSAGES = {
   INVALID_AUTH_TOKEN: "Please sign in again to load the live route.",
 };
 
-function formatDistanceKm(meters) {
-  return `${(meters / 1000).toFixed(1)} km`;
-}
-
-function formatDurationMinutes(seconds) {
-  const minutes = seconds / 60;
-  if (minutes < 1) return "< 1 min";
-  return `${Math.round(minutes)} min`;
-}
-
 function loadButtonLabel(travelMode, { loading, canRefresh }) {
   const title = TRAVEL_MODE_TITLE[travelMode] || "Route";
   if (loading) return `Loading selected ${title.toLowerCase()} route…`;
@@ -64,21 +61,31 @@ export default function NavigationPreview({
   liveRoute = null,
   liveRouteError = null,
   liveRouteSource = null,
+  markerSource = "demo",
   onLoadLiveRoute,
 }) {
   const lastIndex = stops.length - 1;
   const current = stops[currentIndex];
   const next = stops[currentIndex + 1];
   const completed = currentIndex >= lastIndex;
-  const remainingSegments = segments.slice(currentIndex);
-  const remainingMinutes = remainingSegments.reduce(
-    (sum, segment) => sum + segment.estimatedDurationMinutes,
-    0
-  );
-  const remainingKm = remainingSegments.reduce(
-    (sum, segment) => sum + segment.estimatedDistanceKm,
-    0
-  );
+  const isSavedItinerary = markerSource === "saved";
+  const remainingSegments = Array.isArray(segments)
+    ? segments.slice(currentIndex)
+    : [];
+  const remainingMinutes = isSavedItinerary
+    ? null
+    : completed
+      ? 0
+      : sumFiniteNumbers(
+          remainingSegments.map((segment) => segment.estimatedDurationMinutes)
+        );
+  const remainingKm = isSavedItinerary
+    ? null
+    : completed
+      ? 0
+      : sumFiniteNumbers(
+          remainingSegments.map((segment) => segment.estimatedDistanceKm)
+        );
   const modeLabel = TRAVEL_MODE_LABEL[selectedTravelMode] || "Public transit";
   const liveSuccess = liveRouteStatus === "success" && liveRoute;
   const showWalkNotice =
@@ -98,12 +105,17 @@ export default function NavigationPreview({
           Simulation
         </p>
         <p className="m2-muted">
-          Full-itinerary demonstration totals below stay separate from the live
-          first-segment route.
+          {isSavedItinerary
+            ? "This itinerary has no whole-route distance or duration yet. A live first-segment result is shown separately and is not a trip total."
+            : "Full-itinerary demonstration totals below stay separate from the live first-segment route."}
         </p>
         <dl className="m2-stat-row">
           <div className="m2-stat">
-            <dt>Current demonstration segment</dt>
+            <dt>
+              {isSavedItinerary
+                ? "Current saved stop"
+                : "Current demonstration segment"}
+            </dt>
             <dd>{current?.name}</dd>
           </div>
           <div className="m2-stat">
@@ -111,12 +123,20 @@ export default function NavigationPreview({
             <dd>{next ? next.name : "None"}</dd>
           </div>
           <div className="m2-stat">
-            <dt>Demonstration remaining time</dt>
-            <dd>{completed ? "0 min" : `${remainingMinutes} min`}</dd>
+            <dt>
+              {isSavedItinerary
+                ? "Itinerary remaining time"
+                : "Demonstration remaining time"}
+            </dt>
+            <dd>{formatMinutes(remainingMinutes)}</dd>
           </div>
           <div className="m2-stat">
-            <dt>Demonstration remaining distance</dt>
-            <dd>{completed ? "0 km" : `${remainingKm.toFixed(1)} km`}</dd>
+            <dt>
+              {isSavedItinerary
+                ? "Itinerary remaining distance"
+                : "Demonstration remaining distance"}
+            </dt>
+            <dd>{formatKilometres(remainingKm)}</dd>
           </div>
         </dl>
         {paused ? (
@@ -126,7 +146,9 @@ export default function NavigationPreview({
         ) : null}
         {completed ? (
           <p className="m2-complete" role="status">
-            Demo trip completed
+            {isSavedItinerary
+              ? "Saved itinerary preview completed"
+              : "Demo trip completed"}
           </p>
         ) : null}
         <div className="m2-actions">
@@ -215,14 +237,17 @@ export default function NavigationPreview({
         </div>
         <p className="m2-muted">
           Selected transport: {modeLabel}. This first-segment preview uses your
-          effective start to {liveDestinationName}. Full-itinerary demonstration
-          totals above are unchanged.
+          effective start to {liveDestinationName}.
+          {isSavedItinerary
+            ? " First-segment live values are not whole-itinerary totals."
+            : " Full-itinerary demonstration totals above are unchanged."}
         </p>
         <div className="m2-live" aria-live="polite">
           {liveRouteStatus === "idle" ? (
             <p className="m2-muted">
-              No live route has been loaded for {modeLabel.toLowerCase()}. The
-              demonstration map markers remain visible.
+              No live route has been loaded for {modeLabel.toLowerCase()}. Map
+              markers stay on the{" "}
+              {isSavedItinerary ? "saved itinerary" : "demonstration itinerary"}.
             </p>
           ) : null}
           {liveRouteStatus === "comparison-loading" ? (
@@ -258,11 +283,15 @@ export default function NavigationPreview({
               </div>
               <div className="m2-stat">
                 <dt>Live first-segment distance</dt>
-                <dd>{formatDistanceKm(liveRoute.distanceMeters)}</dd>
+                <dd>
+                  {formatMetersAsKilometres(liveRoute.distanceMeters)}
+                </dd>
               </div>
               <div className="m2-stat">
                 <dt>Live first-segment duration</dt>
-                <dd>{formatDurationMinutes(liveRoute.durationSeconds)}</dd>
+                <dd>
+                  {formatSecondsAsMinutes(liveRoute.durationSeconds)}
+                </dd>
               </div>
               {selectedTravelMode === "DRIVE" ? (
                 <div className="m2-stat">
@@ -321,6 +350,7 @@ export default function NavigationPreview({
         destinations={destinations}
         encodedPolyline={encodedPolyline}
         routeTravelMode={liveSuccess ? selectedTravelMode : null}
+        markerSource={markerSource}
       />
     </section>
   );
