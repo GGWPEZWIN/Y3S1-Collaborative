@@ -21,14 +21,9 @@
     "react-dom": "^18.3.1",
     "react-geofencing": "^1.0.2",
     "react-leaflet": "^4.2.1",
-<<<<<<< HEAD
-    "recharts": "^2.15.2",
-    "tailwindcss": "^4.3.3"
-=======
     "recharts": "^3.10.1",
     "tailwindcss": "^4.3.3",
     "tesseract.js": "^7.0.0"
->>>>>>> 540a65241684bdd429bacfd822644f1bf3f98f8f
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

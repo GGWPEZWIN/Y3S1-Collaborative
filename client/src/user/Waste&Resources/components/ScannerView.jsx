@@ -137,7 +137,6 @@ export default function ScannerView({ onBack, onCommit }) {
     });
   };
 
-  const edible = result ? result.detections.filter((d) => d.edible) : [];
   const grams = result ? Math.round(result.totalGrams) : 0;
   const dailyPct = benchmarks.foodWaste
     ? Math.round((grams / benchmarks.foodWaste) * 100)
@@ -303,27 +302,14 @@ export default function ScannerView({ onBack, onCommit }) {
                 <h3 className="font-bold mb-3">Detection Results</h3>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-slate-600">Detected Food</span>
+                    <span className="text-slate-600">Detected</span>
                     <span className="rounded-md bg-slate-950 text-white text-sm font-medium px-2.5 py-1">
-                      {result.dish}
+                      Food waste
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-slate-600">Estimated Waste</span>
                     <span className="font-bold text-lg tabular-nums">{grams}g</span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-slate-600">Ingredients</span>
-                    <div className="flex gap-1 flex-wrap justify-end">
-                      {edible.map((d) => (
-                        <span
-                          key={d.id}
-                          className="rounded-md border border-slate-300 bg-white text-xs px-2 py-0.5"
-                        >
-                          {d.label}
-                        </span>
-                      ))}
-                    </div>
                   </div>
                 </div>
               </div>

@@ -144,9 +144,11 @@ export function drawDetectionOverlay(canvas, img, result, opts = {}) {
     ctx.lineWidth = 3 * scale;
     ctx.strokeRect(x, y, w, h);
 
+    // No class name shown — the model's food-type guess isn't reliable
+    // enough to present as fact, and the user only needs the weight.
     const text = showConfidence
-      ? `${d.label} · ${d.grams}g · ${Math.round(d.confidence * 100)}%`
-      : `${d.label} · ${d.grams}g`;
+      ? `${d.grams}g · ${Math.round(d.confidence * 100)}%`
+      : `${d.grams}g`;
 
     ctx.font = `600 ${font}px system-ui, sans-serif`;
     const tw = ctx.measureText(text).width;

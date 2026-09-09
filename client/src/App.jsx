@@ -267,23 +267,10 @@ export default function App() {
         />
       );
 
-<<<<<<< HEAD
-            // --------------------------------------------------
-            // DEFAULT
-            // --------------------------------------------------
-            default:
-              return <Login onNavigate={navigate} />;
-          }
-        })()}
-      </main>
-    </>
-  );
-=======
     case "/waste":
       return <Waste onNavigate={navigate} />;
 
     default:
       return <Login onNavigate={navigate} />;
   }
->>>>>>> 540a65241684bdd429bacfd822644f1bf3f98f8f
 }
