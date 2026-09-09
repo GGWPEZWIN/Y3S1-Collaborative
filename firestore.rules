@@ -1,0 +1,461 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================
+    // USERS
+    // =========================================================
+    match /users/{userId} {
+
+      allow read: if request.auth != null;
+
+      allow write: if request.auth != null
+                    && request.auth.uid == userId;
+
+
+      // =======================================================
+      // FRIENDS
+      // =======================================================
+      match /friends/{friendId} {
+
+        allow read: if request.auth != null
+                     && request.auth.uid == userId;
+
+        allow write: if request.auth != null
+                     && (
+                       request.auth.uid == userId ||
+                       request.auth.uid == friendId
+                     );
+      }
+
+
+      // =======================================================
+      // WASTE LOGS
+      // =======================================================
+      match /wasteLogs/{logId} {
+
+        allow read: if request.auth != null
+                    && request.auth.uid == userId;
+
+        allow create: if request.auth != null
+                      && request.auth.uid == userId
+                      && request.resource.data.iso is string
+                      && request.resource.data.type is string
+                      && request.resource.data.foodWaste is number
+                      && request.resource.data.foodWaste >= 0
+                      && request.resource.data.plastic is number
+                      && request.resource.data.plastic >= 0
+                      && request.resource.data.water is number
+                      && request.resource.data.water >= 0
+                      && request.resource.data.disposables is number
+                      && request.resource.data.disposables >= 0;
+
+        allow update: if request.auth != null
+                      && request.auth.uid == userId
+                      && request.resource.data.foodWaste is number
+                      && request.resource.data.foodWaste >= 0
+                      && request.resource.data.plastic is number
+                      && request.resource.data.plastic >= 0
+                      && request.resource.data.water is number
+                      && request.resource.data.water >= 0
+                      && request.resource.data.disposables is number
+                      && request.resource.data.disposables >= 0;
+
+        allow delete: if request.auth != null
+                      && request.auth.uid == userId;
+      }
+
+
+      // =======================================================
+      // TRAVEL HISTORY
+      // =======================================================
+      match /travelHistory/{tripId} {
+
+        allow read, create, update, delete:
+          if request.auth != null
+          && request.auth.uid == userId;
+
+
+        // =====================================================
+        // ECO REPORT
+        // =====================================================
+        match /ecoReport/{reportId} {
+
+          allow read, create, update, delete:
+            if request.auth != null
+            && request.auth.uid == userId;
+        }
+      }
+
+
+      // =======================================================
+      // USER ACHIEVEMENTS
+      // =======================================================
+      match /achievements/{achievementId} {
+
+        allow read:
+          if request.auth != null
+          && request.auth.uid == userId;
+
+        allow create, update, delete:
+          if request.auth != null
+          && request.auth.uid == userId;
+      }
+    }
+
+
+    // =========================================================
+    // FRIEND REQUESTS
+    // =========================================================
+    match /friendRequests/{requestId} {
+
+      allow read: if request.auth != null
+        && (
+          request.auth.uid == resource.data.fromUid ||
+          request.auth.uid == resource.data.toUid
+        );
+
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.fromUid;
+
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.toUid;
+
+      allow delete: if request.auth != null
+        && (
+          request.auth.uid == resource.data.fromUid ||
+          request.auth.uid == resource.data.toUid
+        );
+    }
+
+
+    // =========================================================
+    // CHATS / GROUPS
+    // =========================================================
+    match /chats/{chatId} {
+
+
+      // =======================================================
+      // READ CHAT
+      // =======================================================
+      allow read: if request.auth != null
+                  && request.auth.uid in resource.data.members;
+
+
+      // =======================================================
+      // CREATE CHAT / GROUP
+      // =======================================================
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.createdBy
+                    && request.auth.uid in request.resource.data.members;
+
+
+      // =======================================================
+      // UPDATE CHAT
+      // =======================================================
+      //
+      // Normal members can update:
+      // - lastMessage
+      // - lastMessageAt
+      // - lastMessageHiddenFor
+      // - unreadCounts
+      // - mutedBy
+      // - pinnedBy
+      //
+      // Creator/admin can additionally manage:
+      // - name
+      // - members
+      // - memberNames
+      // - memberPhotos
+      // - admins
+      //
+      allow update: if request.auth != null
+                    && request.auth.uid in resource.data.members
+                    && (
+
+                      // -------------------------------------------------
+                      // NORMAL CHAT ACTIVITY
+                      // -------------------------------------------------
+                      request.resource.data
+                        .diff(resource.data)
+                        .affectedKeys()
+                        .hasOnly([
+                          "lastMessage",
+                          "lastMessageAt",
+                          "lastMessageHiddenFor",
+                          "unreadCounts",
+                          "mutedBy",
+                          "pinnedBy"
+                        ])
+
+                      ||
+
+                      // -------------------------------------------------
+                      // CREATOR
+                      // -------------------------------------------------
+                      request.auth.uid == resource.data.createdBy
+
+                      ||
+
+                      // -------------------------------------------------
+                      // GROUP ADMIN
+                      // -------------------------------------------------
+                      (
+                        resource.data.keys().hasAll(["admins"])
+                        && request.auth.uid in resource.data.admins
+                        && request.resource.data
+                          .diff(resource.data)
+                          .affectedKeys()
+                          .hasOnly([
+                            "name",
+                            "members",
+                            "memberNames",
+                            "memberPhotos",
+                            "admins",
+                            "unreadCounts",
+                            "pinnedBy"
+                          ])
+                      )
+                    );
+
+
+      // =======================================================
+      // DELETE CHAT
+      // =======================================================
+      //
+      // Only the creator can permanently delete the chat.
+      //
+      allow delete: if request.auth != null
+                    && request.auth.uid == resource.data.createdBy;
+
+
+      // =======================================================
+      // MESSAGES
+      // =======================================================
+      match /messages/{messageId} {
+
+
+        // -----------------------------------------------------
+        // READ MESSAGES
+        // -----------------------------------------------------
+        allow read: if request.auth != null
+          && request.auth.uid in
+             get(
+               /databases/$(database)/documents/chats/$(chatId)
+             ).data.members;
+
+
+        // -----------------------------------------------------
+        // CREATE MESSAGE
+        // -----------------------------------------------------
+        allow create: if request.auth != null
+          && request.auth.uid in
+             get(
+               /databases/$(database)/documents/chats/$(chatId)
+             ).data.members
+          && request.auth.uid == request.resource.data.senderId;
+
+
+        // -----------------------------------------------------
+        // UPDATE MESSAGE
+        // -----------------------------------------------------
+        //
+        // Three allowed update types:
+        //
+        // 1. Delete for me
+        // 2. Mark message as seen
+        // 3. Delete for everyone
+        //
+        allow update: if request.auth != null
+          && request.auth.uid in
+             get(
+               /databases/$(database)/documents/chats/$(chatId)
+             ).data.members
+          && (
+
+            // -------------------------------------------------
+            // DELETE FOR ME
+            // -------------------------------------------------
+            //
+            // User can add their own UID to deletedFor.
+            //
+            (
+              request.resource.data
+                .diff(resource.data)
+                .affectedKeys()
+                .hasOnly([
+                  "deletedFor"
+                ])
+              &&
+              request.auth.uid in
+                request.resource.data.deletedFor
+            )
+
+
+            ||
+
+
+            // -------------------------------------------------
+            // MARK AS SEEN
+            // -------------------------------------------------
+            //
+            // User can add their own UID to readBy.
+            //
+            (
+              request.resource.data
+                .diff(resource.data)
+                .affectedKeys()
+                .hasOnly([
+                  "readBy"
+                ])
+              &&
+              request.auth.uid in
+                request.resource.data.readBy
+            )
+
+
+            ||
+
+
+            // -------------------------------------------------
+            // DELETE FOR EVERYONE
+            // -------------------------------------------------
+            //
+            // Only the original sender can do this.
+            //
+            // The original content is replaced with a
+            // deleted-message tombstone.
+            //
+            (
+              request.auth.uid ==
+                resource.data.senderId
+
+              &&
+
+              request.resource.data
+                .deletedForEveryone == true
+
+              &&
+
+              request.resource.data.type ==
+                "deleted"
+
+              &&
+
+              request.resource.data.text ==
+                "This message was deleted for everyone"
+
+              &&
+
+              request.resource.data
+                .diff(resource.data)
+                .affectedKeys()
+                .hasOnly([
+                  "deletedForEveryone",
+                  "type",
+                  "text",
+                  "imageUrl",
+                  "videoUrl",
+                  "audioUrl",
+                  "mediaUrl"
+                ])
+            )
+          );
+
+
+        // -----------------------------------------------------
+        // DELETE MESSAGE DOCUMENT
+        // -----------------------------------------------------
+        //
+        // IMPORTANT:
+        // We don't physically delete message documents.
+        //
+        // Delete-for-everyone uses a tombstone so everyone
+        // can still see:
+        //
+        // "This message was deleted for everyone"
+        //
+        allow delete: if false;
+      }
+    }
+
+
+    // =========================================================
+    // ACHIEVEMENTS
+    // =========================================================
+    match /achievements/{achievementId} {
+
+      // Everyone logged in can see published achievements.
+      allow read: if request.auth != null;
+
+      // Only admins can create/update/delete achievements.
+      allow write: if request.auth != null
+                   && get(
+                     /databases/$(database)/documents/users/$(request.auth.uid)
+                   ).data.role == "admin";
+    }
+
+
+    // =========================================================
+    // CHALLENGES
+    // =========================================================
+    match /challenges/{challengeId} {
+
+      // Logged-in users can view challenges.
+      allow read: if request.auth != null;
+
+      // Only admins can manage challenges.
+      allow write: if request.auth != null
+                   && get(
+                     /databases/$(database)/documents/users/$(request.auth.uid)
+                   ).data.role == "admin";
+    }
+
+
+    // =========================================================
+    // ITINERARIES
+    // =========================================================
+    //
+    // Sustainable Itinerary Planning — one document per saved trip in the
+    // top-level `itineraries` collection: itineraries/{itineraryId}.
+    //
+    // Ownership is the `userId` field, stamped with the creator's Firebase
+    // Auth UID by saveItinerary() in
+    // client/src/firebase/itineraryService.js.
+    //
+    // Module 1 (the Create wizard) creates the document; Module 2 (the
+    // recommendation step) later updates it with transport + sustainability
+    // values. Both run as the signed-in owner.
+    //
+    // Reads used by the feature:
+    //   - getItinerary(id)      -> get itineraries/{id}
+    //   - getMyItineraries()    -> list itineraries where userId == uid
+    // Writes used by the feature:
+    //   - saveItinerary()       -> create itineraries/{id}
+    //   - (Module 2)            -> update itineraries/{id}
+    //
+    match /itineraries/{itineraryId} {
+
+      // A user may only read their own itineraries. The getMyItineraries()
+      // query filters on `userId == request.auth.uid`, so it stays within
+      // this rule; getItinerary() only ever loads the owner's own trip.
+      allow read: if request.auth != null
+                  && resource.data.userId == request.auth.uid;
+
+      // Create: must be signed in and the new document must be stamped with
+      // the caller's own UID as the owner.
+      allow create: if request.auth != null
+                    && request.resource.data.userId == request.auth.uid;
+
+      // Update: only the owner, and ownership cannot be reassigned.
+      allow update: if request.auth != null
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.userId == request.auth.uid;
+
+      // Delete: only the owner.
+      allow delete: if request.auth != null
+                    && resource.data.userId == request.auth.uid;
+    }
+  }
+}

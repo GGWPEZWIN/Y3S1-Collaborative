@@ -12,8 +12,15 @@ import useMediaQuery, { BREAKPOINTS } from "../hooks/useMediaQuery";
  * - current — 1-based index of the active step
  * - total   — how many steps there are (5 here)
  * - onStepClick(step) — optional; lets the user jump back to a finished step
+ * - allowJump — when true (edit mode) every step is clickable, not just the
+ *   finished ones, because the itinerary already has values for all of them
  */
-export default function StepProgress({ current, total = 5, onStepClick }) {
+export default function StepProgress({
+  current,
+  total = 5,
+  onStepClick,
+  allowJump = false,
+}) {
   const steps = Array.from({ length: total }, (_, i) => i + 1);
   const isPhone = useMediaQuery(BREAKPOINTS.phone);
 
@@ -36,8 +43,11 @@ export default function StepProgress({ current, total = 5, onStepClick }) {
         {steps.map((step) => {
           const done = step <= current;
           // Only finished steps are clickable — jumping ahead would skip
-          // required fields the later steps depend on.
-          const clickable = typeof onStepClick === "function" && step < current;
+          // required fields the later steps depend on. In edit mode those
+          // fields are already filled, so every step opens directly.
+          const clickable =
+            typeof onStepClick === "function" &&
+            (allowJump ? step !== current : step < current);
           return (
             <button
               key={step}

@@ -308,8 +308,8 @@ export default function Friends({ onNavigate }) {
         {/* Friends list */}
         <div style={styles.card}>
           <h2 style={styles.cardTitle}>
-            <Users size={18} style={{ marginRight: 6, verticalAlign: -3 }} />
-            My Friends ({friends.length})
+            <Users size={18} />
+            <span>My Friends ({friends.length})</span>
           </h2>
           {friends.length === 0 ? (
             <p style={styles.emptyText}>No friends yet — search for someone above to get started.</p>
@@ -412,7 +412,15 @@ const styles = {
     padding: 24,
     marginBottom: 20,
   },
-  cardTitle: { fontSize: 16, fontWeight: 700, color: "#111827", margin: "0 0 16px" },
+  cardTitle: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    fontSize: 16,
+    fontWeight: 700,
+    color: "#111827",
+    margin: "0 0 16px",
+  },
   searchRow: { display: "flex", gap: 10 },
   searchInputWrap: {
     flex: 1,

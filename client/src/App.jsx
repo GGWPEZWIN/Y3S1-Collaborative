@@ -17,7 +17,6 @@ import ChatRoom from "./user/EcoJourney/chat/ChatRoom";
 import GroupInfo from "./user/EcoJourney/chat/GroupInfo";
 
 import ChallengeTeam from "./user/EcoJourney/pages/ChallengeTeam";
-
 import ChallengesPage from "./user/Challenges/pages/ChallengesPage";
 import ChallengeDetails from "./user/Challenges/pages/ChallengeDetails";
 import ChallengeLeaderboard from "./user/Challenges/pages/ChallengeLeaderboard";
@@ -25,51 +24,40 @@ import ChallengeLeaderboard from "./user/Challenges/pages/ChallengeLeaderboard";
 import Waste from "./user/Waste&Resources/pages/WastePage";
 import GreenRecommendationPage from "./user/AIRecommendation/pages/GreenRecommendationPage";
 
+import EcoReportCard from "./user/EcoJourney/pages/EcoReportCard";
+import AchievementsPage from "./user/EcoJourney/pages/AchievementsPage";
+
+// Itinerary (Module 1)
 import ItineraryPage from "./user/Itinerary/pages/ItineraryPage";
 import CreateItinerary from "./user/Itinerary/pages/CreateItinerary";
 import ItineraryDetails from "./user/Itinerary/pages/ItineraryDetails";
-
-import EcoReportCard from "./user/EcoJourney/pages/EcoReportCard";
-import AchievementsPage from "./user/EcoJourney/pages/AchievementsPage";
 
 // Admin
 import AdminDashboard from "./admin/AdminDashboard";
 import RequireAdmin from "./admin/RequireAdmin";
 
 // Routes accessible without login
-const PUBLIC_ROUTES = [
-  "/login",
-  "/register",
-];
-
+const PUBLIC_ROUTES = ["/login", "/register"];
 
 // ============================================================
 // READ HASH ROUTE
 // ============================================================
-
 function parseHash() {
-  const raw =
-    window.location.hash.slice(1) ||
-    "/login";
+  const raw = window.location.hash.slice(1) || "/login";
+  const normalized = raw.startsWith("/") ? raw : `/${raw}`;
 
-  const [path, queryString] =
-    raw.split("?");
-
-  const id = queryString
-    ? new URLSearchParams(queryString).get("id")
-    : null;
+  const [path, queryString = ""] = normalized.split("?");
+  const params = new URLSearchParams(queryString);
 
   return {
     path: path || "/login",
-    id,
+    id: params.get("id") || null,
   };
 }
-
 
 // ============================================================
 // COMING SOON
 // ============================================================
-
 function ComingSoon({
   label,
   onNavigate,
@@ -82,14 +70,11 @@ function ComingSoon({
         textAlign: "center",
       }}
     >
-      <h2>
-        {label} is coming soon
-      </h2>
+      <h2>{label} is coming soon</h2>
 
       <button
-        onClick={() =>
-          onNavigate(backTo)
-        }
+        type="button"
+        onClick={() => onNavigate(backTo)}
       >
         Back
       </button>
@@ -97,71 +82,59 @@ function ComingSoon({
   );
 }
 
-
 // ============================================================
 // APP
 // ============================================================
-
 export default function App() {
-  const [location, setLocation] =
-    useState(parseHash);
-
-  const { status } =
-    useAuthUser();
+  const [location, setLocation] = useState(parseHash);
+  const { status } = useAuthUser();
 
   const {
     path: route,
     id: selectedId,
   } = location;
 
-
   // ==========================================================
   // LISTEN TO HASH CHANGES
   // ==========================================================
-
   useEffect(() => {
     const onHashChange = () => {
       setLocation(parseHash());
     };
 
-    window.addEventListener(
-      "hashchange",
-      onHashChange
-    );
+    window.addEventListener("hashchange", onHashChange);
 
     return () => {
-      window.removeEventListener(
-        "hashchange",
-        onHashChange
-      );
+      window.removeEventListener("hashchange", onHashChange);
     };
   }, []);
-
 
   // ==========================================================
   // NAVIGATION
   // ==========================================================
+  const navigate = useCallback((path, id) => {
+    const cleanPath = String(path || "/login").split("?")[0];
 
-  const navigate = useCallback(
-    (path, id) => {
-      const next =
-        id !== undefined &&
-        id !== null
-          ? `${path}?id=${encodeURIComponent(id)}`
-          : path;
+    const next =
+      id !== undefined && id !== null && id !== ""
+        ? `${cleanPath}?id=${encodeURIComponent(id)}`
+        : cleanPath;
 
+    const nextHash = `#${next}`;
+
+    if (window.location.hash !== nextHash) {
       window.location.hash = next;
+    }
 
-      setLocation(parseHash());
-    },
-    []
-  );
-
+    // Update immediately as well as through hashchange.
+    // This prevents a momentary blank/default route when
+    // navigating between chat screens.
+    setLocation(parseHash());
+  }, []);
 
   // ==========================================================
   // WAIT FOR FIREBASE AUTH
   // ==========================================================
-
   if (status === "loading") {
     return (
       <div
@@ -175,93 +148,53 @@ export default function App() {
     );
   }
 
-
   // ==========================================================
   // SIGNED OUT
   // ==========================================================
-
   if (
     status === "signedOut" &&
     !PUBLIC_ROUTES.includes(route)
   ) {
-    return (
-      <Login
-        onNavigate={navigate}
-      />
-    );
+    return <Login onNavigate={navigate} />;
   }
-
 
   // ==========================================================
   // ROUTES
   // ==========================================================
-
   switch (route) {
-
     // --------------------------------------------------------
     // AUTH
     // --------------------------------------------------------
-
     case "/login":
-      return (
-        <Login
-          onNavigate={navigate}
-        />
-      );
+      return <Login onNavigate={navigate} />;
 
     case "/register":
-      return (
-        <Register
-          onNavigate={navigate}
-        />
-      );
+      return <Register onNavigate={navigate} />;
 
     case "/profile":
-      return (
-        <Profile
-          onNavigate={navigate}
-        />
-      );
-
+      return <Profile onNavigate={navigate} />;
 
     // --------------------------------------------------------
     // ADMIN
     // --------------------------------------------------------
-
     case "/admin":
       return (
-        <RequireAdmin
-          onNavigate={navigate}
-        >
-          <AdminDashboard
-            onNavigate={navigate}
-          />
+        <RequireAdmin onNavigate={navigate}>
+          <AdminDashboard onNavigate={navigate} />
         </RequireAdmin>
       );
-
 
     // --------------------------------------------------------
     // DASHBOARD
     // --------------------------------------------------------
-
     case "/dashboard":
-      return (
-        <MainDashboard
-          onNavigate={navigate}
-        />
-      );
-
+      return <MainDashboard onNavigate={navigate} />;
 
     // --------------------------------------------------------
     // COMMUNITY
     // --------------------------------------------------------
-
     case "/community":
-      return (
-        <CommunityPage
-          onNavigate={navigate}
-        />
-      );
+      return <CommunityPage onNavigate={navigate} />;
 
     case "/community/history":
       return (
@@ -280,27 +213,28 @@ export default function App() {
       );
 
     case "/community/achievements":
-      return (
-        <AchievementsPage
-          onNavigate={navigate}
-        />
-      );
+      return <AchievementsPage onNavigate={navigate} />;
 
     case "/community/friends":
-      return (
-        <Friends
-          onNavigate={navigate}
-        />
-      );
+      return <Friends onNavigate={navigate} />;
 
     case "/community/chat":
-      return (
-        <ChatList
-          onNavigate={navigate}
-        />
-      );
+      return <ChatList onNavigate={navigate} />;
 
+    // --------------------------------------------------------
+    // CHAT ROOM
+    // --------------------------------------------------------
     case "/community/chat/room":
+      if (!selectedId) {
+        return (
+          <ComingSoon
+            label="Chat"
+            onNavigate={navigate}
+            backTo="/community/chat"
+          />
+        );
+      }
+
       return (
         <ChatRoom
           chatId={selectedId}
@@ -308,11 +242,35 @@ export default function App() {
         />
       );
 
+    // --------------------------------------------------------
+    // GROUP INFO
+    // --------------------------------------------------------
     case "/community/chat/info":
+      if (!selectedId) {
+        return (
+          <ComingSoon
+            label="Group Info"
+            onNavigate={navigate}
+            backTo="/community/chat"
+          />
+        );
+      }
+
       return (
         <GroupInfo
           chatId={selectedId}
           onNavigate={navigate}
+        />
+      );
+
+    // --------------------------------------------------------
+    // ECO REPORT
+    // --------------------------------------------------------
+    case "/community/reports":
+      return (
+        <EcoReportCard
+          onNavigate={navigate}
+          onBack={() => navigate("/community")}
         />
       );
 
@@ -324,24 +282,17 @@ export default function App() {
         />
       );
 
+    // --------------------------------------------------------
+    // COMMUNITY CHALLENGES
+    // --------------------------------------------------------
     case "/community/challenges":
-      return (
-        <ChallengeTeam
-          onNavigate={navigate}
-        />
-      );
-
+      return <ChallengeTeam onNavigate={navigate} />;
 
     // --------------------------------------------------------
     // CHALLENGES
     // --------------------------------------------------------
-
     case "/challenges":
-      return (
-        <ChallengesPage
-          onNavigate={navigate}
-        />
-      );
+      return <ChallengesPage onNavigate={navigate} />;
 
     case "/challenges/details":
       return (
@@ -358,11 +309,9 @@ export default function App() {
         />
       );
 
-
     // --------------------------------------------------------
     // ITINERARY (MODULE 1)
     // --------------------------------------------------------
-
     case "/itinerary":
       return (
         <ItineraryPage
@@ -377,6 +326,14 @@ export default function App() {
         />
       );
 
+    case "/itinerary/edit":
+      return (
+        <CreateItinerary
+          onNavigate={navigate}
+          editItineraryId={selectedId}
+        />
+      );
+
     case "/itinerary/details":
       return (
         <ItineraryDetails
@@ -385,11 +342,9 @@ export default function App() {
         />
       );
 
-
     // --------------------------------------------------------
-    // OTHER
+    // RECOMMENDATIONS (MODULE 2)
     // --------------------------------------------------------
-
     case "/recommendations":
       return (
         <GreenRecommendationPage
@@ -407,22 +362,12 @@ export default function App() {
       );
 
     case "/waste":
-      return (
-        <Waste
-          onNavigate={navigate}
-        />
-      );
-
+      return <Waste onNavigate={navigate} />;
 
     // --------------------------------------------------------
     // DEFAULT
     // --------------------------------------------------------
-
     default:
-      return (
-        <Login
-          onNavigate={navigate}
-        />
-      );
+      return <Login onNavigate={navigate} />;
   }
 }

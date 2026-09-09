@@ -1,14 +1,17 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Calendar,
   MapPin,
+  Navigation,
   Users,
   Leaf,
   Cloud,
   Wallet,
   BedDouble,
   Clock,
+  Sparkles,
+  Pencil,
 } from "lucide-react";
 import ItineraryShell from "../components/ItineraryShell";
 import EcoScoreBadge from "../components/EcoScoreBadge";
@@ -17,9 +20,13 @@ import {
   MOCK_ITINERARIES,
   getAccommodationsFor,
   getActivitiesFor,
+  getActivitiesForMany,
   nightsBetween,
   formatDate,
+  estimateItineraryCost,
+  evaluateBudget,
 } from "../constants/itineraryData";
+import { getItinerary } from "../../../firebase/itineraryService";
 
 function statusPillStyle(status) {
   if (status === "Active") return { background: "#dcfce7", color: "#15803d" };
@@ -45,6 +52,31 @@ export default function ItineraryDetails({
   const isPhone = useMediaQuery(BREAKPOINTS.phone);
   const itinerary = itineraries.find((it) => it.id === itineraryId) ?? null;
 
+  // Anything not in the mock list is looked up in Firebase — that's where the
+  // itineraries saved by the Create wizard (Module 1) live.
+  const [savedDoc, setSavedDoc] = useState(null);
+  const [triedFetch, setTriedFetch] = useState(false);
+
+  useEffect(() => {
+    if (itinerary || !itineraryId) return undefined;
+    let active = true;
+    getItinerary(itineraryId)
+      .then((doc) => {
+        if (active) setSavedDoc(doc);
+      })
+      .catch((err) => {
+        console.warn("Could not load itinerary:", err);
+      })
+      .finally(() => {
+        if (active) setTriedFetch(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [itinerary, itineraryId]);
+
+  const loadingSaved = !itinerary && !triedFetch;
+
   const activities = useMemo(() => {
     if (!itinerary) return [];
     return getActivitiesFor(itinerary.destinationId).filter((a) =>
@@ -61,7 +93,7 @@ export default function ItineraryDetails({
     );
   }, [itinerary]);
 
-  // A stale hash (bookmarked, or an itinerary deleted elsewhere) lands here.
+  // Not a mock itinerary — show the Firebase-backed view (or loading / 404).
   if (!itinerary) {
     return (
       <ItineraryShell onNavigate={onNavigate} activeRoute="/itinerary">
@@ -72,13 +104,26 @@ export default function ItineraryDetails({
         >
           <ArrowLeft size={16} /> Back to itineraries
         </button>
-        <div style={styles.notFound}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>🧭</div>
-          <div style={{ fontWeight: 700 }}>Itinerary not found</div>
-          <div style={{ color: "#6b7280", fontSize: 13.5, marginTop: 4 }}>
-            It may have been removed. Head back to the list to pick another.
+
+        {loadingSaved ? (
+          <div style={styles.notFound}>
+            <div style={{ fontWeight: 700 }}>Loading itinerary…</div>
           </div>
-        </div>
+        ) : savedDoc ? (
+          <SavedItineraryView
+            doc={savedDoc}
+            isPhone={isPhone}
+            onNavigate={onNavigate}
+          />
+        ) : (
+          <div style={styles.notFound}>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>🧭</div>
+            <div style={{ fontWeight: 700 }}>Itinerary not found</div>
+            <div style={{ color: "#6b7280", fontSize: 13.5, marginTop: 4 }}>
+              It may have been removed. Head back to the list to pick another.
+            </div>
+          </div>
+        )}
       </ItineraryShell>
     );
   }
@@ -198,6 +243,195 @@ export default function ItineraryDetails({
         )}
       </div>
     </ItineraryShell>
+  );
+}
+
+/**
+ * Read-only view of an itinerary saved by Module 1's Create wizard. Kept
+ * deliberately simple — it shows the route the way Module 2 will consume it
+ * (ordered stops, day, coordinates) and links onward to the recommendation.
+ */
+function SavedItineraryView({ doc, isPhone, onNavigate }) {
+  const destinations = Array.isArray(doc.destinations) ? doc.destinations : [];
+  const start = doc.startLocation;
+  const id = doc.itineraryId || doc.id;
+
+  // Estimated cost + budget status, from the same data the wizard captured.
+  const nights = nightsBetween(doc.dates?.startDate, doc.dates?.endDate);
+  const destinationIds = destinations.map((d) => d.destinationId).filter(Boolean);
+  const activities = getActivitiesForMany(destinationIds).filter((a) =>
+    Array.isArray(doc.activityIds) ? doc.activityIds.includes(a.id) : false
+  );
+  const cost = estimateItineraryCost({
+    activities,
+    accommodation: doc.accommodation,
+    nights,
+  });
+  const budgetStatus = evaluateBudget(cost.total, doc.budget);
+
+  return (
+    <>
+      <div style={styles.hero}>
+        <div style={styles.heroBody}>
+          <div style={styles.heroTitleRow}>
+            <h1 style={{ ...styles.title, ...(isPhone ? styles.titlePhone : null) }}>
+              {doc.title || "Untitled trip"}
+            </h1>
+            <span style={{ ...styles.pill, background: "#fef3c7", color: "#b45309" }}>
+              {doc.status || "Planning"}
+            </span>
+            <button
+              type="button"
+              onClick={() => onNavigate?.("/itinerary/edit", id)}
+              style={styles.editBtn}
+            >
+              <Pencil size={14} /> Edit Itinerary
+            </button>
+          </div>
+
+          <div style={styles.metaGrid}>
+            <Meta
+              icon={Navigation}
+              label="Starting from"
+              value={start?.name ?? "—"}
+            />
+            <Meta
+              icon={Calendar}
+              label="Dates"
+              value={`${formatDate(doc.dates?.startDate)} – ${formatDate(
+                doc.dates?.endDate
+              )}`}
+            />
+            <Meta
+              icon={Users}
+              label="Travelers"
+              value={doc.travellers ?? "—"}
+            />
+            <Meta icon={Leaf} label="Style" value={doc.travellerStyle ?? "—"} />
+          </div>
+        </div>
+      </div>
+
+      {doc.ecoScore != null && (
+        <div style={{ ...styles.card, marginTop: 16 }}>
+          <h3 style={styles.cardTitle}>Eco Score</h3>
+          <EcoScoreBadge score={doc.ecoScore} />
+          <p style={{ ...styles.muted, marginTop: 10 }}>
+            Average of the selected activities and accommodation. The
+            transport-inclusive score is added by the recommendation step.
+          </p>
+        </div>
+      )}
+
+      <div style={{ ...styles.card, marginTop: 16 }}>
+        <h3 style={styles.cardTitle}>Route ({destinations.length} stops)</h3>
+        <div style={styles.list}>
+          {start && (
+            <div style={styles.row}>
+              <span style={{ ...styles.orderDot, background: "#0ea5e9" }}>
+                <Navigation size={12} color="#fff" />
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={styles.rowTitle}>{start.name}</div>
+                <div style={styles.rowMeta}>
+                  Starting location · {Number(start.latitude)},{" "}
+                  {Number(start.longitude)}
+                </div>
+              </div>
+            </div>
+          )}
+          {destinations.map((d) => (
+            <div key={d.destinationId || d.order} style={styles.row}>
+              <span style={styles.orderDot}>{d.order}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={styles.rowTitle}>{d.name}</div>
+                <div style={styles.rowMeta}>
+                  Day {d.day} · {Number(d.latitude)}, {Number(d.longitude)}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {doc.accommodation && (
+        <div style={{ ...styles.card, marginTop: 16 }}>
+          <h3 style={styles.cardTitle}>Accommodation</h3>
+          <div style={styles.row}>
+            <span style={styles.tickDot}>
+              <BedDouble size={12} color="#15803d" />
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={styles.rowTitle}>{doc.accommodation.name}</div>
+              <div style={styles.rowMeta}>
+                {doc.accommodation.type || "Stay"}
+                {doc.accommodation.pricePerNight != null
+                  ? ` · RM ${doc.accommodation.pricePerNight} / night`
+                  : ""}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ ...styles.card, marginTop: 16 }}>
+        <div style={styles.budgetHead}>
+          <h3 style={{ ...styles.cardTitle, margin: 0 }}>Budget</h3>
+          {budgetStatus.hasBudget && (
+            <span
+              style={{
+                ...styles.pill,
+                ...(budgetStatus.overBudget
+                  ? { background: "#fee2e2", color: "#b91c1c" }
+                  : { background: "#dcfce7", color: "#15803d" }),
+              }}
+            >
+              {budgetStatus.overBudget ? "Over Budget" : "Within Budget"}
+            </span>
+          )}
+        </div>
+
+        <div style={styles.budgetGrid}>
+          <div>
+            <div style={styles.metaLabel}>Budget</div>
+            <div style={styles.metaValue}>
+              {budgetStatus.hasBudget ? `RM ${budgetStatus.budget}` : "Not set"}
+            </div>
+          </div>
+          <div>
+            <div style={styles.metaLabel}>Estimated</div>
+            <div style={styles.metaValue}>RM {cost.total}</div>
+          </div>
+          {budgetStatus.overBudget && (
+            <div>
+              <div style={styles.metaLabel}>Over budget</div>
+              <div style={{ ...styles.metaValue, color: "#b91c1c" }}>
+                RM {budgetStatus.overBy}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <p style={{ ...styles.muted, marginTop: 12 }}>
+          Estimated from activities and accommodation. Transport is added by the
+          recommendation step.
+        </p>
+      </div>
+
+      <div style={{ ...styles.card, marginTop: 16, marginBottom: 32 }}>
+        <h3 style={styles.cardTitle}>Next step</h3>
+        <p style={{ ...styles.muted, marginBottom: 14 }}>
+          Transport options and eco score are added by the recommendation step.
+        </p>
+        <button
+          type="button"
+          onClick={() => onNavigate?.("/recommendations", id)}
+          style={styles.recBtn}
+        >
+          <Sparkles size={16} /> Get Green Recommendation
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -322,6 +556,68 @@ const styles = {
     fontSize: 12,
   },
   muted: { color: "#9ca3af", fontSize: 13.5, margin: 0 },
+  orderDot: {
+    width: 26,
+    height: 26,
+    borderRadius: "50%",
+    background: "#22c55e",
+    color: "#fff",
+    fontWeight: 800,
+    fontSize: 13,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  tickDot: {
+    width: 26,
+    height: 26,
+    borderRadius: "50%",
+    background: "#dcfce7",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  recBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    background: "#22c55e",
+    color: "#fff",
+    border: "none",
+    borderRadius: 10,
+    padding: "12px 20px",
+    fontSize: 14,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  editBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    background: "#fff",
+    color: "#15803d",
+    border: "1px solid #86efac",
+    borderRadius: 999,
+    padding: "6px 14px",
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+    marginLeft: "auto",
+  },
+  budgetHead: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+    marginBottom: 14,
+  },
+  budgetGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+    gap: 16,
+  },
   notFound: {
     background: "#fff",
     border: "1px dashed #d1d5db",

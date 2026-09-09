@@ -1,12 +1,44 @@
-import React, { useMemo, useState } from "react";
-import { Search, Plus, Calendar, Leaf, Cloud, MapPin } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Search, Plus, Calendar, Leaf, Cloud, MapPin, Trash2 } from "lucide-react";
 import ItineraryShell from "../components/ItineraryShell";
 import useMediaQuery, { BREAKPOINTS } from "../hooks/useMediaQuery";
 import {
   ITINERARY_STATUSES,
   MOCK_ITINERARIES,
   formatDate,
+  getDestination,
 } from "../constants/itineraryData";
+import {
+  getMyItineraries,
+  deleteItinerary,
+} from "../../../firebase/itineraryService";
+
+const FALLBACK_IMAGE =
+  "https://images.unsplash.com/photo-1596422846543-75c6fc197f07?w=600&q=80";
+
+/** Map a saved Firestore itinerary onto the shape ItineraryCard expects. */
+function savedItineraryToCard(it) {
+  const destinations = Array.isArray(it.destinations) ? it.destinations : [];
+  return {
+    id: it.itineraryId || it.id,
+    name: it.title || "Untitled trip",
+    status: it.status || "Planning",
+    destinationName:
+      destinations.map((d) => d.name).join(", ") ||
+      it.startLocation?.name ||
+      "—",
+    startDate: it.dates?.startDate || "",
+    endDate: it.dates?.endDate || "",
+    // ecoScore is the plan-level preview saved by the wizard (Module 1);
+    // carbonKg is still filled in later by Module 2. Dash until present.
+    ecoScore: it.ecoScore ?? "—",
+    carbonKg: it.carbonKg ?? "—",
+    activityIds: Array.isArray(it.activityIds) ? it.activityIds : [],
+    imageUrl:
+      getDestination(destinations[0]?.destinationId)?.imageUrl || FALLBACK_IMAGE,
+    __saved: true,
+  };
+}
 
 /** Pill colours per itinerary status, matching the Challenges difficulty pills. */
 function statusPillStyle(status) {
@@ -15,57 +47,78 @@ function statusPillStyle(status) {
   return { background: "#fef3c7", color: "#b45309" }; // Planning
 }
 
-function ItineraryCard({ itinerary, onOpen }) {
+function ItineraryCard({ itinerary, onOpen, onDelete }) {
+  // The delete control is a sibling of the card button (never nested inside it)
+  // so the card keeps working as a single open-on-click target and the markup
+  // stays valid. Only itineraries saved to Firestore can be deleted — the mock
+  // sample cards have no id in the database.
   return (
-    <button type="button" style={styles.card} onClick={() => onOpen(itinerary.id)}>
-      <img
-        src={itinerary.imageUrl}
-        alt={itinerary.name}
-        style={styles.cardImage}
-      />
+    <div style={styles.cardWrap}>
+      <button type="button" style={styles.card} onClick={() => onOpen(itinerary.id)}>
+        <img
+          src={itinerary.imageUrl}
+          alt={itinerary.name}
+          style={styles.cardImage}
+        />
 
-      <div style={styles.cardBody}>
-        <div style={styles.cardTitleRow}>
-          <span style={styles.cardTitle}>{itinerary.name}</span>
-          <span style={{ ...styles.pill, ...statusPillStyle(itinerary.status) }}>
-            {itinerary.status}
-          </span>
-        </div>
+        <div style={styles.cardBody}>
+          <div style={styles.cardTitleRow}>
+            <span style={styles.cardTitle}>{itinerary.name}</span>
+            <span style={{ ...styles.pill, ...statusPillStyle(itinerary.status) }}>
+              {itinerary.status}
+            </span>
+          </div>
 
-        <div style={styles.cardMetaRow}>
-          <MapPin size={13} color="#6b7280" />
-          <span>{itinerary.destinationName}</span>
-        </div>
+          <div style={styles.cardMetaRow}>
+            <MapPin size={13} color="#6b7280" />
+            <span>{itinerary.destinationName}</span>
+          </div>
 
-        <div style={styles.cardMetaRow}>
-          <Calendar size={13} color="#6b7280" />
-          <span>
-            {formatDate(itinerary.startDate)} – {formatDate(itinerary.endDate)}
-          </span>
-        </div>
+          <div style={styles.cardMetaRow}>
+            <Calendar size={13} color="#6b7280" />
+            <span>
+              {formatDate(itinerary.startDate)} – {formatDate(itinerary.endDate)}
+            </span>
+          </div>
 
-        <div style={styles.cardStats}>
-          <div>
-            <div style={styles.statLabel}>Eco Score</div>
-            <div style={styles.statValueGreen}>
-              <Leaf size={14} /> {itinerary.ecoScore}
+          <div style={styles.cardStats}>
+            <div>
+              <div style={styles.statLabel}>Eco Score</div>
+              <div style={styles.statValueGreen}>
+                <Leaf size={14} /> {itinerary.ecoScore}
+              </div>
+            </div>
+
+            <div>
+              <div style={styles.statLabel}>Carbon</div>
+              <div style={styles.statValueBlue}>
+                <Cloud size={14} /> {itinerary.carbonKg} kg
+              </div>
+            </div>
+
+            <div>
+              <div style={styles.statLabel}>Activities</div>
+              <div style={styles.statValue}>{itinerary.activityIds.length}</div>
             </div>
           </div>
-
-          <div>
-            <div style={styles.statLabel}>Carbon</div>
-            <div style={styles.statValueBlue}>
-              <Cloud size={14} /> {itinerary.carbonKg} kg
-            </div>
-          </div>
-
-          <div>
-            <div style={styles.statLabel}>Activities</div>
-            <div style={styles.statValue}>{itinerary.activityIds.length}</div>
-          </div>
         </div>
-      </div>
-    </button>
+      </button>
+
+      {itinerary.__saved && (
+        <button
+          type="button"
+          style={styles.deleteBtn}
+          title="Delete itinerary"
+          aria-label={`Delete ${itinerary.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(itinerary);
+          }}
+        >
+          <Trash2 size={15} />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -84,11 +137,70 @@ function ItineraryCard({ itinerary, onOpen }) {
 export default function ItineraryPage({ onNavigate, itineraries = MOCK_ITINERARIES }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+  const [saved, setSaved] = useState([]);
+  // Delete flow: the card awaiting confirmation, an in-flight flag, and a
+  // transient success/error message shown at the top of the list.
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [notice, setNotice] = useState(null);
   const isPhone = useMediaQuery(BREAKPOINTS.phone);
+
+  // Real itineraries this user has saved to Firebase. The mock list is kept
+  // below them as sample data so the page never looks empty in a demo.
+  useEffect(() => {
+    let active = true;
+    getMyItineraries()
+      .then((rows) => {
+        if (active) setSaved(rows.map(savedItineraryToCard));
+      })
+      .catch((err) => {
+        console.warn("Could not load saved itineraries:", err);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Auto-dismiss the success/error message so it doesn't linger.
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  async function handleConfirmDelete() {
+    const target = deleteTarget;
+    if (!target || deleting) return;
+
+    setDeleting(true);
+    try {
+      await deleteItinerary(target.id);
+      // Drop just this card from the list — no page refresh.
+      setSaved((prev) => prev.filter((card) => card.id !== target.id));
+      setNotice({ type: "success", text: "Itinerary deleted." });
+      setDeleteTarget(null);
+    } catch (err) {
+      console.error("Failed to delete itinerary:", err);
+      setNotice({
+        type: "error",
+        text:
+          err?.message ||
+          "Could not delete the itinerary. Please try again.",
+      });
+      setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const allItineraries = useMemo(
+    () => [...saved, ...itineraries],
+    [saved, itineraries]
+  );
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return itineraries.filter((it) => {
+    return allItineraries.filter((it) => {
       const matchesStatus = statusFilter === "All" || it.status === statusFilter;
       const matchesSearch =
         needle === "" ||
@@ -96,7 +208,7 @@ export default function ItineraryPage({ onNavigate, itineraries = MOCK_ITINERARI
         it.destinationName.toLowerCase().includes(needle);
       return matchesStatus && matchesSearch;
     });
-  }, [itineraries, search, statusFilter]);
+  }, [allItineraries, search, statusFilter]);
 
   return (
     <ItineraryShell onNavigate={onNavigate} activeRoute="/itinerary">
@@ -121,6 +233,20 @@ export default function ItineraryPage({ onNavigate, itineraries = MOCK_ITINERARI
           Create Itinerary
         </button>
       </div>
+
+      {notice && (
+        <div
+          role="status"
+          style={{
+            ...styles.notice,
+            ...(notice.type === "error"
+              ? styles.noticeError
+              : styles.noticeSuccess),
+          }}
+        >
+          {notice.text}
+        </div>
+      )}
 
       <div style={styles.searchBox}>
         <Search size={16} color="#9ca3af" />
@@ -171,8 +297,46 @@ export default function ItineraryPage({ onNavigate, itineraries = MOCK_ITINERARI
               key={it.id}
               itinerary={it}
               onOpen={(id) => onNavigate?.("/itinerary/details", id)}
+              onDelete={setDeleteTarget}
             />
           ))}
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div
+          style={styles.modalOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Delete itinerary"
+          onClick={() => {
+            if (!deleting) setDeleteTarget(null);
+          }}
+        >
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalTitle}>Delete itinerary</div>
+            <p style={styles.modalText}>
+              Are you sure you want to delete this itinerary?
+            </p>
+            <div style={styles.modalActions}>
+              <button
+                type="button"
+                style={styles.modalCancelBtn}
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={styles.modalDeleteBtn}
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </ItineraryShell>
@@ -255,6 +419,25 @@ const styles = {
   // A 300px minimum would overflow a 390px screen once the 16px page gutters
   // are taken off, so phones drop to an explicit single column.
   gridPhone: { gridTemplateColumns: "1fr", gap: 14, paddingBottom: 8 },
+  // Positioning context for the overlaid delete button. Stretches so cards in
+  // the same grid row stay equal height, matching the previous layout.
+  cardWrap: { position: "relative", display: "flex" },
+  deleteBtn: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    border: "1px solid #fecaca",
+    background: "rgba(255, 255, 255, 0.95)",
+    color: "#dc2626",
+    cursor: "pointer",
+    padding: 0,
+  },
   card: {
     background: "#fff",
     border: "1px solid #e5e7eb",
@@ -264,6 +447,7 @@ const styles = {
     textAlign: "left",
     cursor: "pointer",
     width: "100%",
+    flex: 1,
     // Column flex + `flex: 1` on the body keeps the stats strip pinned to the
     // bottom of every card, so a two-line title on one card doesn't knock its
     // numbers out of line with its neighbours.
@@ -327,5 +511,64 @@ const styles = {
     borderRadius: 16,
     padding: "48px 24px",
     textAlign: "center",
+  },
+  notice: {
+    borderRadius: 10,
+    padding: "11px 16px",
+    fontSize: 13.5,
+    fontWeight: 600,
+    marginBottom: 14,
+    border: "1px solid",
+  },
+  noticeSuccess: {
+    background: "#dcfce7",
+    color: "#15803d",
+    borderColor: "#bbf7d0",
+  },
+  noticeError: {
+    background: "#fee2e2",
+    color: "#b91c1c",
+    borderColor: "#fecaca",
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(17, 24, 39, 0.45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    zIndex: 50,
+  },
+  modal: {
+    background: "#fff",
+    borderRadius: 16,
+    padding: 24,
+    width: "100%",
+    maxWidth: 380,
+    boxShadow: "0 20px 50px rgba(0, 0, 0, 0.25)",
+  },
+  modalTitle: { fontSize: 17, fontWeight: 800, marginBottom: 8 },
+  modalText: { color: "#4b5563", fontSize: 14, margin: "0 0 20px" },
+  modalActions: { display: "flex", justifyContent: "flex-end", gap: 10 },
+  modalCancelBtn: {
+    background: "#fff",
+    color: "#374151",
+    border: "1px solid #d1d5db",
+    borderRadius: 10,
+    padding: "9px 16px",
+    fontSize: 13.5,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  modalDeleteBtn: {
+    background: "#dc2626",
+    color: "#fff",
+    border: "none",
+    borderRadius: 10,
+    padding: "9px 16px",
+    fontSize: 13.5,
+    fontWeight: 700,
+    cursor: "pointer",
   },
 };

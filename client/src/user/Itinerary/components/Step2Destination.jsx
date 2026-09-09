@@ -5,16 +5,19 @@ import useMediaQuery, { BREAKPOINTS } from "../hooks/useMediaQuery";
 import * as w from "./wizardStyles";
 
 /**
- * Step 2 — Select Destination
+ * Step 2 — Select Destinations
  *
- * A searchable grid of popular Malaysian destinations. Exactly one can be
- * picked, because steps 3 and 4 load their options from it.
+ * A searchable grid of popular Malaysian destinations. One or more can be
+ * picked; step 5 orders them into a route and steps 3–4 load their options
+ * from whichever destinations are chosen.
  *
  * Props: draft, onChange(patch), onNext, onBack
  */
 export default function Step2Destination({ draft, onChange, onNext, onBack }) {
   const [search, setSearch] = useState("");
   const isPhone = useMediaQuery(BREAKPOINTS.phone);
+
+  const selectedIds = draft.destinationIds ?? [];
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -26,16 +29,13 @@ export default function Step2Destination({ draft, onChange, onNext, onBack }) {
     );
   }, [search]);
 
-  // Changing destination clears the picks made under the old one — otherwise
-  // step 5 would summarise activities that don't exist at the new place.
-  const selectDestination = (destination) => {
-    if (destination.id === draft.destinationId) return;
-    onChange({
-      destinationId: destination.id,
-      destinationName: destination.name,
-      activityIds: [],
-      accommodationId: null,
-    });
+  // Toggle a destination in/out of the selection. The container reconciles any
+  // activity / accommodation picks that no longer have a matching destination.
+  const toggleDestination = (destination) => {
+    const next = selectedIds.includes(destination.id)
+      ? selectedIds.filter((id) => id !== destination.id)
+      : [...selectedIds, destination.id];
+    onChange({ destinationIds: next });
   };
 
   return (
@@ -43,8 +43,10 @@ export default function Step2Destination({ draft, onChange, onNext, onBack }) {
       <div style={w.stepHead}>
         <span style={w.stepBadge}>2</span>
         <div>
-          <h2 style={w.stepTitle}>Select Destination</h2>
-          <p style={w.stepSub}>Where would you like to go?</p>
+          <h2 style={w.stepTitle}>Select Destinations</h2>
+          <p style={w.stepSub}>
+            Pick every place you'd like to visit — we'll order them into a route
+          </p>
         </div>
       </div>
 
@@ -60,7 +62,10 @@ export default function Step2Destination({ draft, onChange, onNext, onBack }) {
           />
         </div>
 
-        <p style={w.sectionLabel}>Popular Destinations</p>
+        <p style={w.sectionLabel}>
+          Popular Destinations
+          {selectedIds.length > 0 ? ` · ${selectedIds.length} selected` : ""}
+        </p>
 
         {visible.length === 0 ? (
           <div style={w.emptyState}>
@@ -69,12 +74,12 @@ export default function Step2Destination({ draft, onChange, onNext, onBack }) {
         ) : (
           <div style={{ ...styles.grid, ...(isPhone ? styles.gridPhone : null) }}>
             {visible.map((d) => {
-              const isSelected = d.id === draft.destinationId;
+              const isSelected = selectedIds.includes(d.id);
               return (
                 <button
                   key={d.id}
                   type="button"
-                  onClick={() => selectDestination(d)}
+                  onClick={() => toggleDestination(d)}
                   aria-pressed={isSelected}
                   style={{
                     ...styles.destCard,
@@ -106,12 +111,12 @@ export default function Step2Destination({ draft, onChange, onNext, onBack }) {
         </button>
         <button
           type="button"
-          disabled={!draft.destinationId}
+          disabled={selectedIds.length === 0}
           onClick={onNext}
           style={{
             ...w.nextBtn,
             ...(isPhone ? w.btnPhone : null),
-            ...(draft.destinationId ? {} : w.nextBtnDisabled),
+            ...(selectedIds.length > 0 ? {} : w.nextBtnDisabled),
           }}
         >
           Next: Activities <ArrowRight size={16} />
