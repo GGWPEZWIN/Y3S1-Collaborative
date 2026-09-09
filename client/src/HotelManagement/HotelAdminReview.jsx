@@ -27,12 +27,63 @@ import {
   doc 
 } from "firebase/firestore";
 
+// Helper to compute real counts from applications AND subcollection audits over the last 6 months
+const getDynamicChartData = (apps, allAuditsMap) => {
+  const monthsMap = {};
+  const now = new Date();
+  
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthName = d.toLocaleString('en-US', { month: 'short' });
+    monthsMap[monthName] = { month: monthName, approved: 0, rejected: 0, flagged: 0, total: 0 };
+  }
+
+  // 1. Process main hotel applications
+  apps.forEach((app) => {
+    const dateObj = app.createdAt?.seconds ? new Date(app.createdAt.seconds * 1000) : new Date();
+    const monthName = dateObj.toLocaleString('en-US', { month: 'short' });
+
+    if (monthsMap[monthName]) {
+      if (app.status === "Approved") {
+        monthsMap[monthName].approved += 1;
+        monthsMap[monthName].total += 1;
+      } else if (app.status === "Rejected") {
+        monthsMap[monthName].rejected += 1;
+        monthsMap[monthName].total += 1;
+      } else if (app.status === "Flagged" || app.status === "Suspended") {
+        monthsMap[monthName].flagged += 1;
+        monthsMap[monthName].total += 1;
+      }
+    }
+  });
+
+  // 2. Process subcollection audit logs (spot-checks, renewals, upgrades)
+  Object.values(allAuditsMap).flat().forEach((audit) => {
+    const dateObj = audit.uploadedAt?.seconds ? new Date(audit.uploadedAt.seconds * 1000) : new Date();
+    const monthName = dateObj.toLocaleString('en-US', { month: 'short' });
+
+    if (monthsMap[monthName]) {
+      if (audit.status === "Passed") {
+        monthsMap[monthName].approved += 1;
+        monthsMap[monthName].total += 1;
+      } else if (audit.status === "Rejected") {
+        monthsMap[monthName].rejected += 1;
+        monthsMap[monthName].total += 1;
+      }
+    }
+  });
+
+  return Object.values(monthsMap);
+};
+
 export default function HotelAdminReview() {
   const [activeSubTab, setActiveSubTab] = useState("pending");
   const [applications, setApplications] = useState([]);
+  const [auditLogsMap, setAuditLogsMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [showAiDetails, setShowAiDetails] = useState({});
+  const [hoveredBar, setHoveredBar] = useState(null);
 
   // Sub-filters for tabs
   const [pendingFilter, setPendingFilter] = useState("All");
@@ -40,12 +91,24 @@ export default function HotelAdminReview() {
   const [spotCheckFilter, setSpotCheckFilter] = useState("All");
   const [certifiedTierFilter, setCertifiedTierFilter] = useState("All");
 
-  // Real-time listener: updates automatically when hotel uploads evidence
+  // Real-time listener: updates automatically when hotel uploads evidence or requests audits
   useEffect(() => {
     const colRef = collection(db, "hotel_applications");
-    const unsubscribe = onSnapshot(colRef, (snapshot) => {
+    const unsubscribe = onSnapshot(colRef, async (snapshot) => {
       const docsData = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
       setApplications(docsData);
+
+      // Fetch subcollection audits for each hotel to include spot-checks/renewals in chart
+      const auditsMap = {};
+      for (const d of snapshot.docs) {
+        try {
+          const auditsSnap = await getDocs(collection(db, "hotel_applications", d.id, "audits"));
+          auditsMap[d.id] = auditsSnap.docs.map(ad => ad.data());
+        } catch (e) {
+          auditsMap[d.id] = [];
+        }
+      }
+      setAuditLogsMap(auditsMap);
       setLoading(false);
     }, (err) => {
       console.error("Firestore listener error:", err);
@@ -54,6 +117,8 @@ export default function HotelAdminReview() {
 
     return () => unsubscribe();
   }, []);
+
+  const chartData = getDynamicChartData(applications, auditLogsMap);
 
   const toggleAiDetails = (id) => {
     setShowAiDetails((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -64,7 +129,7 @@ export default function HotelAdminReview() {
     return app.certificationTier || (app.status === "Approved" ? "Bronze" : null);
   };
 
-  // Open Base64 document preview cleanly using Blob URL (Prevents about:blank issues)
+  // Open Base64 document preview cleanly using Blob URL
   const openDocumentPreview = (dataUrl) => {
     if (!dataUrl) {
       alert("No document data found.");
@@ -117,7 +182,7 @@ export default function HotelAdminReview() {
     }
   };
 
-  // 3-Strikes Violation Logic (Tier preserved on Strikes 1 & 2; revoked only on Strike 3)
+  // 3-Strikes Violation Logic
   const handleRejectEvidenceWithStrike = async (hotel) => {
     const currentStrikes = (hotel.flagStrikesCount || 0) + 1;
     const isSuspended = currentStrikes >= 3;
@@ -125,7 +190,6 @@ export default function HotelAdminReview() {
     let updatePayload = {};
 
     if (isSuspended) {
-      // Strike 3/3 -> Tier wiped, 6-month suspension lockout
       const sixMonthsDate = new Date();
       sixMonthsDate.setMonth(sixMonthsDate.getMonth() + 6);
 
@@ -139,7 +203,6 @@ export default function HotelAdminReview() {
       };
       alert(`STRIKE 3/3: ${hotel.hotelName} is SUSPENDED for 6 months. Tier has been revoked.`);
     } else {
-      // Strike 1 or 2 -> TIER REMAINS ACTIVE, flagged warning created, hotel must resubmit
       updatePayload = {
         status: "Flagged",
         flagStrikesCount: currentStrikes,
@@ -155,7 +218,6 @@ export default function HotelAdminReview() {
     try {
       await updateHotelStatus(hotel.id, updatePayload);
 
-      // Mark the rejected attempt in the subcollection audits
       const auditsRef = collection(db, "hotel_applications", hotel.id, "audits");
       const pendingAudits = await getDocs(query(auditsRef, where("status", "==", "Submitted")));
       for (const auditDoc of pendingAudits.docs) {
@@ -197,7 +259,7 @@ export default function HotelAdminReview() {
     }
   };
 
-  // Spot-Check trigger: 7-day deadline & random bill requirement
+  // Spot-Check trigger
   const handleTriggerSpotCheck = async (hotel) => {
     const docOptions = [
       {
@@ -211,7 +273,6 @@ export default function HotelAdminReview() {
     ];
 
     const chosenDoc = docOptions[Math.floor(Math.random() * docOptions.length)];
-
     const now = new Date();
     const dueDate = new Date();
     dueDate.setDate(now.getDate() + 7);
@@ -280,7 +341,6 @@ export default function HotelAdminReview() {
     return true;
   });
 
-  // Count how many spot-checks have uploaded files waiting for Admin review
   const pendingReviewCount = applications.filter((a) => a.spotCheck?.status === "Submitted").length;
 
   const certifiedApps = applications.filter((a) => {
@@ -312,30 +372,100 @@ export default function HotelAdminReview() {
       {/* Header */}
       <div style={styles.titleSection}>
         <h1 style={styles.heading}>Admin Dashboard</h1>
-        <p style={styles.subheading}>Audit property benchmarks, investigate fraud, and conduct spot-checks</p>
+        <p style={styles.subheading}>Review applications, investigate flagged cases, and manage certifications</p>
       </div>
 
       {/* Top 4 Metrics */}
       <div style={styles.statsGrid}>
         <div style={styles.statCard}>
-          <div style={{ fontSize: 24 }}>🔆</div>
+          <div style={{ fontSize: 22 }}>🔆</div>
           <div style={styles.statNumber}>{applications.filter(a => a.status === "Pending Review" || !a.status).length}</div>
           <div style={styles.statLabel}>Pending Reviews</div>
         </div>
         <div style={styles.statCard}>
-          <div style={{ fontSize: 24 }}>🔺</div>
+          <div style={{ fontSize: 22 }}>🔺</div>
           <div style={styles.statNumber}>{applications.filter(a => a.status === "Flagged" || a.status === "Suspended").length}</div>
-          <div style={styles.statLabel}>Flagged / Suspended</div>
+          <div style={styles.statLabel}>Flagged Cases</div>
         </div>
         <div style={styles.statCard}>
-          <div style={{ fontSize: 24 }}>📋</div>
+          <div style={{ fontSize: 22 }}>📋</div>
           <div style={styles.statNumber}>{applications.filter(a => a.spotCheck?.status === "Pending" || a.spotCheck?.status === "Submitted").length}</div>
-          <div style={styles.statLabel}>Active Audits</div>
+          <div style={styles.statLabel}>Spot-Checks Active</div>
         </div>
         <div style={styles.statCard}>
-          <div style={{ fontSize: 24 }}>🏅</div>
+          <div style={{ fontSize: 22 }}>🏅</div>
           <div style={styles.statNumber}>{certifiedApps.length}</div>
-          <div style={styles.statLabel}>Certified Hotels</div>
+          <div style={styles.statLabel}>Total Certified</div>
+        </div>
+      </div>
+
+      {/* Monthly Review Activity Chart */}
+      <div style={styles.chartCard}>
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 800, color: "#111827", margin: 0 }}>Monthly Review Activity</h3>
+          <p style={{ fontSize: 12.5, color: "#6b7280", margin: "3px 0 0 0" }}>Approvals, rejections, and flagged cases over 6 months</p>
+        </div>
+
+        <div style={styles.chartArea}>
+          {/* Y-Axis Labels */}
+          <div style={styles.yAxis}>
+            <span>32</span>
+            <span>24</span>
+            <span>16</span>
+            <span>8</span>
+            <span>0</span>
+          </div>
+
+          {/* Chart Grid & Bars */}
+          <div style={styles.gridContainer}>
+            {/* Horizontal Grid Lines */}
+            <div style={styles.gridLine} />
+            <div style={styles.gridLine} />
+            <div style={styles.gridLine} />
+            <div style={styles.gridLine} />
+            <div style={styles.gridLine} />
+
+            <div style={styles.barsRow}>
+              {chartData.map((item, idx) => {
+                const isHovered = hoveredBar === idx;
+                const barHeightPercent = Math.min((item.total / 32) * 100, 100);
+
+                return (
+                  <div 
+                    key={item.month} 
+                    style={styles.barColumnWrapper}
+                    onMouseEnter={() => setHoveredBar(idx)}
+                    onMouseLeave={() => setHoveredBar(null)}
+                  >
+                    {/* Hover Column Background Highlight */}
+                    {isHovered && <div style={styles.barHighlightBg} />}
+
+                    {/* Interactive Tooltip Card */}
+                    {isHovered && (
+                      <div style={styles.tooltipCard}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#111827", marginBottom: 6 }}>{item.month}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#22c55e", marginBottom: 3 }}>Approved : {item.approved}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#ef4444", marginBottom: 3 }}>Rejected : {item.rejected}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#f59e0b" }}>Flagged : {item.flagged}</div>
+                      </div>
+                    )}
+
+                    {/* Bar Element */}
+                    <div style={styles.barTrack}>
+                      <div 
+                        style={{ 
+                          ...styles.barFill, 
+                          height: `${barHeightPercent}%`,
+                          backgroundColor: isHovered ? "#d97706" : "#f59e0b"
+                        }} 
+                      />
+                    </div>
+                    <span style={styles.xAxisLabel}>{item.month}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -601,7 +731,6 @@ export default function HotelAdminReview() {
                       Deadline: <strong>{sc?.deadline}</strong>
                     </div>
 
-                    {/* Evidence Viewer if submitted */}
                     {isSubmitted && sc?.submittedFileUrl && (
                       <div style={{ marginTop: 10 }}>
                         <button type="button" onClick={() => openDocumentPreview(sc.submittedFileUrl)} style={styles.previewBtn}>
@@ -651,7 +780,7 @@ export default function HotelAdminReview() {
                 </div>
                 <div style={{ ...styles.tierBlock, background: "#fef08a" }}>
                   <div style={{ ...styles.tierBlockNum, color: "#854d0e" }}>{tierCounts.Gold}</div>
-                  <div style={{ ...styles.tierBlockName, color: "#854d0e" }}>Gold</div>
+                  <div style={styles.tierBlockName}>Gold</div>
                 </div>
                 <div style={{ ...styles.tierBlock, background: "#e5e7eb" }}>
                   <div style={styles.tierBlockNum}>{tierCounts.Silver}</div>
@@ -709,19 +838,122 @@ const styles = {
     display: "grid",
     gridTemplateColumns: "repeat(4, 1fr)",
     gap: 16,
-    marginBottom: 22,
+    marginBottom: 20,
   },
   statCard: {
     backgroundColor: "#fff",
     border: "1px solid #e5e7eb",
     borderRadius: 14,
-    padding: "18px 20px",
+    padding: "16px 20px",
     display: "flex",
     flexDirection: "column",
-    gap: 6,
+    gap: 4,
   },
-  statNumber: { fontSize: 30, fontWeight: 800, color: "#111827", lineHeight: 1 },
-  statLabel: { fontSize: 12.5, color: "#6b7280", fontWeight: 600 },
+  statNumber: { fontSize: 28, fontWeight: 800, color: "#111827", lineHeight: 1 },
+  statLabel: { fontSize: 12, color: "#6b7280", fontWeight: 600 },
+  chartCard: {
+    backgroundColor: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 16,
+    padding: "24px 28px",
+    marginBottom: 24,
+  },
+  chartArea: {
+    display: "flex",
+    alignItems: "flex-end",
+    height: 180,
+    marginTop: 16,
+    position: "relative",
+  },
+  yAxis: {
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "space-between",
+    height: "100%",
+    fontSize: 11.5,
+    color: "#9ca3af",
+    paddingRight: 12,
+    paddingBottom: 20,
+    textAlign: "right",
+    width: 24,
+  },
+  gridContainer: {
+    flex: 1,
+    height: "100%",
+    position: "relative",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "space-between",
+    paddingBottom: 20,
+  },
+  gridLine: {
+    width: "100%",
+    borderBottom: "1px dashed #f3f4f6",
+  },
+  barsRow: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 20,
+    display: "flex",
+    justifyContent: "space-around",
+    alignItems: "flex-end",
+    padding: "0 16px",
+  },
+  barColumnWrapper: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    height: "100%",
+    justifyContent: "flex-end",
+    position: "relative",
+    width: 44,
+    cursor: "pointer",
+  },
+  barHighlightBg: {
+    position: "absolute",
+    top: -10,
+    bottom: -6,
+    width: 48,
+    backgroundColor: "#f3f4f6",
+    borderRadius: 8,
+    zIndex: 1,
+  },
+  tooltipCard: {
+    position: "absolute",
+    bottom: "105%",
+    left: "50%",
+    transform: "translateX(-50%)",
+    backgroundColor: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: "12px 16px",
+    boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.1)",
+    zIndex: 20,
+    minWidth: 120,
+    pointerEvents: "none",
+  },
+  barTrack: {
+    width: 28,
+    height: "100%",
+    display: "flex",
+    alignItems: "flex-end",
+    zIndex: 2,
+  },
+  barFill: {
+    width: "100%",
+    borderRadius: "4px 4px 0 0",
+    transition: "background-color 0.15s ease",
+  },
+  xAxisLabel: {
+    position: "absolute",
+    bottom: -22,
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#6b7280",
+    zIndex: 2,
+  },
   subtabTrack: {
     display: "inline-flex",
     backgroundColor: "#e5e7eb",
