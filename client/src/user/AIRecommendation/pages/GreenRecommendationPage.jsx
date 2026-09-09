@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 import Layout from "../../../shared/components/Layout";
+import {
+  cancelActiveTripSession,
+  startTripSession,
+} from "../../../firebase/tripSessionService";
 import { mockGreenRecommendation } from "../data/mockModule2Data";
+import useActiveTripSession, {
+  ACTIVE_TRIP_STATUS,
+} from "../hooks/useActiveTripSession";
 import useCurrentLocation from "../hooks/useCurrentLocation";
 import useLiveSelectedRoute from "../hooks/useLiveSelectedRoute";
 import useLiveTransportComparison from "../hooks/useLiveTransportComparison";
@@ -10,6 +17,7 @@ import { firstRouteableSegment } from "../services/itinerary/buildRouteSegments.
 import { ITINERARY_LOAD_STATUS } from "../services/itinerary/resolveItinerary.js";
 import CurrentLocationCard from "../components/CurrentLocationCard";
 import ItinerarySummary from "../components/ItinerarySummary";
+import TripActivationPanel from "../components/TripActivationPanel";
 import TransportationComparison from "../components/TransportationComparison";
 import RouteInformationPanel from "../components/RouteInformationPanel";
 import NavigationPreview from "../components/NavigationPreview";
@@ -161,21 +169,36 @@ export default function GreenRecommendationPage({
   const [paused, setPaused] = useState(false);
   const [activeItineraryId, setActiveItineraryId] = useState(itineraryId);
 
+  const [tripAction, setTripAction] = useState({
+    status: "idle",
+    error: null,
+  });
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+
   if (activeItineraryId !== itineraryId) {
     setActiveItineraryId(itineraryId);
     setView("recommendation");
     setSelectedMode(RECOMMENDED_MODE);
     setNavIndex(0);
     setPaused(false);
+    setTripAction({ status: "idle", error: null });
+    setConfirmingCancel(false);
   }
 
   const context = useResolvedItinerary({ itineraryId, itinerary });
   const requestedId =
     typeof itineraryId === "string" ? itineraryId.trim() : "";
+  const tripSession = useActiveTripSession(requestedId || null);
+  const isDemo = context.status === ITINERARY_LOAD_STATUS.DEMO;
+  const thisTripActive =
+    tripSession.status === ACTIVE_TRIP_STATUS.ACTIVE_CURRENT;
+  const otherTripActive =
+    tripSession.status === ACTIVE_TRIP_STATUS.ACTIVE_DIFFERENT;
   const contextKey =
     context.status === ITINERARY_LOAD_STATUS.LOADING
       ? `loading:${requestedId}`
       : context.itinerary?.itineraryId || requestedId || context.source;
+  const routingContextKey = `${contextKey}:${thisTripActive ? "active" : "inactive"}`;
   const firstLiveDestination = firstLiveDestinationFromSegments(
     context.segments
   );
@@ -197,10 +220,12 @@ export default function GreenRecommendationPage({
     location.longitude
   );
   const canRequestFirstSegment =
+    (isDemo || thisTripActive) &&
     (context.status === ITINERARY_LOAD_STATUS.SUCCESS ||
       context.status === ITINERARY_LOAD_STATUS.DEMO) &&
     Boolean(firstLiveDestination) &&
-    originHasCoords;
+    originHasCoords &&
+    !otherTripActive;
 
   const {
     status: directRouteStatus,
@@ -211,7 +236,7 @@ export default function GreenRecommendationPage({
     origin: location,
     destination: firstLiveDestination,
     travelMode: selectedTravelMode,
-    contextKey,
+    contextKey: routingContextKey,
   });
 
   const {
@@ -222,7 +247,7 @@ export default function GreenRecommendationPage({
   } = useLiveTransportComparison({
     origin: location,
     destination: firstLiveDestination,
-    contextKey,
+    contextKey: routingContextKey,
   });
 
   const navigationLive = useMemo(
@@ -252,27 +277,108 @@ export default function GreenRecommendationPage({
 
   const stops = mapStops(context.itinerary);
   const lastIndex = Math.max(stops.length - 1, 0);
-  const isDemo = context.status === ITINERARY_LOAD_STATUS.DEMO;
   const isReady =
     context.status === ITINERARY_LOAD_STATUS.SUCCESS || isDemo;
   const isLoadError = !isReady && context.status !== ITINERARY_LOAD_STATUS.LOADING;
   const mapStartLocation = mapStartForMap(context.itinerary) || location;
+  const visibleComparisonStatus = thisTripActive || isDemo
+    ? liveComparisonStatus
+    : "idle";
+  const visibleComparisonResults = thisTripActive || isDemo
+    ? liveComparisonResults
+    : null;
+  const visibleComparisonError = thisTripActive || isDemo
+    ? liveComparisonError
+    : null;
+  const hasSuccessfulSelectedRoute =
+    visibleComparisonResults?.[selectedTravelMode]?.status === "success";
+  const canOpenCompare = isDemo || thisTripActive;
+  const canOpenNavigation = isDemo
+    ? true
+    : thisTripActive && hasSuccessfulSelectedRoute;
+  const visibleNavigation = thisTripActive || isDemo
+    ? navigationLive
+    : {
+        status: "idle",
+        route: null,
+        errorCode: null,
+        sourceKind: null,
+      };
+
+  if (!isDemo && !canOpenCompare && view !== "recommendation") {
+    setView("recommendation");
+  } else if (
+    !isDemo &&
+    canOpenCompare &&
+    !canOpenNavigation &&
+    view === "navigation"
+  ) {
+    setView("compare");
+  }
 
   function showRecommendation() {
     setView("recommendation");
   }
 
   function showCompare() {
+    if (!canOpenCompare) return;
     setView("compare");
   }
 
   function showNavigation() {
+    if (!canOpenNavigation) return;
     setView("navigation");
   }
 
+  function requestView(next) {
+    if (next === "recommendation") showRecommendation();
+    else if (next === "compare") showCompare();
+    else if (next === "navigation") showNavigation();
+  }
+
   function handleNextDestination() {
-    if (paused || navIndex >= lastIndex) return;
+    if (!thisTripActive || paused || navIndex >= lastIndex) return;
     setNavIndex((index) => Math.min(index + 1, lastIndex));
+  }
+
+  async function handleStartTrip() {
+    if (isDemo || !requestedId) return;
+    setTripAction({ status: "starting", error: null });
+    try {
+      await startTripSession(requestedId);
+      setTripAction({ status: "idle", error: null });
+      setView("recommendation");
+      setConfirmingCancel(false);
+    } catch (error) {
+      setTripAction({
+        status: "idle",
+        error: error?.code || "UNAVAILABLE",
+      });
+    }
+  }
+
+  async function handleConfirmCancel() {
+    setTripAction({ status: "cancelling", error: null });
+    try {
+      await cancelActiveTripSession();
+      setConfirmingCancel(false);
+      setTripAction({ status: "idle", error: null });
+      setView("recommendation");
+      setSelectedMode(RECOMMENDED_MODE);
+      setNavIndex(0);
+      setPaused(false);
+    } catch (error) {
+      setTripAction({
+        status: "idle",
+        error: error?.code || "UNAVAILABLE",
+      });
+    }
+  }
+
+  function handleResumeActiveTrip() {
+    if (tripSession.lock?.itineraryId) {
+      onNavigate?.("/recommendations", tripSession.lock.itineraryId);
+    }
   }
 
   return (
@@ -324,20 +430,42 @@ export default function GreenRecommendationPage({
             </p>
 
             <div className="m2-tabs" role="tablist" aria-label="Module 2 views">
-              {TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                  id={`m2-tab-${tab.id}`}
-                  aria-selected={view === tab.id}
-                  aria-controls={`m2-panel-${tab.id}`}
-                  className="m2-tab"
-                  onClick={() => setView(tab.id)}
-                >
-                  {tab.label}
-                </button>
-              ))}
+              {TABS.map((tab) => {
+                const tabEnabled =
+                  tab.id === "recommendation" ||
+                  (tab.id === "compare" && canOpenCompare) ||
+                  (tab.id === "navigation" && canOpenNavigation);
+                const tabHint =
+                  tab.id === "recommendation" || tabEnabled
+                    ? null
+                    : otherTripActive
+                      ? "Another trip is currently active"
+                      : !isDemo && !thisTripActive
+                        ? "Start this trip first"
+                        : tab.id === "navigation"
+                          ? "Select a transport option first"
+                          : "Start this trip first";
+                return (
+                  <div key={tab.id} className="m2-tab-item">
+                    <button
+                      type="button"
+                      role="tab"
+                      id={`m2-tab-${tab.id}`}
+                      aria-selected={view === tab.id}
+                      aria-controls={`m2-panel-${tab.id}`}
+                      aria-disabled={!tabEnabled}
+                      className="m2-tab"
+                      disabled={!tabEnabled}
+                      onClick={() => requestView(tab.id)}
+                    >
+                      {tab.label}
+                    </button>
+                    {tabHint ? (
+                      <span className="m2-tab-hint">{tabHint}</span>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
 
             <div
@@ -347,6 +475,21 @@ export default function GreenRecommendationPage({
             >
               {view === "recommendation" ? (
                 <>
+                  <TripActivationPanel
+                    isDemo={isDemo}
+                    tripStatus={tripSession.status}
+                    lock={tripSession.lock}
+                    lockWarning={tripSession.warning}
+                    actionStatus={tripAction.status}
+                    actionError={tripAction.error}
+                    confirmingCancel={confirmingCancel}
+                    onStart={handleStartTrip}
+                    onResumeNavigation={showCompare}
+                    onResumeActiveTrip={handleResumeActiveTrip}
+                    onRequestCancel={() => setConfirmingCancel(true)}
+                    onConfirmCancel={handleConfirmCancel}
+                    onKeepTrip={() => setConfirmingCancel(false)}
+                  />
                   <CurrentLocationCard
                     location={location}
                     status={locationStatus}
@@ -361,6 +504,15 @@ export default function GreenRecommendationPage({
                     source={context.source}
                     issues={context.issues}
                     routeableSegmentCount={context.routeableSegmentCount}
+                    compareEnabled={canOpenCompare}
+                    previewEnabled={canOpenNavigation}
+                    flowBlockedReason={
+                      !isDemo && !thisTripActive
+                        ? "Start this trip first"
+                        : !isDemo && thisTripActive && !canOpenNavigation
+                          ? "Select a transport option first"
+                          : null
+                    }
                     onCompare={showCompare}
                     onPreview={showNavigation}
                   />
@@ -390,9 +542,16 @@ export default function GreenRecommendationPage({
                   liveDestinationName={
                     firstLiveDestination?.name || "First destination"
                   }
-                  liveComparisonStatus={liveComparisonStatus}
-                  liveComparisonError={liveComparisonError}
-                  liveComparisonResults={liveComparisonResults}
+                  liveComparisonStatus={visibleComparisonStatus}
+                  liveComparisonError={visibleComparisonError}
+                  liveComparisonResults={visibleComparisonResults}
+                  blockedMessage={
+                    otherTripActive
+                      ? "Live comparison is unavailable while another itinerary has an active trip."
+                      : !thisTripActive && !isDemo
+                        ? "Start this trip first"
+                        : null
+                  }
                   onLoadComparison={
                     canRequestFirstSegment
                       ? loadLiveTransportComparison
@@ -413,8 +572,12 @@ export default function GreenRecommendationPage({
                   destinations={mapDestinationsForMap(context.itinerary)}
                   currentIndex={navIndex}
                   paused={paused}
-                  onPause={() => setPaused(true)}
-                  onResume={() => setPaused(false)}
+                  onPause={() => {
+                    if (thisTripActive) setPaused(true);
+                  }}
+                  onResume={() => {
+                    if (thisTripActive) setPaused(false);
+                  }}
                   onNext={handleNextDestination}
                   onBack={showRecommendation}
                   liveOriginName={startLocationName}
@@ -422,15 +585,23 @@ export default function GreenRecommendationPage({
                     firstLiveDestination?.name || "First destination"
                   }
                   selectedTravelMode={selectedTravelMode}
-                  liveRouteStatus={navigationLive.status}
-                  liveRoute={navigationLive.route}
-                  liveRouteError={navigationLive.errorCode}
-                  liveRouteSource={navigationLive.sourceKind}
+                  liveRouteStatus={visibleNavigation.status}
+                  liveRoute={visibleNavigation.route}
+                  liveRouteError={visibleNavigation.errorCode}
+                  liveRouteSource={visibleNavigation.sourceKind}
                   markerSource={isDemo ? "demo" : "saved"}
+                  progressControlsEnabled={thisTripActive}
+                  progressDisabledReason={
+                    thisTripActive
+                      ? null
+                      : otherTripActive
+                        ? "Navigation controls stay on the active itinerary. Resume that trip or cancel it first."
+                        : "Start this trip to use pause, resume, and next-destination controls."
+                  }
                   onLoadLiveRoute={
                     !canRequestFirstSegment ||
-                    navigationLive.sourceKind === "comparison" ||
-                    liveComparisonStatus === "loading"
+                    visibleNavigation.sourceKind === "comparison" ||
+                    visibleComparisonStatus === "loading"
                       ? undefined
                       : loadSelectedLiveRoute
                   }

@@ -26,6 +26,9 @@ export default function ItinerarySummary({
   source = "demo",
   issues = [],
   routeableSegmentCount = 0,
+  compareEnabled = true,
+  previewEnabled = true,
+  flowBlockedReason = null,
   onCompare,
   onPreview,
 }) {
@@ -244,12 +247,17 @@ export default function ItinerarySummary({
               ? `Live transport comparison uses the first saved segment only (${itinerary.startLocation?.name || "start"} → ${destinations[0]?.name}). Remaining segments are listed but not requested yet.`
               : "This itinerary does not yet have a complete first segment with coordinates, so live routing is not requested automatically."}
         </p>
+        {flowBlockedReason ? (
+          <p className="m2-muted" style={{ marginTop: 12 }} role="note">
+            {flowBlockedReason}
+          </p>
+        ) : null}
         <div className="m2-actions">
           <button
             type="button"
             className="m2-btn"
             onClick={onCompare}
-            disabled={!canCompare && !isDemo}
+            disabled={!compareEnabled || (!canCompare && !isDemo)}
           >
             Compare Transport
           </button>
@@ -257,6 +265,7 @@ export default function ItinerarySummary({
             type="button"
             className="m2-btn m2-btn--secondary"
             onClick={onPreview}
+            disabled={!previewEnabled}
           >
             Preview Navigation
           </button>

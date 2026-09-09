@@ -63,6 +63,8 @@ export default function NavigationPreview({
   liveRouteSource = null,
   markerSource = "demo",
   onLoadLiveRoute,
+  progressControlsEnabled = false,
+  progressDisabledReason = null,
 }) {
   const lastIndex = stops.length - 1;
   const current = stops[currentIndex];
@@ -151,12 +153,17 @@ export default function NavigationPreview({
               : "Demo trip completed"}
           </p>
         ) : null}
+        {progressDisabledReason ? (
+          <p className="m2-muted" style={{ marginTop: 12 }} role="note">
+            {progressDisabledReason}
+          </p>
+        ) : null}
         <div className="m2-actions">
           <button
             type="button"
             className="m2-btn m2-btn--secondary"
             onClick={onPause}
-            disabled={paused || completed}
+            disabled={!progressControlsEnabled || paused || completed}
           >
             Pause Preview
           </button>
@@ -164,7 +171,7 @@ export default function NavigationPreview({
             type="button"
             className="m2-btn m2-btn--secondary"
             onClick={onResume}
-            disabled={!paused || completed}
+            disabled={!progressControlsEnabled || !paused || completed}
           >
             Resume Preview
           </button>
@@ -172,7 +179,7 @@ export default function NavigationPreview({
             type="button"
             className="m2-btn"
             onClick={onNext}
-            disabled={paused || completed}
+            disabled={!progressControlsEnabled || paused || completed}
           >
             Next Destination
           </button>

@@ -105,6 +105,7 @@ export default function TransportationComparison({
   liveComparisonError = null,
   liveComparisonResults = null,
   onLoadComparison,
+  blockedMessage = null,
 }) {
   const isLoading = liveComparisonStatus === "loading";
   const hasLoaded =
@@ -166,6 +167,11 @@ export default function TransportationComparison({
           liveComparisonError !== "INVALID_AUTH_TOKEN" ? (
             <p className="m2-status m2-status--error">
               Live transport options are temporarily unavailable.
+            </p>
+          ) : null}
+          {blockedMessage ? (
+            <p className="m2-status m2-status--error" role="status">
+              {blockedMessage}
             </p>
           ) : null}
         </div>

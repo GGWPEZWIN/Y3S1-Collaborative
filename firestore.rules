@@ -457,5 +457,200 @@ service cloud.firestore {
       allow delete: if request.auth != null
                     && resource.data.userId == request.auth.uid;
     }
+
+
+    // =========================================================
+    // TRIP SESSIONS  (Module 2)
+    // =========================================================
+    //
+    // tripSessions/{sessionId} is Module 2 activation history.
+    // Module 1 itineraries stay in the existing `itineraries` collection.
+    // Start and cancel must be atomic with activeTripLocks/{uid}.
+    // Clients may not mark a session completed or delete history.
+    //
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isNonEmptyString(value) {
+      return value is string && value.size() > 0;
+    }
+
+    function itineraryPath(itineraryId) {
+      return /databases/$(database)/documents/itineraries/$(itineraryId);
+    }
+
+    function tripSessionPath(sessionId) {
+      return /databases/$(database)/documents/tripSessions/$(sessionId);
+    }
+
+    function activeLockPath(uid) {
+      return /databases/$(database)/documents/activeTripLocks/$(uid);
+    }
+
+    function ownedCompleteItinerary(itineraryId) {
+      return isNonEmptyString(itineraryId)
+             && exists(itineraryPath(itineraryId))
+             && get(itineraryPath(itineraryId)).data.userId == request.auth.uid
+             && get(itineraryPath(itineraryId)).data.module1Complete == true;
+    }
+
+    function tripSessionCreateKeys() {
+      return [
+        "userId",
+        "itineraryId",
+        "itineraryTitle",
+        "status",
+        "currentSegmentIndex",
+        "totalSegments",
+        "startedAt",
+        "updatedAt",
+        "completedAt",
+        "cancelledAt",
+        "cancellationReason",
+        "version"
+      ];
+    }
+
+    function validTripSessionCreate(sessionId) {
+      let data = request.resource.data;
+      let lockPath = activeLockPath(request.auth.uid);
+
+      return isSignedIn()
+             && data.keys().hasAll(tripSessionCreateKeys())
+             && data.keys().hasOnly(tripSessionCreateKeys())
+             && data.userId is string
+             && data.userId == request.auth.uid
+             && isNonEmptyString(data.itineraryId)
+             && data.itineraryTitle is string
+             && data.status == "active"
+             && data.currentSegmentIndex is int
+             && data.currentSegmentIndex == 0
+             && data.totalSegments is int
+             && data.totalSegments > 0
+             && data.startedAt == request.time
+             && data.updatedAt == request.time
+             && data.completedAt == null
+             && data.cancelledAt == null
+             && data.cancellationReason == null
+             && data.version is int
+             && data.version == 1
+             && ownedCompleteItinerary(data.itineraryId)
+             && existsAfter(lockPath)
+             && getAfter(lockPath).data.userId == request.auth.uid
+             && getAfter(lockPath).data.sessionId == sessionId
+             && getAfter(lockPath).data.itineraryId == data.itineraryId
+             && getAfter(lockPath).data.status == "active";
+    }
+
+    function validTripSessionCancel() {
+      let before = resource.data;
+      let after = request.resource.data;
+      let lockPath = activeLockPath(request.auth.uid);
+
+      return isSignedIn()
+             && before.userId == request.auth.uid
+             && after.userId == before.userId
+             && after.itineraryId == before.itineraryId
+             && before.status == "active"
+             && after.status == "cancelled"
+             && after.completedAt == null
+             && after.cancelledAt == request.time
+             && after.updatedAt == request.time
+             && after.cancellationReason == "user_cancelled"
+             && after.diff(before).affectedKeys().hasOnly([
+                  "status",
+                  "cancelledAt",
+                  "updatedAt",
+                  "cancellationReason"
+                ])
+             && !existsAfter(lockPath);
+    }
+
+    function lockCreateKeys() {
+      return [
+        "userId",
+        "sessionId",
+        "itineraryId",
+        "itineraryTitle",
+        "status",
+        "startedAt",
+        "updatedAt"
+      ];
+    }
+
+    function validActiveLockCreate(lockUserId) {
+      let data = request.resource.data;
+
+      return isSignedIn()
+             && request.auth.uid == lockUserId
+             && data.keys().hasAll(lockCreateKeys())
+             && data.keys().hasOnly(lockCreateKeys())
+             && data.userId is string
+             && data.userId == request.auth.uid
+             && isNonEmptyString(data.sessionId)
+             && isNonEmptyString(data.itineraryId)
+             && data.itineraryTitle is string
+             && data.status == "active"
+             && data.startedAt == request.time
+             && data.updatedAt == request.time
+             && existsAfter(tripSessionPath(data.sessionId))
+             && getAfter(tripSessionPath(data.sessionId)).data.userId == request.auth.uid
+             && getAfter(tripSessionPath(data.sessionId)).data.itineraryId == data.itineraryId
+             && getAfter(tripSessionPath(data.sessionId)).data.status == "active";
+    }
+
+    function validCancelledLinkedSession(lockData) {
+      let sessionPath = tripSessionPath(lockData.sessionId);
+
+      return existsAfter(sessionPath)
+             && getAfter(sessionPath).data.userId == request.auth.uid
+             && getAfter(sessionPath).data.userId == lockData.userId
+             && getAfter(sessionPath).data.itineraryId == lockData.itineraryId
+             && getAfter(sessionPath).data.status == "cancelled"
+             && getAfter(sessionPath).data.completedAt == null
+             && getAfter(sessionPath).data.cancellationReason == "user_cancelled"
+             && getAfter(sessionPath).data.cancelledAt is timestamp;
+    }
+
+    match /tripSessions/{sessionId} {
+
+      allow get: if isSignedIn()
+                 && resource.data.userId == request.auth.uid;
+
+      allow list: if false;
+
+      allow create: if validTripSessionCreate(sessionId);
+
+      allow update: if validTripSessionCancel();
+
+      allow delete: if false;
+    }
+
+
+    // =========================================================
+    // ACTIVE TRIP LOCKS  (Module 2)
+    // =========================================================
+    //
+    // One document per user: activeTripLocks/{uid}.
+    // The document ID must equal the signed-in uid.
+    // Get is allowed for a missing own lock (no resource.data check).
+    //
+    match /activeTripLocks/{lockUserId} {
+
+      allow get: if isSignedIn()
+                 && request.auth.uid == lockUserId;
+
+      allow list: if false;
+
+      allow create: if validActiveLockCreate(lockUserId);
+
+      allow update: if false;
+
+      allow delete: if isSignedIn()
+                    && request.auth.uid == lockUserId
+                    && resource.data.userId == request.auth.uid
+                    && validCancelledLinkedSession(resource.data);
+    }
   }
 }
