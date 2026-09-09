@@ -67,6 +67,41 @@ const EMPTY_FORM = {
 };
 
 // ============================================================
+// CATEGORY-SPECIFIC UNLOCK RULES
+// ============================================================
+
+const CATEGORY_RULE_MAP = {
+  "Eco Travel": ["trips_completed", "eco_score"],
+  Transportation: ["eco_score", "carbon_saved"],
+  "Carbon Saving": ["carbon_saved"],
+  Community: ["challenges_completed"],
+  Challenges: ["challenges_completed"],
+  Milestones: ["trips_completed", "eco_score"],
+  Special: [
+    "trips_completed",
+    "eco_score",
+    "challenges_completed",
+    "carbon_saved",
+    "waste_reduced",
+  ],
+};
+
+const getRulesForCategory = (category) => {
+  const allowedRuleValues =
+    CATEGORY_RULE_MAP[category] ||
+    CATEGORY_RULE_MAP.Special;
+
+  return RULE_OPTIONS.filter((rule) =>
+    allowedRuleValues.includes(rule.value)
+  );
+};
+
+const getDefaultRuleForCategory = (category) => {
+  const rules = getRulesForCategory(category);
+  return rules[0] || RULE_OPTIONS[0];
+};
+
+// ============================================================
 // COMPONENT
 // ============================================================
 
@@ -96,6 +131,16 @@ export default function AdminAchievementsPage() {
   // ============================================================
 
   useEffect(() => {
+    /*
+     * IMPORTANT:
+     * This is a GLOBAL admin achievement catalogue.
+     *
+     * Every admin sees every achievement created by
+     * every admin. There is intentionally NO createdBy
+     * filter here.
+     *
+     * The createdBy field is only audit metadata.
+     */
     const unsubscribe =
       listenToAchievements((list) => {
         setAchievements(list);
@@ -113,24 +158,41 @@ export default function AdminAchievementsPage() {
   const handleChange = (event) => {
     const { name, value } = event.target;
 
-    setForm((previous) => ({
-      ...previous,
-      [name]: value,
-    }));
+    if (name === "category") {
+      const defaultRule =
+        getDefaultRuleForCategory(value);
 
-    // Automatically change unit based on rule
+      setForm((previous) => ({
+        ...previous,
+        category: value,
+        ruleType: defaultRule?.value || "trips_completed",
+        ruleUnit: defaultRule?.unit || "trips",
+      }));
+
+      return;
+    }
+
     if (name === "ruleType") {
-      const selectedRule = RULE_OPTIONS.find(
-        (rule) => rule.value === value
-      );
+      const selectedRule =
+        getRulesForCategory(form.category).find(
+          (rule) => rule.value === value
+        );
+
+      if (!selectedRule) return;
 
       setForm((previous) => ({
         ...previous,
         ruleType: value,
-        ruleUnit:
-          selectedRule?.unit || "",
+        ruleUnit: selectedRule.unit || "",
       }));
+
+      return;
     }
+
+    setForm((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
   };
 
   // ============================================================
@@ -198,35 +260,31 @@ export default function AdminAchievementsPage() {
   const handleEdit = (achievement) => {
     setEditingId(achievement.id);
 
+    const category =
+      achievement.category ||
+      "Eco Travel";
+
+    const categoryRules =
+      getRulesForCategory(category);
+
+    const existingRule =
+      categoryRules.find(
+        (rule) => rule.value === achievement.ruleType
+      ) || getDefaultRuleForCategory(category);
+
     setForm({
       title: achievement.title || "",
-
-      description:
-        achievement.description || "",
-
-      category:
-        achievement.category ||
-        "Eco Travel",
-
-      points:
-        achievement.points ?? 100,
-
-      ruleType:
-        achievement.ruleType ||
-        "trips_completed",
-
-      ruleTarget:
-        achievement.ruleTarget ?? 1,
-
+      description: achievement.description || "",
+      category,
+      points: achievement.points ?? 100,
+      ruleType: existingRule?.value || "trips_completed",
+      ruleTarget: achievement.ruleTarget ?? 1,
       ruleUnit:
-        achievement.ruleUnit || "trips",
-
-      icon:
-        achievement.icon ||
-        getRandomDefaultIcon(),
-
-      iconUrl:
-        achievement.iconUrl || "",
+        existingRule?.unit ||
+        achievement.ruleUnit ||
+        "trips",
+      icon: achievement.icon || getRandomDefaultIcon(),
+      iconUrl: achievement.iconUrl || "",
     });
 
     setSelectedFile(null);
@@ -285,6 +343,18 @@ export default function AdminAchievementsPage() {
       return;
     }
 
+    const selectedRule =
+      getRulesForCategory(form.category).find(
+        (rule) => rule.value === form.ruleType
+      );
+
+    if (!selectedRule) {
+      setMessage(
+        "Please select a valid unlock rule for this category."
+      );
+      return;
+    }
+
     try {
       setSaving(true);
       setMessage("");
@@ -324,6 +394,10 @@ export default function AdminAchievementsPage() {
       } else {
         await createAchievement({
           ...data,
+          /*
+           * createdBy is audit metadata only.
+           * It does NOT restrict visibility to this admin.
+           */
           createdBy:
             authUser?.uid || null,
         });
@@ -782,6 +856,10 @@ export default function AdminAchievementsPage() {
                     )
                   )}
                 </select>
+
+                <span style={styles.fieldHint}>
+                  Unlock rules are filtered based on the selected category.
+                </span>
               </label>
 
               {/* RULE */}
@@ -793,6 +871,10 @@ export default function AdminAchievementsPage() {
                   }
                 >
                   Unlock Rule
+                </div>
+
+                <div style={styles.ruleHint}>
+                  Available rules for <strong>{form.category}</strong>.
                 </div>
 
                 <div
@@ -817,15 +899,13 @@ export default function AdminAchievementsPage() {
                         styles.input
                       }
                     >
-                      {RULE_OPTIONS.map(
+                      {getRulesForCategory(
+                        form.category
+                      ).map(
                         (rule) => (
                           <option
-                            key={
-                              rule.value
-                            }
-                            value={
-                              rule.value
-                            }
+                            key={rule.value}
+                            value={rule.value}
                           >
                             {rule.label}
                           </option>
@@ -865,12 +945,13 @@ export default function AdminAchievementsPage() {
                       value={
                         form.ruleUnit
                       }
-                      onChange={
-                        handleChange
-                      }
-                      style={
-                        styles.input
-                      }
+                      readOnly
+                      style={{
+                        ...styles.input,
+                        background: "#f3f4f6",
+                        color: "#6b7280",
+                        cursor: "not-allowed",
+                      }}
                     />
                   </label>
                 </div>
@@ -1508,6 +1589,13 @@ const styles = {
     fontFamily: "inherit",
   },
 
+  fieldHint: {
+    color: "#9ca3af",
+    fontSize: 10.5,
+    fontWeight: 500,
+    lineHeight: 1.4,
+  },
+
   ruleSection: {
     padding: 14,
     borderRadius: 12,
@@ -1519,6 +1607,12 @@ const styles = {
     fontSize: 13,
     fontWeight: 800,
     color: "#111827",
+    marginBottom: 4,
+  },
+
+  ruleHint: {
+    color: "#9ca3af",
+    fontSize: 10.5,
     marginBottom: 10,
   },
 

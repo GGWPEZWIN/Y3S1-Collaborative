@@ -17,14 +17,19 @@ import ChatRoom from "./user/EcoJourney/chat/ChatRoom";
 import GroupInfo from "./user/EcoJourney/chat/GroupInfo";
 
 import ChallengeTeam from "./user/EcoJourney/pages/ChallengeTeam";
-
 import ChallengesPage from "./user/Challenges/pages/ChallengesPage";
 import ChallengeDetails from "./user/Challenges/pages/ChallengeDetails";
 import ChallengeLeaderboard from "./user/Challenges/pages/ChallengeLeaderboard";
 
 import Waste from "./user/Waste&Resources/pages/WastePage";
 
+// Hotel Management / Green Certification Module
+import HotelDashBoard from "./HotelManagement/HotelDashBoard";
+import CertificationApply from "./HotelManagement/CertificationApply";
+import HotelPartnerDashboard from "./HotelManagement/HotelPartnerDashboard";
+import HotelProfile from "./HotelManagement/HotelProfile";
 
+// Admin module
 import EcoReportCard from "./user/EcoJourney/pages/EcoReportCard";
 import AchievementsPage from "./user/EcoJourney/pages/AchievementsPage";
 
@@ -37,39 +42,30 @@ import ItineraryDetails from "./user/Itinerary/pages/ItineraryDetails";
 import AdminDashboard from "./admin/AdminDashboard";
 import RequireAdmin from "./admin/RequireAdmin";
 
-// Routes accessible without login
+/* Routes reachable without a signed-in user. */
 const PUBLIC_ROUTES = [
   "/login",
   "/register",
+  "/admin-login",
+  "/hotel-dashboard",
+  "/certification",
+  "/certification/apply",
+  "/hotel/partner-dashboard",
+  "/hotel/profile",
 ];
 
-
-// ============================================================
-// READ HASH ROUTE
-// ============================================================
-
 function parseHash() {
-  const raw =
-    window.location.hash.slice(1) ||
-    "/login";
+  const raw = window.location.hash.slice(1) || "/login";
+  const normalized = raw.startsWith("/") ? raw : `/${raw}`;
 
-  const [path, queryString] =
-    raw.split("?");
-
-  const id = queryString
-    ? new URLSearchParams(queryString).get("id")
-    : null;
+  const [path, queryString = ""] = normalized.split("?");
+  const params = new URLSearchParams(queryString);
 
   return {
     path: path || "/login",
-    id,
+    id: params.get("id") || null,
   };
 }
-
-
-// ============================================================
-// COMING SOON
-// ============================================================
 
 function ComingSoon({
   label,
@@ -77,366 +73,158 @@ function ComingSoon({
   backTo = "/dashboard",
 }) {
   return (
-    <div
-      style={{
-        padding: 48,
-        textAlign: "center",
-      }}
-    >
-      <h2>
-        {label} is coming soon
-      </h2>
-
-      <button
-        onClick={() =>
-          onNavigate(backTo)
-        }
-      >
+    <div style={{ padding: 48, textAlign: "center" }}>
+      <h2>{label} is coming soon</h2>
+      <button type="button" onClick={() => onNavigate(backTo)}>
         Back
       </button>
     </div>
   );
 }
 
-
-// ============================================================
-// APP
-// ============================================================
-
 export default function App() {
-  const [location, setLocation] =
-    useState(parseHash);
+  const [location, setLocation] = useState(parseHash);
+  const { status } = useAuthUser();
 
-  const { status } =
-    useAuthUser();
-
-  const {
-    path: route,
-    id: selectedId,
-  } = location;
-
-
-  // ==========================================================
-  // LISTEN TO HASH CHANGES
-  // ==========================================================
+  const { path: route, id: selectedId } = location;
 
   useEffect(() => {
     const onHashChange = () => {
       setLocation(parseHash());
     };
 
-    window.addEventListener(
-      "hashchange",
-      onHashChange
-    );
-
+    window.addEventListener("hashchange", onHashChange);
     return () => {
-      window.removeEventListener(
-        "hashchange",
-        onHashChange
-      );
+      window.removeEventListener("hashchange", onHashChange);
     };
   }, []);
 
+  const navigate = useCallback((path, id) => {
+    const cleanPath = String(path || "/login").split("?")[0];
+    const next =
+      id !== undefined && id !== null && id !== ""
+        ? `${cleanPath}?id=${encodeURIComponent(id)}`
+        : cleanPath;
 
-  // ==========================================================
-  // NAVIGATION
-  // ==========================================================
-
-  const navigate = useCallback(
-    (path, id) => {
-      const next =
-        id !== undefined &&
-        id !== null
-          ? `${path}?id=${encodeURIComponent(id)}`
-          : path;
-
+    const nextHash = `#${next}`;
+    if (window.location.hash !== nextHash) {
       window.location.hash = next;
-
-      setLocation(parseHash());
-    },
-    []
-  );
-
-
-  // ==========================================================
-  // WAIT FOR FIREBASE AUTH
-  // ==========================================================
+    }
+    setLocation(parseHash());
+  }, []);
 
   if (status === "loading") {
-    return (
-      <div
-        style={{
-          padding: 48,
-          textAlign: "center",
-        }}
-      >
-        Loading…
-      </div>
-    );
+    return <div style={{ padding: 48, textAlign: "center" }}>Loading…</div>;
   }
 
-
-  // ==========================================================
-  // SIGNED OUT
-  // ==========================================================
-
-  if (
-    status === "signedOut" &&
-    !PUBLIC_ROUTES.includes(route)
-  ) {
-    return (
-      <Login
-        onNavigate={navigate}
-      />
-    );
+  if (status === "signedOut" && !PUBLIC_ROUTES.includes(route)) {
+    return <Login onNavigate={navigate} />;
   }
-
-
-  // ==========================================================
-  // ROUTES
-  // ==========================================================
 
   switch (route) {
-
-    // --------------------------------------------------------
-    // AUTH
-    // --------------------------------------------------------
-
     case "/login":
-      return (
-        <Login
-          onNavigate={navigate}
-        />
-      );
+      return <Login onNavigate={navigate} />;
 
     case "/register":
-      return (
-        <Register
-          onNavigate={navigate}
-        />
-      );
+      return <Register onNavigate={navigate} />;
 
     case "/profile":
-      return (
-        <Profile
-          onNavigate={navigate}
-        />
-      );
+      return <Profile onNavigate={navigate} />;
 
+    case "/hotel/profile":
+      return <HotelProfile onNavigate={navigate} />;
 
-    // --------------------------------------------------------
-    // ADMIN
-    // --------------------------------------------------------
+    case "/admin-login":
+      return <Login onNavigate={navigate} />;
 
     case "/admin":
       return (
-        <RequireAdmin
-          onNavigate={navigate}
-        >
-          <AdminDashboard
-            onNavigate={navigate}
-          />
+        <RequireAdmin onNavigate={navigate}>
+          <AdminDashboard onNavigate={navigate} />
         </RequireAdmin>
       );
 
+    case "/hotel-dashboard":
+    case "/certification":
+      return <HotelDashBoard onNavigate={navigate} />;
 
-    // --------------------------------------------------------
-    // DASHBOARD
-    // --------------------------------------------------------
+    case "/certification/apply":
+      return <CertificationApply onNavigate={navigate} />;
+
+    case "/hotel/partner-dashboard":
+      return <HotelPartnerDashboard onNavigate={navigate} />;
 
     case "/dashboard":
-      return (
-        <MainDashboard
-          onNavigate={navigate}
-        />
-      );
+      return <MainDashboard onNavigate={navigate} />;
 
-
-    // =========================
-// COMMUNITY
-// =========================
-
-case "/community":
-  return (
-    <CommunityPage
-      onNavigate={navigate}
-    />
-  );
-
-case "/community/history":
-  return (
-    <TravelHistory
-      onNavigate={navigate}
-      onBack={() => navigate("/community")}
-    />
-  );
-
-case "/community/progress":
-  return (
-    <ProgressTracker
-      onNavigate={navigate}
-      onBack={() => navigate("/community")}
-    />
-  );
-
-case "/community/achievements":
-  return (
-    <AchievementsPage
-      onNavigate={navigate}
-    />
-  );
-
-case "/community/friends":
-  return (
-    <Friends
-      onNavigate={navigate}
-    />
-  );
-
-case "/community/chat":
-  return (
-    <ChatList
-      onNavigate={navigate}
-    />
-  );
-
-case "/community/chat/room":
-  return (
-    <ChatRoom
-      chatId={selectedId}
-      onNavigate={navigate}
-    />
-  );
-
-case "/community/chat/info":
-  return (
-    <GroupInfo
-      chatId={selectedId}
-      onNavigate={navigate}
-    />
-  );
-
-case "/community/report":
-  return (
-    <EcoReportCard
-      onNavigate={navigate}
-      tripId={selectedId}
-    />
-  );
-
-case "/community/challenges":
-  return (
-    <ChallengeTeam
-      onNavigate={navigate}
-    />
-  );
-
-    // --------------------------------------------------------
-    // TRAVEL HISTORY
-    // --------------------------------------------------------
+    case "/community":
+      return <CommunityPage onNavigate={navigate} />;
 
     case "/community/history":
       return (
         <TravelHistory
           onNavigate={navigate}
-          onBack={() =>
-            navigate("/community")
-          }
+          onBack={() => navigate("/community")}
         />
       );
-
-
-    // --------------------------------------------------------
-    // ECO REPORT CARD
-    // --------------------------------------------------------
-
-    case "/community/report":
-      return (
-        <EcoReportCard
-          onNavigate={navigate}
-          tripId={selectedId}
-        />
-      );
-
-
-    // --------------------------------------------------------
-    // PROGRESS
-    // --------------------------------------------------------
 
     case "/community/progress":
       return (
         <ProgressTracker
           onNavigate={navigate}
-          onBack={() =>
-            navigate("/community")
-          }
+          onBack={() => navigate("/community")}
         />
       );
 
-
-    // --------------------------------------------------------
-    // FRIENDS
-    // --------------------------------------------------------
+    case "/community/achievements":
+      return <AchievementsPage onNavigate={navigate} />;
 
     case "/community/friends":
-      return (
-        <Friends
-          onNavigate={navigate}
-        />
-      );
-
-
-    // --------------------------------------------------------
-    // CHAT
-    // --------------------------------------------------------
+      return <Friends onNavigate={navigate} />;
 
     case "/community/chat":
-      return (
-        <ChatList
-          onNavigate={navigate}
-        />
-      );
+      return <ChatList onNavigate={navigate} />;
 
     case "/community/chat/room":
-      return (
-        <ChatRoom
-          chatId={selectedId}
-          onNavigate={navigate}
-        />
-      );
+      if (!selectedId) {
+        return (
+          <ComingSoon
+            label="Chat"
+            onNavigate={navigate}
+            backTo="/community/chat"
+          />
+        );
+      }
+      return <ChatRoom chatId={selectedId} onNavigate={navigate} />;
 
     case "/community/chat/info":
+      if (!selectedId) {
+        return (
+          <ComingSoon
+            label="Group Info"
+            onNavigate={navigate}
+            backTo="/community/chat"
+          />
+        );
+      }
+      return <GroupInfo chatId={selectedId} onNavigate={navigate} />;
+
+    case "/community/reports":
       return (
-        <GroupInfo
-          chatId={selectedId}
+        <EcoReportCard
           onNavigate={navigate}
+          onBack={() => navigate("/community")}
         />
       );
 
-
-    // --------------------------------------------------------
-    // COMMUNITY CHALLENGES
-    // --------------------------------------------------------
+    case "/community/report":
+      return <EcoReportCard onNavigate={navigate} tripId={selectedId} />;
 
     case "/community/challenges":
-      return (
-        <ChallengeTeam
-          onNavigate={navigate}
-        />
-      );
-
-
-    // --------------------------------------------------------
-    // CHALLENGES
-    // --------------------------------------------------------
+      return <ChallengeTeam onNavigate={navigate} />;
 
     case "/challenges":
-      return (
-        <ChallengesPage
-          onNavigate={navigate}
-        />
-      );
+      return <ChallengesPage onNavigate={navigate} />;
 
     case "/challenges/details":
       return (
@@ -447,30 +235,13 @@ case "/community/challenges":
       );
 
     case "/challenges/leaderboard":
-      return (
-        <ChallengeLeaderboard
-          onNavigate={navigate}
-        />
-      );
-
-
-    // --------------------------------------------------------
-    // OTHER
-    // --------------------------------------------------------
+      return <ChallengeLeaderboard onNavigate={navigate} />;
 
     case "/itinerary":
-      return (
-        <ItineraryPage
-          onNavigate={navigate}
-        />
-      );
+      return <ItineraryPage onNavigate={navigate} />;
 
     case "/itinerary/create":
-      return (
-        <CreateItinerary
-          onNavigate={navigate}
-        />
-      );
+      return <CreateItinerary onNavigate={navigate} />;
 
     case "/itinerary/edit":
       return (
@@ -496,31 +267,10 @@ case "/community/challenges":
         />
       );
 
-    case "/certification":
-      return (
-        <ComingSoon
-          label="Certification"
-          onNavigate={navigate}
-        />
-      );
-
     case "/waste":
-      return (
-        <Waste
-          onNavigate={navigate}
-        />
-      );
-
-
-    // --------------------------------------------------------
-    // DEFAULT
-    // --------------------------------------------------------
+      return <Waste onNavigate={navigate} />;
 
     default:
-      return (
-        <Login
-          onNavigate={navigate}
-        />
-      );
+      return <Login onNavigate={navigate} />;
   }
 }
