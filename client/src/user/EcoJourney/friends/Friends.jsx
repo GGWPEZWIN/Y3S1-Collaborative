@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Search, UserPlus, Check, X, MessageCircle, Trash2, Users, MoreVertical } from "lucide-react";
+import { ArrowLeft, Search, UserPlus, Check, X, MessageCircle, Trash2, Users, MoreVertical } from "lucide-react";
 import Layout from "../../../shared/components/Layout";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
 import {
@@ -191,6 +191,15 @@ export default function Friends({ onNavigate }) {
           </div>
         )}
 
+        <button
+          type="button"
+          onClick={() => onNavigate("/community")}
+          style={styles.backButton}
+        >
+          <ArrowLeft size={17} />
+          <span>Back to Community</span>
+        </button>
+
         <h1 style={styles.title}>Friends</h1>
         <p style={styles.subtitle}>Find travelers and grow your eco-community</p>
 
@@ -218,9 +227,10 @@ export default function Friends({ onNavigate }) {
           {searchResults.map((result) => (
             <div key={result.uid} style={styles.resultRow}>
               <div style={styles.resultInfo}>
-                <div style={styles.avatarFallback}>
-                  {(result.name || "?").charAt(0).toUpperCase()}
-                </div>
+                <ProfileAvatar
+                  src={result.profile_photo_url}
+                  name={result.name}
+                />
                 <div>
                   <div style={styles.resultName}>{result.name || "Unnamed traveler"}</div>
                   <div style={styles.resultEmail}>{result.email}</div>
@@ -246,9 +256,10 @@ export default function Friends({ onNavigate }) {
             {incoming.map((request) => (
               <div key={request.id} style={styles.requestRow}>
                 <div style={styles.resultInfo}>
-                  <div style={styles.avatarFallback}>
-                    {(request.fromName || "?").charAt(0).toUpperCase()}
-                  </div>
+                  <ProfileAvatar
+                    src={request.fromProfilePhotoUrl}
+                    name={request.fromName}
+                  />
                   <div>
                     <div style={styles.resultName}>{request.fromName || "Unnamed traveler"}</div>
                     <div style={styles.resultEmail}>{request.fromEmail}</div>
@@ -284,9 +295,10 @@ export default function Friends({ onNavigate }) {
             {outgoing.map((request) => (
               <div key={request.id} style={styles.requestRow}>
                 <div style={styles.resultInfo}>
-                  <div style={styles.avatarFallback}>
-                    {(request.toName || "?").charAt(0).toUpperCase()}
-                  </div>
+                  <ProfileAvatar
+                    src={request.toProfilePhotoUrl}
+                    name={request.toName}
+                  />
                   <div>
                     <div style={styles.resultName}>{request.toName || request.toEmail}</div>
                     <div style={styles.resultEmail}>Pending...</div>
@@ -308,8 +320,8 @@ export default function Friends({ onNavigate }) {
         {/* Friends list */}
         <div style={styles.card}>
           <h2 style={styles.cardTitle}>
-            <Users size={18} style={{ marginRight: 6, verticalAlign: -3 }} />
-            My Friends ({friends.length})
+            <Users size={18} />
+            <span>My Friends ({friends.length})</span>
           </h2>
           {friends.length === 0 ? (
             <p style={styles.emptyText}>No friends yet — search for someone above to get started.</p>
@@ -317,9 +329,10 @@ export default function Friends({ onNavigate }) {
             friends.map((friend) => (
               <div key={friend.uid} style={styles.requestRow}>
                 <div style={styles.resultInfo}>
-                  <div style={styles.avatarFallback}>
-                    {(friend.name || "?").charAt(0).toUpperCase()}
-                  </div>
+                  <ProfileAvatar
+                    src={friend.profile_photo_url}
+                    name={friend.name}
+                  />
                   <div>
                     <div style={styles.resultName}>{friend.name || "Unnamed traveler"}</div>
                     <div style={styles.resultEmail}>{friend.email}</div>
@@ -371,6 +384,31 @@ export default function Friends({ onNavigate }) {
   );
 }
 
+function ProfileAvatar({ src, name }) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  const initial =
+    (name || "?").charAt(0).toUpperCase();
+
+  if (src && !imageFailed) {
+    return (
+      <img
+        src={src}
+        alt={`${name || "Friend"} profile`}
+        onError={() => setImageFailed(true)}
+        style={styles.avatarImage}
+      />
+    );
+  }
+
+  return (
+    <div style={styles.avatarFallback}>
+      {initial}
+    </div>
+  );
+}
+
+
 const styles = {
   loadingPage: {
     minHeight: "100vh",
@@ -403,6 +441,19 @@ const styles = {
     fontWeight: 600,
     marginBottom: 20,
   },
+  backButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 7,
+    border: "none",
+    background: "transparent",
+    color: "#64748b",
+    padding: 0,
+    marginBottom: 14,
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
   title: { fontSize: 28, fontWeight: 800, color: "#111827", margin: 0 },
   subtitle: { color: "#6b7280", marginTop: 6, marginBottom: 24, fontSize: 14.5 },
   card: {
@@ -412,7 +463,15 @@ const styles = {
     padding: 24,
     marginBottom: 20,
   },
-  cardTitle: { fontSize: 16, fontWeight: 700, color: "#111827", margin: "0 0 16px" },
+  cardTitle: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    fontSize: 16,
+    fontWeight: 700,
+    color: "#111827",
+    margin: "0 0 16px",
+  },
   searchRow: { display: "flex", gap: 10 },
   searchInputWrap: {
     flex: 1,
@@ -465,6 +524,16 @@ const styles = {
     fontSize: 15,
     fontWeight: 700,
     flexShrink: 0,
+    overflow: "hidden",
+  },
+  avatarImage: {
+    width: 40,
+    height: 40,
+    borderRadius: "50%",
+    objectFit: "cover",
+    display: "block",
+    flexShrink: 0,
+    background: "#dcfce7",
   },
   resultName: { fontSize: 14.5, fontWeight: 700, color: "#111827" },
   resultEmail: { fontSize: 12.5, color: "#9ca3af", marginTop: 2 },

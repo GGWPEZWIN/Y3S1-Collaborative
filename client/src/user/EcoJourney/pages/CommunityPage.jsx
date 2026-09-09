@@ -21,25 +21,40 @@ import {
   Line,
   XAxis,
   ResponsiveContainer,
+  Tooltip,
 } from "recharts";
 
 import Layout from "../../../shared/components/Layout";
 import StatCard from "../../../shared/components/StatCard";
-import AchievementCard from "../../../shared/components/AchievementCard";
+
+// IMPORTANT:
+// Actual filename is achievementCard.jsx
+import AchievementCard from "../../../shared/components/achievementCard";
 
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
+
 import {
   listenToUserChats,
 } from "../../../firebase/chatService";
 
-const TREND = [
-  { name: "T1", score: 78 },
-  { name: "T2", score: 92 },
-  { name: "T3", score: 90 },
-  { name: "T4", score: 82 },
-];
+import {
+  listenToPublishedAchievements,
+} from "../../../firebase/achievementService";
+
+import {
+  collection,
+  onSnapshot,
+  query,
+  orderBy,
+} from "firebase/firestore";
+
+import { db } from "../../../firebase/config";
+
+
+
 
 const FEATURE_CARDS = [
+
   {
     icon: Calendar,
     iconColor: "#7c3aed",
@@ -48,6 +63,7 @@ const FEATURE_CARDS = [
     cta: "View History",
     variant: "outline",
   },
+
   {
     icon: Users,
     iconColor: "#3b82f6",
@@ -56,6 +72,7 @@ const FEATURE_CARDS = [
     cta: "Manage Friends",
     variant: "outline",
   },
+
   {
     icon: MessageCircle,
     iconColor: "#22c55e",
@@ -64,6 +81,7 @@ const FEATURE_CARDS = [
     cta: "Open Chat",
     variant: "outline",
   },
+
   {
     icon: BarChart2,
     iconColor: "#16a34a",
@@ -72,14 +90,16 @@ const FEATURE_CARDS = [
     cta: "View Progress",
     variant: "outline",
   },
+
   {
     icon: FileText,
     iconColor: "#0d9488",
     title: "Eco-Report Card",
-    desc: "Download & share trip sustainability reports",
-    cta: "View Report",
+    desc: "View, download and share your trip sustainability reports",
+    cta: "View Reports",
     variant: "outline",
   },
+
   {
     icon: Medal,
     iconColor: "#f43f5e",
@@ -88,7 +108,9 @@ const FEATURE_CARDS = [
     cta: "View More",
     variant: "filled",
   },
+
 ];
+
 
 function FeatureCard({
   icon: Icon,
@@ -102,13 +124,16 @@ function FeatureCard({
 }) {
   return (
     <div style={styles.featureCard}>
+
       <div style={styles.featureHeader}>
+
         <Icon
           size={18}
           color={iconColor}
         />
 
         <div style={styles.featureTitleRow}>
+
           <span style={styles.featureTitle}>
             {title}
           </span>
@@ -119,12 +144,16 @@ function FeatureCard({
                 style={styles.unreadDot}
               />
             )}
+
         </div>
+
       </div>
+
 
       <p style={styles.featureDesc}>
         {desc}
       </p>
+
 
       <button
         style={
@@ -136,6 +165,82 @@ function FeatureCard({
       >
         {cta}
       </button>
+
+    </div>
+  );
+}
+
+
+
+function formatTripDate(trip) {
+  if (trip?.dateRange) return trip.dateRange;
+
+  const formatDate = (value) => {
+    if (!value) return null;
+
+    if (value?.toDate) {
+      return value.toDate().toLocaleDateString("en-MY", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+    }
+
+    if (value instanceof Date) {
+      return value.toLocaleDateString("en-MY", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+    }
+
+    if (typeof value === "string") {
+      const parsed = new Date(value);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed.toLocaleDateString("en-MY", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        });
+      }
+    }
+
+    return null;
+  };
+
+  const start = formatDate(trip?.startDate);
+  const end = formatDate(trip?.endDate);
+
+  if (start && end && start !== end) {
+    return `${start} - ${end}`;
+  }
+
+  return start || end || "Date unavailable";
+}
+
+function SnapshotTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+
+  const point = payload[0]?.payload;
+  if (!point) return null;
+
+  return (
+    <div style={styles.chartTooltip}>
+      <div style={styles.tooltipTrip}>
+        Trip {point.tripNumber}
+      </div>
+
+      <div style={styles.tooltipTitle}>
+        {point.name || point.title || "Untitled Trip"}
+      </div>
+
+      <div style={styles.tooltipDate}>
+        {formatTripDate(point)}
+      </div>
+
+      <div style={styles.tooltipScore}>
+        Eco Score: <strong>{point.score}</strong>
+      </div>
     </div>
   );
 }
@@ -143,21 +248,35 @@ function FeatureCard({
 export default function CommunityPage({
   onNavigate,
 }) {
+
   const {
     authUser,
     profile,
     loading,
   } = useCurrentUser();
 
+
   const [chats, setChats] =
     useState([]);
 
-  /*
-   * Listen to all chats belonging to
-   * the current user.
-   */
+
+  const [achievements, setAchievements] =
+    useState([]);
+
+  // User travel history for the Progress Snapshot only
+  const [travelHistory, setTravelHistory] =
+    useState([]);
+
+
+  // ============================================================
+  // CHAT LISTENER
+  // ============================================================
+
   useEffect(() => {
-    if (!authUser?.uid) return;
+
+    if (!authUser?.uid) {
+      return;
+    }
 
     const unsubscribe =
       listenToUserChats(
@@ -166,12 +285,76 @@ export default function CommunityPage({
       );
 
     return unsubscribe;
+
   }, [authUser?.uid]);
 
-  /*
-   * TRUE if ANY DM or group chat has
-   * unread messages for this user.
-   */
+
+  // ============================================================
+  // ADMIN ACHIEVEMENTS
+  // ============================================================
+
+  useEffect(() => {
+
+    const unsubscribe =
+      listenToPublishedAchievements(
+        (list) => {
+          setAchievements(list);
+        }
+      );
+
+    return unsubscribe;
+
+  }, []);
+
+  // ============================================================
+  // USER TRAVEL HISTORY - PROGRESS SNAPSHOT ONLY
+  // ============================================================
+
+  useEffect(() => {
+    if (!authUser?.uid) {
+      setTravelHistory([]);
+      return;
+    }
+
+    const travelHistoryRef = collection(
+      db,
+      "users",
+      authUser.uid,
+      "travelHistory"
+    );
+
+    const travelHistoryQuery = query(
+      travelHistoryRef,
+      orderBy("startDate", "asc")
+    );
+
+    const unsubscribe = onSnapshot(
+      travelHistoryQuery,
+      (snapshot) => {
+        const history = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+
+        setTravelHistory(history);
+      },
+      (error) => {
+        console.error(
+          "Failed to listen to travel history:",
+          error
+        );
+        setTravelHistory([]);
+      }
+    );
+
+    return unsubscribe;
+  }, [authUser?.uid]);
+
+
+  // ============================================================
+  // UNREAD CHAT
+  // ============================================================
+
   const hasUnreadChat =
     chats.some(
       (chat) =>
@@ -179,6 +362,11 @@ export default function CommunityPage({
           authUser?.uid
         ] || 0) > 0
     );
+
+
+  // ============================================================
+  // LOADING
+  // ============================================================
 
   if (loading) {
     return (
@@ -190,9 +378,15 @@ export default function CommunityPage({
     );
   }
 
+
+  // ============================================================
+  // LOGIN
+  // ============================================================
+
   if (!authUser || !profile) {
     return (
       <div style={styles.loadingPage}>
+
         <p
           style={{
             color: "#6b7280",
@@ -205,7 +399,7 @@ export default function CommunityPage({
         <button
           type="button"
           onClick={() =>
-            onNavigate("/login")
+            onNavigate?.("/login")
           }
           style={
             styles.loginRedirectBtn
@@ -213,24 +407,33 @@ export default function CommunityPage({
         >
           Go to Login
         </button>
+
       </div>
     );
   }
 
-  /*
-   * IMPORTANT:
-   * Pass the actual profile photo
-   * to Layout.
-   */
+
+  // ============================================================
+  // USER
+  // ============================================================
+
   const user = {
     name: profile.name,
+
     ecoScore:
       profile.eco_score ?? 0,
+
     profile_photo_url:
       profile.profile_photo_url || "",
   };
 
+
+  // ============================================================
+  // STATS
+  // ============================================================
+
   const stats = [
+
     {
       label: "Eco Score",
       icon: Leaf,
@@ -243,6 +446,7 @@ export default function CommunityPage({
       }`,
       progress: 0.72,
     },
+
     {
       label: "Global Rank",
       icon: TrendingUp,
@@ -251,6 +455,7 @@ export default function CommunityPage({
       trendLabel: "Coming soon",
       trendDirection: "up",
     },
+
     {
       label: "Total trips",
       icon: Calendar,
@@ -258,6 +463,7 @@ export default function CommunityPage({
       value: "0",
       sub: "Completed journeys",
     },
+
     {
       label: "Badges Earned",
       icon: Award,
@@ -265,30 +471,218 @@ export default function CommunityPage({
       value: "0",
       sub: "Achievements",
     },
+
   ];
 
-  const achievements = [
-    {
-      icon: "♻️",
-      title: "Zero Waste Warrior",
-      category: "Waste",
-      dateEarned: "5/15/2026",
-    },
-    {
-      icon: "🌱",
-      title: "Eco Pioneer",
-      category: "General",
-      dateEarned: "4/20/2026",
-    },
-    {
-      icon: "🚆",
-      title: "KL Transit Guru",
-      category: "Transport",
-      dateEarned: "5/8/2026",
-    },
-  ];
+
+  // ============================================================
+  // USER PROGRESS
+  // ============================================================
+
+  const userProgress = {
+
+    trips_completed:
+      Number(
+        profile.trips_completed ??
+          profile.completed_trips ??
+          0
+      ),
+
+    eco_score:
+      Number(
+        profile.eco_score ?? 0
+      ),
+
+    challenges_completed:
+      Number(
+        profile.challenges_completed ?? 0
+      ),
+
+    community_posts:
+      Number(
+        profile.community_posts ?? 0
+      ),
+
+    waste_reduced:
+      Number(
+        profile.waste_reduced ?? 0
+      ),
+
+  };
+
+
+  // ============================================================
+  // ACHIEVEMENT STATUS
+  // ============================================================
+
+  const achievementsWithStatus =
+    achievements.map(
+      (achievement) => {
+
+        const ruleType =
+          achievement.ruleType ||
+          "trips_completed";
+
+
+        const target = Math.max(
+          Number(
+            achievement.ruleTarget
+          ) || 1,
+          1
+        );
+
+
+        const progress =
+          userProgress[ruleType] ?? 0;
+
+
+        return {
+
+          ...achievement,
+
+          unlocked:
+            progress >= target,
+
+          progress,
+
+          ruleTarget:
+            target,
+
+          ruleUnit:
+            achievement.ruleUnit || "",
+
+        };
+      }
+    );
+
+
+  // ============================================================
+  // SORT
+  // ============================================================
+
+  const sortedAchievements =
+    [...achievementsWithStatus]
+      .sort((a, b) => {
+
+        if (
+          a.unlocked &&
+          !b.unlocked
+        ) {
+          return -1;
+        }
+
+        if (
+          !a.unlocked &&
+          b.unlocked
+        ) {
+          return 1;
+        }
+
+        const dateA =
+          a.createdAt?.toMillis?.() || 0;
+
+        const dateB =
+          b.createdAt?.toMillis?.() || 0;
+
+        return dateB - dateA;
+
+      });
+
+
+  const unlockedCount =
+    sortedAchievements.filter(
+      (achievement) =>
+        achievement.unlocked
+    ).length;
+
+
+
+  // ============================================================
+  // PROGRESS SNAPSHOT DATA
+  // ============================================================
+  // Latest 4 completed trips:
+  // 4 trips -> T1 T2 T3 T4
+  // 5 trips -> T2 T3 T4 T5
+  // 6 trips -> T3 T4 T5 T6
+  // ============================================================
+
+  const completedHistory =
+    [...travelHistory]
+      .filter((trip) => {
+        if (!trip) return false;
+
+        if (trip.status) {
+          const status = String(trip.status).toLowerCase();
+
+          return (
+            status === "completed" ||
+            status === "complete"
+          );
+        }
+
+        return true;
+      })
+      .sort((a, b) => {
+        const getTime = (trip) => {
+          const value =
+            trip?.startDate ||
+            trip?.createdAt ||
+            trip?.date;
+
+          if (value?.toMillis) {
+            return value.toMillis();
+          }
+
+          if (value instanceof Date) {
+            return value.getTime();
+          }
+
+          if (typeof value === "string") {
+            const parsed = new Date(value).getTime();
+            return Number.isNaN(parsed) ? 0 : parsed;
+          }
+
+          return 0;
+        };
+
+        return getTime(a) - getTime(b);
+      });
+
+  const snapshotData =
+    completedHistory.slice(-4).map((trip) => {
+      const tripNumber =
+        completedHistory.indexOf(trip) + 1;
+
+      const score = Math.max(
+        0,
+        Math.min(
+          100,
+          Number(
+            trip?.ecoScore ??
+              trip?.eco_score ??
+              0
+          )
+        )
+      );
+
+      return {
+        ...trip,
+        tripNumber,
+        name:
+          trip?.name ||
+          trip?.title ||
+          "Untitled Trip",
+        nameLabel: `T${tripNumber}`,
+        score,
+      };
+    });
+
+  // ============================================================
+  // ROUTES
+  // ============================================================
 
   const routeFor = {
+
     "Travel History":
       "/community/history",
 
@@ -302,11 +696,17 @@ export default function CommunityPage({
       "/community/progress",
 
     "Eco-Report Card":
-      "/community/report",
+      "/community/reports",
 
     "Challenge Team":
       "/community/challenges",
+
   };
+
+
+  // ============================================================
+  // PAGE
+  // ============================================================
 
   return (
     <Layout
@@ -314,7 +714,9 @@ export default function CommunityPage({
       user={user}
       onNavigate={onNavigate}
     >
+
       <div style={styles.content}>
+
         <h1 style={styles.pageTitle}>
           Eco Journey & Community
         </h1>
@@ -324,14 +726,26 @@ export default function CommunityPage({
           and track your impact
         </p>
 
+
+        {/* ======================================================
+            STATS
+            ====================================================== */}
+
         <div style={styles.statGrid}>
+
           {stats.map((stat) => (
             <StatCard
               key={stat.label}
               {...stat}
             />
           ))}
+
         </div>
+
+
+        {/* ======================================================
+            PROGRESS SNAPSHOT
+            ====================================================== */}
 
         <div
           style={{
@@ -345,22 +759,13 @@ export default function CommunityPage({
               color="#22c55e"
             />
 
-            <span
-              style={
-                styles.featureTitle
-              }
-            >
+            <span style={styles.featureTitle}>
               Progress Snapshot
             </span>
           </div>
 
-          <p
-            style={
-              styles.featureDesc
-            }
-          >
-            Your Eco Score trend across
-            recent trips
+          <p style={styles.featureDesc}>
+            Your Eco Score trend across recent trips
           </p>
 
           <div
@@ -369,65 +774,99 @@ export default function CommunityPage({
               height: 200,
             }}
           >
-            <ResponsiveContainer>
-              <LineChart
-                data={TREND}
-                margin={{
-                  top: 20,
-                  right: 20,
-                  left: 20,
-                  bottom: 0,
-                }}
-              >
-                <XAxis
-                  dataKey="name"
-                  axisLine={{
-                    stroke: "#111827",
-                  }}
-                  tickLine={false}
-                  tick={{
-                    fontSize: 13,
-                    fontWeight: 600,
-                    fill: "#111827",
-                  }}
-                />
+            {snapshotData.length === 0 ? (
+              <div style={styles.snapshotEmpty}>
+                <BarChart2 size={30} />
 
-                <Line
-                  type="monotone"
-                  dataKey="score"
-                  stroke="#22c55e"
-                  strokeWidth={2.5}
-                  dot={{
-                    r: 5,
-                    fill: "#22c55e",
-                    strokeWidth: 0,
+                <div>
+                  No completed trips yet.
+                </div>
+
+                <p>
+                  Complete a trip to see your Eco Score trend here.
+                </p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={snapshotData}
+                  margin={{
+                    top: 20,
+                    right: 20,
+                    left: 20,
+                    bottom: 0,
                   }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+                >
+                  <XAxis
+                    dataKey="nameLabel"
+                    axisLine={{
+                      stroke: "#111827",
+                    }}
+                    tickLine={false}
+                    tick={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      fill: "#111827",
+                    }}
+                  />
+
+                  <Tooltip
+                    content={<SnapshotTooltip />}
+                    cursor={false}
+                  />
+
+                  <Line
+                    type="monotone"
+                    dataKey="score"
+                    stroke="#22c55e"
+                    strokeWidth={2.5}
+                    dot={{
+                      r: 5,
+                      fill: "#22c55e",
+                      strokeWidth: 0,
+                    }}
+                    activeDot={{
+                      r: 7,
+                    }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
-        <div
-          style={
-            styles.featureGrid
-          }
-        >
+
+        {/* ======================================================
+            FEATURE CARDS
+            ====================================================== */}
+
+        <div style={styles.featureGrid}>
+
           {FEATURE_CARDS.map((f) => (
+
             <FeatureCard
               key={f.title}
               {...f}
+
               hasUnreadChat={
                 hasUnreadChat
               }
+
               onClick={() =>
                 onNavigate?.(
                   routeFor[f.title]
                 )
               }
             />
+
           ))}
+
         </div>
+
+
+        {/* ======================================================
+            RECENT ACHIEVEMENTS
+            ====================================================== */}
 
         <div
           style={{
@@ -436,11 +875,15 @@ export default function CommunityPage({
             marginBottom: 32,
           }}
         >
+
+          {/* HEADER */}
+
           <div
             style={
               styles.achievementsHeader
             }
           >
+
             <span
               style={
                 styles.featureTitle
@@ -449,35 +892,205 @@ export default function CommunityPage({
               Recent Achievements
             </span>
 
-            <span
-              style={
-                styles.viewMore
-              }
-            >
-              View More
-              <ChevronRight size={16} />
-            </span>
+
+            {/* VIEW MORE */}
+
+            {sortedAchievements.length >
+              0 && (
+
+              <button
+                type="button"
+                style={styles.viewMore}
+                onClick={() =>
+                  onNavigate?.(
+                    "/community/achievements"
+                  )
+                }
+              >
+                View More
+                <ChevronRight size={16} />
+              </button>
+
+            )}
+
           </div>
 
-          <div
-            style={
-              styles.achievementGrid
-            }
-          >
-            {achievements.map((a) => (
-              <AchievementCard
-                key={a.title}
-                {...a}
-              />
-            ))}
-          </div>
+
+          {/* ====================================================
+              EMPTY
+              ==================================================== */}
+
+          {sortedAchievements.length ===
+          0 ? (
+
+            <div
+              style={{
+                textAlign: "center",
+                padding: "35px 20px",
+              }}
+            >
+
+              <div
+                style={
+                  styles.noAchievementIcon
+                }
+              >
+                <Award size={28} />
+              </div>
+
+              <div
+                style={
+                  styles.noAchievementTitle
+                }
+              >
+                No achievements available yet
+              </div>
+
+              <div
+                style={
+                  styles.noAchievementText
+                }
+              >
+                Check back later for new
+                achievements.
+              </div>
+
+            </div>
+
+          ) : (
+
+            /* ==================================================
+               ONLY 3
+               ================================================== */
+
+            <div
+              style={
+                styles.achievementGrid
+              }
+            >
+
+              {sortedAchievements
+                .slice(0, 3)
+                .map(
+                  (achievement) => (
+
+                    <AchievementCard
+                      key={achievement.id}
+
+                      title={
+                        achievement.title
+                      }
+
+                      description={
+                        achievement.description
+                      }
+
+                      category={
+                        achievement.category
+                      }
+
+                      icon={
+                        achievement.icon
+                      }
+
+                      iconUrl={
+                        achievement.iconUrl ||
+                        ""
+                      }
+
+                      points={
+                        achievement.points
+                      }
+
+                      unlocked={
+                        achievement.unlocked
+                      }
+
+                      progress={
+                        achievement.progress
+                      }
+
+                      ruleTarget={
+                        achievement.ruleTarget
+                      }
+
+                      ruleUnit={
+                        achievement.ruleUnit
+                      }
+                    />
+
+                  )
+                )}
+
+            </div>
+
+          )}
+
         </div>
+
       </div>
+
     </Layout>
   );
 }
 
+
+/* ================================================================
+   STYLES
+   ================================================================ */
+
 const styles = {
+
+  snapshotEmpty: {
+    height: "100%",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#9ca3af",
+    fontSize: 14,
+    textAlign: "center",
+  },
+
+  chartTooltip: {
+    background: "#ffffff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 8,
+    boxShadow: "0 8px 20px rgba(0, 0, 0, 0.10)",
+    padding: "10px 12px",
+    fontFamily: "Arial, sans-serif",
+    width: 190,
+    boxSizing: "border-box",
+  },
+
+  tooltipTrip: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#111827",
+    marginBottom: 3,
+  },
+
+  tooltipTitle: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#374151",
+    lineHeight: 1.35,
+    marginBottom: 3,
+  },
+
+  tooltipDate: {
+    fontSize: 11,
+    color: "#9ca3af",
+    marginBottom: 5,
+  },
+
+  tooltipScore: {
+    fontSize: 11.5,
+    color: "#22a55a",
+    fontWeight: 500,
+  },
+
+
   loadingPage: {
     minHeight: "100vh",
     display: "flex",
@@ -608,8 +1221,7 @@ const styles = {
 
   achievementsHeader: {
     display: "flex",
-    justifyContent:
-      "space-between",
+    justifyContent: "space-between",
     alignItems: "center",
   },
 
@@ -620,6 +1232,10 @@ const styles = {
     fontSize: 13.5,
     fontWeight: 600,
     cursor: "pointer",
+    color: "#374151",
+    background: "transparent",
+    border: "none",
+    padding: 0,
   },
 
   achievementGrid: {
@@ -629,4 +1245,29 @@ const styles = {
     gap: 16,
     marginTop: 16,
   },
+
+  noAchievementIcon: {
+    width: 56,
+    height: 56,
+    margin: "0 auto 12px",
+    borderRadius: 14,
+    background: "#f3f4f6",
+    color: "#9ca3af",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  noAchievementTitle: {
+    color: "#374151",
+    fontWeight: 700,
+    fontSize: 14,
+  },
+
+  noAchievementText: {
+    marginTop: 5,
+    color: "#9ca3af",
+    fontSize: 12.5,
+  },
+
 };
