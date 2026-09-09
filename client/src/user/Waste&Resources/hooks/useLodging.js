@@ -11,13 +11,18 @@ export default function useLodging(uid) {
   const [lodging, setLodging] = useState(null); // null = unset or still loading
   const [loading, setLoading] = useState(true);
 
+  // Reset during render when the account changes, rather than in an effect —
+  // same pattern as useWasteLedger, so the previous user's lodging is never
+  // shown to the next one and no setState happens synchronously in an effect.
+  const [prevUid, setPrevUid] = useState(uid);
+  if (prevUid !== uid) {
+    setPrevUid(uid);
+    setLodging(null);
+    setLoading(Boolean(uid));
+  }
+
   useEffect(() => {
-    if (!uid) {
-      setLodging(null);
-      setLoading(false);
-      return undefined;
-    }
-    setLoading(true);
+    if (!uid) return undefined;
     return subscribeToLodging(
       uid,
       (data) => {
