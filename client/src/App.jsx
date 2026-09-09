@@ -26,6 +26,11 @@ import Waste from "./user/Waste&Resources/pages/WastePage";
 import EcoReportCard from "./user/EcoJourney/pages/EcoReportCard";
 import AchievementsPage from "./user/EcoJourney/pages/AchievementsPage";
 
+// Achievement notification
+// Your actual file is located at:
+// src/shared/components/AchievementNotification.jsx
+import AchievementNotification from "./shared/components/AchievementNotification";
+
 // Itinerary (Module 1)
 import ItineraryPage from "./user/Itinerary/pages/ItineraryPage";
 import CreateItinerary from "./user/Itinerary/pages/CreateItinerary";
@@ -127,7 +132,7 @@ export default function App() {
 
     // Update immediately as well as through hashchange.
     // This prevents a momentary blank/default route when
-    // navigating between chat screens.
+    // navigating between screens.
     setLocation(parseHash());
   }, []);
 
@@ -160,210 +165,236 @@ export default function App() {
   // ==========================================================
   // ROUTES
   // ==========================================================
-  switch (route) {
-    // --------------------------------------------------------
-    // AUTH
-    // --------------------------------------------------------
-    case "/login":
-      return <Login onNavigate={navigate} />;
-
-    case "/register":
-      return <Register onNavigate={navigate} />;
-
-    case "/profile":
-      return <Profile onNavigate={navigate} />;
-
-    // --------------------------------------------------------
-    // ADMIN
-    // --------------------------------------------------------
-    case "/admin":
-      return (
-        <RequireAdmin onNavigate={navigate}>
-          <AdminDashboard onNavigate={navigate} />
-        </RequireAdmin>
-      );
-
-    // --------------------------------------------------------
-    // DASHBOARD
-    // --------------------------------------------------------
-    case "/dashboard":
-      return <MainDashboard onNavigate={navigate} />;
-
-    // --------------------------------------------------------
-    // COMMUNITY
-    // --------------------------------------------------------
-    case "/community":
-      return <CommunityPage onNavigate={navigate} />;
-
-    case "/community/history":
-      return (
-        <TravelHistory
-          onNavigate={navigate}
-          onBack={() => navigate("/community")}
-        />
-      );
-
-    case "/community/progress":
-      return (
-        <ProgressTracker
-          onNavigate={navigate}
-          onBack={() => navigate("/community")}
-        />
-      );
-
-    case "/community/achievements":
-      return <AchievementsPage onNavigate={navigate} />;
-
-    case "/community/friends":
-      return <Friends onNavigate={navigate} />;
-
-    case "/community/chat":
-      return <ChatList onNavigate={navigate} />;
-
-    // --------------------------------------------------------
-    // CHAT ROOM
-    // --------------------------------------------------------
-    case "/community/chat/room":
-      if (!selectedId) {
-        return (
-          <ComingSoon
-            label="Chat"
-            onNavigate={navigate}
-            backTo="/community/chat"
-          />
-        );
-      }
-
-      return (
-        <ChatRoom
-          chatId={selectedId}
-          onNavigate={navigate}
-        />
-      );
-
-    // --------------------------------------------------------
-    // GROUP INFO
-    // --------------------------------------------------------
-    case "/community/chat/info":
-      if (!selectedId) {
-        return (
-          <ComingSoon
-            label="Group Info"
-            onNavigate={navigate}
-            backTo="/community/chat"
-          />
-        );
-      }
-
-      return (
-        <GroupInfo
-          chatId={selectedId}
-          onNavigate={navigate}
-        />
-      );
-
-    // --------------------------------------------------------
-    // ECO REPORT
-    // --------------------------------------------------------
-    case "/community/reports":
   return (
-    <EcoReportCard
-      onNavigate={navigate}
-      onBack={() => navigate("/community")}
-    />
+    <>
+      {/* Global achievement unlock notification */}
+      <AchievementNotification />
+
+      <main>
+        {(() => {
+          switch (route) {
+            // --------------------------------------------------
+            // AUTH
+            // --------------------------------------------------
+            case "/login":
+              return <Login onNavigate={navigate} />;
+
+            case "/register":
+              return <Register onNavigate={navigate} />;
+
+            case "/profile":
+              return <Profile onNavigate={navigate} />;
+
+            // --------------------------------------------------
+            // ADMIN
+            // --------------------------------------------------
+            case "/admin":
+              return (
+                <RequireAdmin onNavigate={navigate}>
+                  <AdminDashboard onNavigate={navigate} />
+                </RequireAdmin>
+              );
+
+            // --------------------------------------------------
+            // DASHBOARD
+            // --------------------------------------------------
+            case "/dashboard":
+              return <MainDashboard onNavigate={navigate} />;
+
+            // --------------------------------------------------
+            // COMMUNITY
+            // --------------------------------------------------
+            case "/community":
+              return <CommunityPage onNavigate={navigate} />;
+
+            case "/community/history":
+              return (
+                <TravelHistory
+                  onNavigate={navigate}
+                  onBack={() => navigate("/community")}
+                />
+              );
+
+            case "/community/progress":
+              return (
+                <ProgressTracker
+                  onNavigate={navigate}
+                  onBack={() => navigate("/community")}
+                />
+              );
+
+            case "/community/achievements":
+              return (
+                <AchievementsPage
+                  onNavigate={navigate}
+                />
+              );
+
+            case "/community/friends":
+              return <Friends onNavigate={navigate} />;
+
+            case "/community/chat":
+              return <ChatList onNavigate={navigate} />;
+
+            // --------------------------------------------------
+            // CHAT ROOM
+            // --------------------------------------------------
+            case "/community/chat/room":
+              if (!selectedId) {
+                return (
+                  <ComingSoon
+                    label="Chat"
+                    onNavigate={navigate}
+                    backTo="/community/chat"
+                  />
+                );
+              }
+
+              return (
+                <ChatRoom
+                  chatId={selectedId}
+                  onNavigate={navigate}
+                />
+              );
+
+            // --------------------------------------------------
+            // GROUP INFO
+            // --------------------------------------------------
+            case "/community/chat/info":
+              if (!selectedId) {
+                return (
+                  <ComingSoon
+                    label="Group Info"
+                    onNavigate={navigate}
+                    backTo="/community/chat"
+                  />
+                );
+              }
+
+              return (
+                <GroupInfo
+                  chatId={selectedId}
+                  onNavigate={navigate}
+                />
+              );
+
+            // --------------------------------------------------
+            // ECO REPORTS
+            // --------------------------------------------------
+            case "/community/reports":
+              return (
+                <EcoReportCard
+                  onNavigate={navigate}
+                  onBack={() => navigate("/community")}
+                />
+              );
+
+            case "/community/report":
+              return (
+                <EcoReportCard
+                  onNavigate={navigate}
+                  tripId={selectedId}
+                />
+              );
+
+            // --------------------------------------------------
+            // COMMUNITY CHALLENGES
+            // --------------------------------------------------
+            case "/community/challenges":
+              return (
+                <ChallengeTeam
+                  onNavigate={navigate}
+                />
+              );
+
+            // --------------------------------------------------
+            // CHALLENGES
+            // --------------------------------------------------
+            case "/challenges":
+              return (
+                <ChallengesPage
+                  onNavigate={navigate}
+                />
+              );
+
+            case "/challenges/details":
+              return (
+                <ChallengeDetails
+                  onNavigate={navigate}
+                  challengeId={selectedId}
+                />
+              );
+
+            case "/challenges/leaderboard":
+              return (
+                <ChallengeLeaderboard
+                  onNavigate={navigate}
+                />
+              );
+
+            // --------------------------------------------------
+            // ITINERARY
+            // --------------------------------------------------
+            case "/itinerary":
+              return (
+                <ItineraryPage
+                  onNavigate={navigate}
+                />
+              );
+
+            case "/itinerary/create":
+              return (
+                <CreateItinerary
+                  onNavigate={navigate}
+                />
+              );
+
+            case "/itinerary/edit":
+              return (
+                <CreateItinerary
+                  onNavigate={navigate}
+                  editItineraryId={selectedId}
+                />
+              );
+
+            case "/itinerary/details":
+              return (
+                <ItineraryDetails
+                  itineraryId={selectedId}
+                  onNavigate={navigate}
+                />
+              );
+
+            // --------------------------------------------------
+            // OTHER
+            // --------------------------------------------------
+            case "/recommendations":
+              return (
+                <ComingSoon
+                  label="Recommendations"
+                  onNavigate={navigate}
+                />
+              );
+
+            case "/certification":
+              return (
+                <ComingSoon
+                  label="Certification"
+                  onNavigate={navigate}
+                />
+              );
+
+            case "/waste":
+              return <Waste onNavigate={navigate} />;
+
+            // --------------------------------------------------
+            // DEFAULT
+            // --------------------------------------------------
+            default:
+              return <Login onNavigate={navigate} />;
+          }
+        })()}
+      </main>
+    </>
   );
-
-case "/community/report":
-  return (
-    <EcoReportCard
-      onNavigate={navigate}
-      tripId={selectedId}
-    />
-  );
-
-    // --------------------------------------------------------
-    // COMMUNITY CHALLENGES
-    // --------------------------------------------------------
-    case "/community/challenges":
-      return <ChallengeTeam onNavigate={navigate} />;
-
-    // --------------------------------------------------------
-    // CHALLENGES
-    // --------------------------------------------------------
-    case "/challenges":
-      return <ChallengesPage onNavigate={navigate} />;
-
-    case "/challenges/details":
-      return (
-        <ChallengeDetails
-          onNavigate={navigate}
-          challengeId={selectedId}
-        />
-      );
-
-    case "/challenges/leaderboard":
-      return (
-        <ChallengeLeaderboard
-          onNavigate={navigate}
-        />
-      );
-
-    // --------------------------------------------------------
-    // OTHER
-    // --------------------------------------------------------
-    case "/itinerary":
-      return (
-        <ItineraryPage
-          onNavigate={navigate}
-        />
-      );
-
-    case "/itinerary/create":
-      return (
-        <CreateItinerary
-          onNavigate={navigate}
-        />
-      );
-
-    case "/itinerary/edit":
-      return (
-        <CreateItinerary
-          onNavigate={navigate}
-          editItineraryId={selectedId}
-        />
-      );
-
-    case "/itinerary/details":
-      return (
-        <ItineraryDetails
-          itineraryId={selectedId}
-          onNavigate={navigate}
-        />
-      );
-
-    case "/recommendations":
-      return (
-        <ComingSoon
-          label="Recommendations"
-          onNavigate={navigate}
-        />
-      );
-
-    case "/certification":
-      return (
-        <ComingSoon
-          label="Certification"
-          onNavigate={navigate}
-        />
-      );
-
-    case "/waste":
-      return <Waste onNavigate={navigate} />;
-
-    // --------------------------------------------------------
-    // DEFAULT
-    // --------------------------------------------------------
-    default:
-      return <Login onNavigate={navigate} />;
-  }
 }

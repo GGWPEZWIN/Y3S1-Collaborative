@@ -175,7 +175,10 @@ export default function TravelHistory({
 
       <div style={styles.header}>
 
+        {/* BACK TO COMMUNITY */}
+
         <button
+          type="button"
           onClick={() =>
             onBack
               ? onBack()
@@ -195,7 +198,9 @@ export default function TravelHistory({
         </button>
 
 
-        <div>
+        {/* PAGE TITLE */}
+
+        <div style={styles.titleSection}>
 
           <h1 style={styles.title}>
             Travel History
@@ -208,6 +213,8 @@ export default function TravelHistory({
 
         </div>
 
+
+        {/* USER */}
 
         {user && (
 
@@ -683,8 +690,6 @@ export default function TravelHistory({
 
                   </div>
 
-
-
                 </div>
 
               </div>
@@ -759,18 +764,27 @@ function SummaryCard({
 
 const styles = {
 
+  // ==========================================================
+  // PAGE
+  // ==========================================================
+
   page: {
     minHeight: "100vh",
     background: "#f9fafb",
-    padding: "32px 46px 60px",
+    padding: "48px 54px 60px",
     boxSizing: "border-box",
+    width: "100%",
+    overflowX: "hidden",
   },
 
+
+  // ==========================================================
+  // HEADER
+  // ==========================================================
+
   header: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 20,
-    marginBottom: 28,
+    position: "relative",
+    marginBottom: 34,
   },
 
   backButton: {
@@ -782,24 +796,39 @@ const styles = {
     color: "#374151",
     cursor: "pointer",
     fontSize: 14,
+    fontWeight: 500,
     padding: 0,
+  },
+
+  titleSection: {
+    marginTop: 36,
   },
 
   title: {
     margin: 0,
-    fontSize: 30,
-    fontWeight: 700,
+    fontSize: 42,
+    lineHeight: 1.15,
+    fontWeight: 800,
     color: "#111827",
+    letterSpacing: "-0.8px",
   },
 
   subtitle: {
-    margin: "6px 0 0",
+    margin: "10px 0 0",
     color: "#6b7280",
-    fontSize: 14,
+    fontSize: 16,
+    lineHeight: 1.5,
   },
 
+
+  // ==========================================================
+  // USER
+  // ==========================================================
+
   userBox: {
-    marginLeft: "auto",
+    position: "absolute",
+    top: 0,
+    right: 0,
     display: "flex",
     alignItems: "center",
     gap: 10,
@@ -821,6 +850,11 @@ const styles = {
     color: "#374151",
     fontWeight: 600,
   },
+
+
+  // ==========================================================
+  // SUMMARY
+  // ==========================================================
 
   summaryGrid: {
     display: "grid",
@@ -850,6 +884,11 @@ const styles = {
     color: "#9ca3af",
   },
 
+
+  // ==========================================================
+  // FILTER
+  // ==========================================================
+
   filterCard: {
     display: "flex",
     alignItems: "center",
@@ -871,6 +910,7 @@ const styles = {
       "1px solid #e5e7eb",
     borderRadius: 10,
     padding: "9px 12px",
+    background: "#fff",
   },
 
   searchInput: {
@@ -878,6 +918,7 @@ const styles = {
     outline: "none",
     width: "100%",
     fontSize: 14,
+    background: "transparent",
   },
 
   select: {
@@ -887,7 +928,15 @@ const styles = {
     padding: "10px 14px",
     background: "#fff",
     color: "#374151",
+    fontSize: 14,
+    outline: "none",
+    cursor: "pointer",
   },
+
+
+  // ==========================================================
+  // ERROR
+  // ==========================================================
 
   error: {
     background: "#fef2f2",
@@ -899,11 +948,21 @@ const styles = {
     marginBottom: 20,
   },
 
+
+  // ==========================================================
+  // LOADING
+  // ==========================================================
+
   centerMessage: {
     padding: 50,
     textAlign: "center",
     color: "#6b7280",
   },
+
+
+  // ==========================================================
+  // EMPTY
+  // ==========================================================
 
   emptyState: {
     background: "#fff",
@@ -923,6 +982,11 @@ const styles = {
   emptyText: {
     color: "#9ca3af",
   },
+
+
+  // ==========================================================
+  // TRIP LIST
+  // ==========================================================
 
   tripList: {
     display: "flex",
@@ -951,6 +1015,11 @@ const styles = {
     flexDirection: "column",
     gap: 20,
   },
+
+
+  // ==========================================================
+  // TRIP HEADER
+  // ==========================================================
 
   tripHeader: {
     display: "flex",
@@ -1008,6 +1077,11 @@ const styles = {
     fontWeight: 700,
     flexShrink: 0,
   },
+
+
+  // ==========================================================
+  // TRIP STATS
+  // ==========================================================
 
   statsGrid: {
     display: "grid",
