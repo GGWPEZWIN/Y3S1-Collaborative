@@ -1,39 +1,119 @@
-import React from "react";
-import { Leaf, Hotel, ClipboardList } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { 
+  Leaf, 
+  Hotel, 
+  ClipboardList, 
+  Sparkles, 
+  Award, 
+  Medal, 
+  ShieldCheck,
+  ArrowRight
+} from "lucide-react";
+import { auth, db } from "../firebase/config";
+import { doc, getDoc } from "firebase/firestore";
 
 export default function GreenCertificationHome({ onNavigate }) {
+  const [partnerDisplayName, setPartnerDisplayName] = useState("Hotel Partner");
+  const [hasApplied, setHasApplied] = useState(false);
+  const [checkingStatus, setCheckingStatus] = useState(true);
+
+  // Generate a consistent 4-digit code from user UID (e.g., Hotel_4821)
+  const generateDefaultHotelTag = (uid) => {
+    if (!uid) return "Hotel_1001";
+    const numericSeed = uid
+      .split("")
+      .reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const code = (numericSeed % 9000) + 1000;
+    return `Hotel_${code}`;
+  };
+
+  useEffect(() => {
+    const fetchUserAndApplicationData = async () => {
+      const user = auth.currentUser;
+      if (!user) {
+        setCheckingStatus(false);
+        return;
+      }
+
+      const defaultTag = generateDefaultHotelTag(user.uid);
+
+      try {
+        // 1. Check if user configured a custom name in 'users' collection
+        const userRef = doc(db, "users", user.uid);
+        const userSnap = await getDoc(userRef);
+        const customUsername = userSnap.exists()
+          ? userSnap.data().username || userSnap.data().displayName
+          : null;
+
+        // 2. Check if user has an application record
+        const appRef = doc(db, "hotel_applications", user.uid);
+        const appSnap = await getDoc(appRef);
+
+        if (appSnap.exists()) {
+          setHasApplied(true);
+          const hotelName = appSnap.data().hotelName;
+          // Priority: Custom username -> Hotel application name -> Hotel_XXXX
+          setPartnerDisplayName(customUsername || hotelName || defaultTag);
+        } else {
+          setHasApplied(false);
+          // Priority: Custom username -> Hotel_XXXX
+          setPartnerDisplayName(customUsername || defaultTag);
+        }
+      } catch (err) {
+        console.error("Error loading partner application status:", err);
+        setPartnerDisplayName(defaultTag);
+      } finally {
+        setCheckingStatus(false);
+      }
+    };
+
+    fetchUserAndApplicationData();
+  }, []);
+
   const tiers = [
     {
       id: "platinum",
       name: "Platinum",
       saving: "Energy savings: > 40%",
-      icon: "💎",
-      background: "#9ca3af",
-      textColor: "#ffffff",
+      icon: <Sparkles size={28} color="#38bdf8" />,
+      gradient: "linear-gradient(145deg, #1e293b, #334155)",
+      border: "1px solid #475569",
+      pillBg: "rgba(56, 189, 248, 0.15)",
+      pillColor: "#bae6fd",
+      badgeText: "Elite",
     },
     {
       id: "gold",
       name: "Gold",
-      saving: "Energy savings: 30-40%",
-      icon: "🥇",
-      background: "#eab308",
-      textColor: "#ffffff",
+      saving: "Energy savings: 30–40%",
+      icon: <Award size={28} color="#fbbf24" />,
+      gradient: "linear-gradient(145deg, #b45309, #d97706)",
+      border: "1px solid #f59e0b",
+      pillBg: "rgba(254, 240, 138, 0.2)",
+      pillColor: "#fef08a",
+      badgeText: "Advanced",
     },
     {
       id: "silver",
       name: "Silver",
-      saving: "Energy savings: 20-30%",
-      icon: "🥈",
-      background: "#cbd5e1",
-      textColor: "#ffffff",
+      saving: "Energy savings: 20–30%",
+      icon: <Medal size={28} color="#94a3b8" />,
+      gradient: "linear-gradient(145deg, #475569, #64748b)",
+      border: "1px solid #94a3b8",
+      pillBg: "rgba(241, 245, 249, 0.18)",
+      pillColor: "#f1f5f9",
+      badgeText: "Standard",
     },
     {
       id: "bronze",
       name: "Bronze",
-      saving: "Energy savings: 10-20%",
-      icon: "🥉",
-      background: "#d97706",
-      textColor: "#ffffff",
+      saving: "Energy savings: 10–20%",
+      icon: <ShieldCheck size={28} color="#fdba74" />,
+      gradient: "linear-gradient(145deg, #9a3412, #c2410c)",
+      border: "1px solid #ea580c",
+      pillBg: "rgba(254, 215, 170, 0.2)",
+      pillColor: "#ffedd5",
+      badgeText: "Baseline",
     },
   ];
 
@@ -46,10 +126,24 @@ export default function GreenCertificationHome({ onNavigate }) {
   };
 
   const handleViewDashboard = () => {
+    if (!hasApplied) {
+      alert("Please submit your green certification application first before accessing the Hotel Dashboard.");
+      return;
+    }
+
     if (onNavigate) {
       onNavigate("/hotel/partner-dashboard");
     } else {
       window.location.hash = "/hotel/partner-dashboard";
+    }
+  };
+
+  // Directs to Hotel Profile instead of Traveler Profile
+  const handleProfileClick = () => {
+    if (onNavigate) {
+      onNavigate("/hotel/profile");
+    } else {
+      window.location.hash = "/hotel/profile";
     }
   };
 
@@ -63,12 +157,18 @@ export default function GreenCertificationHome({ onNavigate }) {
           </div>
           <span style={styles.brandTitle}>GreenTrip Malaysia</span>
         </div>
-        <div style={styles.profileBadge}>
+
+        {/* Profile Header Badge */}
+        <div 
+          style={styles.profileBadge} 
+          onClick={handleProfileClick} 
+          title="Click to view hotel profile"
+        >
           <div style={{ textAlign: "right" }}>
-            <div style={styles.profileName}>Keshi</div>
-            <div style={styles.profileScore}>Eco Score: 8,750</div>
+            <div style={styles.profileName}>{partnerDisplayName}</div>
+            <div style={styles.profileScore}>Eco Portal</div>
           </div>
-          <div style={styles.avatar}>🐱</div>
+          <div style={styles.avatar}>🏨</div>
         </div>
       </header>
 
@@ -77,13 +177,18 @@ export default function GreenCertificationHome({ onNavigate }) {
         {/* Page Titles */}
         <div style={styles.titleSection}>
           <h1 style={styles.heading}>Green Certification</h1>
-          <p style={styles.subheading}>Eco-certification for Malaysian hotels</p>
+          <p style={styles.subheading}>Verified eco-standards and operational audits for Malaysian hotels</p>
         </div>
 
         {/* Certification Tiers Overview Card */}
         <section style={styles.tiersContainer}>
-          <h2 style={styles.sectionTitle}>Certification Tiers</h2>
-          <p style={styles.sectionSubtitle}>Four levels based on sustainability performance</p>
+          <div style={styles.sectionHeaderRow}>
+            <div>
+              <h2 style={styles.sectionTitle}>Certification Tiers</h2>
+              <p style={styles.sectionSubtitle}>Four progressive levels based on validated energy benchmarks</p>
+            </div>
+            <span style={styles.verifiedTag}>National Eco Standard</span>
+          </div>
 
           <div style={styles.tierGrid}>
             {tiers.map((tier) => (
@@ -91,13 +196,22 @@ export default function GreenCertificationHome({ onNavigate }) {
                 key={tier.id}
                 style={{
                   ...styles.tierCard,
-                  backgroundColor: tier.background,
-                  color: tier.textColor,
+                  background: tier.gradient,
+                  border: tier.border,
                 }}
               >
-                <div style={styles.tierIcon}>{tier.icon}</div>
+                <div style={styles.tierIconWrap}>{tier.icon}</div>
                 <div style={styles.tierName}>{tier.name}</div>
                 <div style={styles.tierSaving}>{tier.saving}</div>
+                <div 
+                  style={{ 
+                    ...styles.tierPill, 
+                    backgroundColor: tier.pillBg, 
+                    color: tier.pillColor 
+                  }}
+                >
+                  {tier.badgeText}
+                </div>
               </div>
             ))}
           </div>
@@ -108,12 +222,12 @@ export default function GreenCertificationHome({ onNavigate }) {
           {/* Card 1: Apply for Certification */}
           <div style={styles.actionCard}>
             <div style={styles.actionHeader}>
-              <div style={styles.iconCircle}>
-                <Hotel size={22} color="#1f2937" />
+              <div style={styles.iconCirclePrimary}>
+                <Hotel size={22} color="#16a34a" />
               </div>
               <div>
                 <h3 style={styles.actionTitle}>Apply for Certification</h3>
-                <p style={styles.actionSubtitle}>Hotels can submit applications</p>
+                <p style={styles.actionSubtitle}>Submit hotel bills and property metrics for audit</p>
               </div>
             </div>
             <button
@@ -121,19 +235,20 @@ export default function GreenCertificationHome({ onNavigate }) {
               onClick={handleStartApplication}
               style={styles.btnPrimary}
             >
-              Start Application
+              <span>{hasApplied ? "View / Update Application" : "Start Application"}</span>
+              <ArrowRight size={16} />
             </button>
           </div>
 
           {/* Card 2: Hotel Dashboard */}
           <div style={styles.actionCard}>
             <div style={styles.actionHeader}>
-              <div style={styles.iconCircle}>
-                <ClipboardList size={22} color="#1f2937" />
+              <div style={styles.iconCircleSecondary}>
+                <ClipboardList size={22} color="#0284c7" />
               </div>
               <div>
-                <h3 style={styles.actionTitle}>Hotel Dashboard</h3>
-                <p style={styles.actionSubtitle}>View your certification status</p>
+                <h3 style={styles.actionTitle}>Hotel Partner Dashboard</h3>
+                <p style={styles.actionSubtitle}>Monitor spot-check status and renewal timelines</p>
               </div>
             </div>
             <button
@@ -141,7 +256,8 @@ export default function GreenCertificationHome({ onNavigate }) {
               onClick={handleViewDashboard}
               style={styles.btnOutline}
             >
-              View Dashboard
+              <span>View Dashboard</span>
+              <ArrowRight size={16} />
             </button>
           </div>
         </div>
@@ -153,14 +269,14 @@ export default function GreenCertificationHome({ onNavigate }) {
 const styles = {
   container: {
     minHeight: "100vh",
-    backgroundColor: "#f3f4f6",
+    backgroundColor: "#f8fafc",
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     paddingBottom: 60,
   },
   header: {
     backgroundColor: "#fff",
     height: 64,
-    borderBottom: "1px solid #e5e7eb",
+    borderBottom: "1px solid #e2e8f0",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
@@ -183,34 +299,40 @@ const styles = {
   brandTitle: {
     fontSize: 18,
     fontWeight: 800,
-    color: "#111827",
+    color: "#0f172a",
+    letterSpacing: "-0.02em",
   },
   profileBadge: {
     display: "flex",
     alignItems: "center",
     gap: 12,
+    cursor: "pointer",
+    padding: "4px 8px",
+    borderRadius: 8,
+    userSelect: "none",
+    transition: "background 0.15s ease",
   },
   profileName: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: 700,
-    color: "#111827",
+    color: "#1e293b",
   },
   profileScore: {
     fontSize: 11.5,
-    color: "#6b7280",
+    color: "#64748b",
   },
   avatar: {
     width: 38,
     height: 38,
     borderRadius: "50%",
-    backgroundColor: "#e5e7eb",
+    backgroundColor: "#e2e8f0",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 20,
+    fontSize: 18,
   },
   main: {
-    maxWidth: 960,
+    maxWidth: 980,
     margin: "0 auto",
     padding: "36px 20px 0 20px",
   },
@@ -220,33 +342,50 @@ const styles = {
   heading: {
     fontSize: 28,
     fontWeight: 800,
-    color: "#111827",
+    color: "#0f172a",
+    letterSpacing: "-0.025em",
     margin: 0,
   },
   subheading: {
-    fontSize: 13.5,
-    color: "#6b7280",
+    fontSize: 14,
+    color: "#64748b",
     marginTop: 6,
     margin: 0,
   },
   tiersContainer: {
     backgroundColor: "#fff",
-    borderRadius: 16,
-    border: "1px solid #e5e7eb",
-    padding: "24px 28px",
+    borderRadius: 18,
+    border: "1px solid #e2e8f0",
+    padding: "26px 28px",
     marginBottom: 24,
+    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.04)",
+  },
+  sectionHeaderRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 20,
   },
   sectionTitle: {
-    fontSize: 14.5,
+    fontSize: 16,
     fontWeight: 700,
-    color: "#111827",
+    color: "#0f172a",
     margin: 0,
   },
   sectionSubtitle: {
-    fontSize: 12.5,
-    color: "#9ca3af",
+    fontSize: 13,
+    color: "#64748b",
     marginTop: 4,
-    marginBottom: 18,
+    margin: 0,
+  },
+  verifiedTag: {
+    fontSize: 11.5,
+    fontWeight: 700,
+    color: "#16a34a",
+    backgroundColor: "#dcfce7",
+    padding: "4px 10px",
+    borderRadius: 20,
+    letterSpacing: "0.01em",
   },
   tierGrid: {
     display: "grid",
@@ -254,28 +393,42 @@ const styles = {
     gap: 14,
   },
   tierCard: {
-    borderRadius: 12,
-    padding: "18px 12px",
+    borderRadius: 14,
+    padding: "22px 14px 18px 14px",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    justifyContent: "center",
     textAlign: "center",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+    color: "#ffffff",
+    boxShadow: "0 8px 16px -4px rgba(0, 0, 0, 0.12)",
+    transition: "transform 0.15s ease",
   },
-  tierIcon: {
-    fontSize: 24,
-    marginBottom: 6,
+  tierIconWrap: {
+    marginBottom: 10,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   tierName: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: 800,
+    letterSpacing: "-0.01em",
     marginBottom: 4,
   },
   tierSaving: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: 500,
-    opacity: 0.95,
+    opacity: 0.92,
+    marginBottom: 14,
+    minHeight: 28,
+  },
+  tierPill: {
+    fontSize: 11,
+    fontWeight: 700,
+    padding: "3px 12px",
+    borderRadius: 20,
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
   },
   actionGrid: {
     display: "grid",
@@ -284,63 +437,82 @@ const styles = {
   },
   actionCard: {
     backgroundColor: "#fff",
-    borderRadius: 16,
-    border: "1px solid #e5e7eb",
-    padding: "24px",
+    borderRadius: 18,
+    border: "1px solid #e2e8f0",
+    padding: "26px",
     display: "flex",
     flexDirection: "column",
     justifyContent: "space-between",
-    minHeight: 150,
+    minHeight: 160,
+    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.03)",
   },
   actionHeader: {
     display: "flex",
     alignItems: "flex-start",
-    gap: 14,
+    gap: 16,
     marginBottom: 20,
   },
-  iconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 8,
-    backgroundColor: "#f3f4f6",
+  iconCirclePrimary: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "#dcfce7",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  iconCircleSecondary: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "#e0f2fe",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
   actionTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: 700,
-    color: "#111827",
+    color: "#0f172a",
     margin: 0,
   },
   actionSubtitle: {
-    fontSize: 12.5,
-    color: "#9ca3af",
+    fontSize: 13,
+    color: "#64748b",
     margin: "4px 0 0 0",
   },
   btnPrimary: {
     width: "100%",
-    padding: "10px 0",
-    backgroundColor: "#262626",
+    padding: "12px 0",
+    backgroundColor: "#0f172a",
     color: "#fff",
     border: "none",
-    borderRadius: 8,
+    borderRadius: 10,
     fontWeight: 600,
-    fontSize: 13,
+    fontSize: 13.5,
     cursor: "pointer",
-    transition: "0.2s",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    transition: "background 0.2s",
   },
   btnOutline: {
     width: "100%",
-    padding: "10px 0",
+    padding: "12px 0",
     backgroundColor: "#fff",
-    color: "#111827",
-    border: "1px solid #d1d5db",
-    borderRadius: 8,
+    color: "#0f172a",
+    border: "1.5px solid #cbd5e1",
+    borderRadius: 10,
     fontWeight: 600,
-    fontSize: 13,
+    fontSize: 13.5,
     cursor: "pointer",
-    transition: "0.2s",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    transition: "background 0.2s",
   },
 };

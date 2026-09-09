@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { Leaf, Mail, Lock, Eye, EyeOff, ShieldCheck, Hotel } from "lucide-react";
-import { doc, getDoc, setDoc } from "firebase/firestore";
-import { db, auth } from "../../../firebase/config";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "../../../firebase/config";
 import {
-  loginUser,
+  registerAdmin,
+  getUserRole,
   loginWithGoogle,
   handleGoogleRedirectResult,
   logoutUser,
@@ -13,11 +13,26 @@ import {
 } from "../../../firebase/authService";
 
 export default function Login({ onNavigate }) {
-  const [mode, setMode] = useState("user");
+  // Read saved mode or fallback to "user"
+  const [mode, setMode] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = sessionStorage.getItem("loginMode");
+      if (saved === "hotel" || saved === "admin" || saved === "user") {
+        return saved;
+      }
+    }
+    return "user";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("loginMode");
+    }
+  }, []);
+
   const isAdminMode = mode === "admin";
   const isHotelMode = mode === "hotel";
 
-  // Login state
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -25,12 +40,10 @@ export default function Login({ onNavigate }) {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Password reset state
   const [showReset, setShowReset] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetStatus, setResetStatus] = useState("");
 
-  // Admin registration state
   const [showAdminRegister, setShowAdminRegister] = useState(false);
   const [regEmail, setRegEmail] = useState("");
   const [regPassword, setRegPassword] = useState("");
@@ -42,7 +55,6 @@ export default function Login({ onNavigate }) {
   const [regError, setRegError] = useState("");
   const [regLoading, setRegLoading] = useState(false);
 
-  // Google redirect result
   useEffect(() => {
     (async () => {
       try {
@@ -64,12 +76,9 @@ export default function Login({ onNavigate }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Verify admin role
   const verifyAdminAndProceed = async (user) => {
     if (!user) return;
-
-    const userDoc = await getDoc(doc(db, "users", user.uid));
-    const role = userDoc.exists() ? userDoc.data().role : null;
+    const role = await getUserRole(user.uid);
 
     if (role !== "admin") {
       await logoutUser();
@@ -80,7 +89,6 @@ export default function Login({ onNavigate }) {
     if (onNavigate) onNavigate("/admin");
   };
 
-  // Switch between User, Hotel, and Admin mode
   const switchMode = (nextMode) => {
     setMode(nextMode);
     setError("");
@@ -90,50 +98,42 @@ export default function Login({ onNavigate }) {
     setLoading(false);
   };
 
-  // Normal login
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      // Hotel portal direct prototype bypass
+      const cleanEmail = email.trim();
+      const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+      const user = userCredential.user;
+
+      const userRole = await getUserRole(user.uid);
+
       if (isHotelMode) {
-        setLoading(false);
-        if (onNavigate) {
-          onNavigate("/hotel-dashboard");
-        } else {
-          window.location.hash = "/hotel-dashboard";
+        if (userRole !== "hotel") {
+          await logoutUser();
+          setError("This account is not registered as a Hotel Partner.");
+          return;
         }
-        return;
-      }
-
-      const user = await loginUser({
-        email,
-        password,
-      });
-
-      if (isAdminMode) {
-        await verifyAdminAndProceed(user);
+        if (onNavigate) onNavigate("/hotel-dashboard");
+      } else if (isAdminMode) {
+        if (userRole !== "admin") {
+          await logoutUser();
+          setError("This account doesn't have admin access.");
+          return;
+        }
+        if (onNavigate) onNavigate("/admin");
       } else {
         if (onNavigate) onNavigate("/dashboard");
       }
     } catch (err) {
-      if (isHotelMode) {
-        if (onNavigate) {
-          onNavigate("/hotel-dashboard");
-        } else {
-          window.location.hash = "/hotel-dashboard";
-        }
-      } else {
-        setError(friendlyAuthError(err));
-      }
+      setError(friendlyAuthError(err));
     } finally {
       setLoading(false);
     }
   };
 
-  // Google login
   const handleGoogleLogin = async () => {
     setError("");
     setGoogleLoading(true);
@@ -142,9 +142,7 @@ export default function Login({ onNavigate }) {
       const user = await loginWithGoogle();
 
       if (isAdminMode) {
-        if (user) {
-          await verifyAdminAndProceed(user);
-        }
+        if (user) await verifyAdminAndProceed(user);
       } else if (isHotelMode) {
         if (onNavigate) onNavigate("/hotel-dashboard");
       } else if (user) {
@@ -157,7 +155,6 @@ export default function Login({ onNavigate }) {
     }
   };
 
-  // Password reset
   const handleReset = async (e) => {
     e.preventDefault();
     setResetStatus("");
@@ -170,7 +167,6 @@ export default function Login({ onNavigate }) {
     }
   };
 
-  // Admin registration
   const handleAdminRegister = async (e) => {
     e.preventDefault();
     setRegError("");
@@ -195,17 +191,7 @@ export default function Login({ onNavigate }) {
     setRegLoading(true);
 
     try {
-      const userCred = await createUserWithEmailAndPassword(
-        auth,
-        cleanEmail,
-        regPassword
-      );
-
-      await setDoc(doc(db, "users", userCred.user.uid), {
-        email: cleanEmail,
-        role: "admin",
-        createdAt: new Date(),
-      });
+      await registerAdmin({ email: cleanEmail, password: regPassword });
 
       alert(
         `Admin account created successfully!\n\nEmail: ${cleanEmail}\n\nYou can now log in.`
@@ -220,15 +206,7 @@ export default function Login({ onNavigate }) {
       setShowRegConfirmPassword(false);
       setShowAdminRegister(false);
     } catch (err) {
-      if (err.code === "auth/email-already-in-use") {
-        setRegError("This email is already registered. Please use another email.");
-      } else if (err.code === "auth/invalid-email") {
-        setRegError("Please enter a valid email address.");
-      } else if (err.code === "auth/weak-password") {
-        setRegError("Password is too weak. Please use at least 6 characters.");
-      } else {
-        setRegError(friendlyAuthError(err));
-      }
+      setRegError(friendlyAuthError(err));
     } finally {
       setRegLoading(false);
     }
@@ -249,7 +227,6 @@ export default function Login({ onNavigate }) {
           ...(isHotelMode ? styles.cardHotel : {}),
         }}
       >
-        {/* USER / HOTEL / ADMIN TABS */}
         <div style={styles.tabRow}>
           <button
             type="button"
@@ -285,7 +262,6 @@ export default function Login({ onNavigate }) {
           </button>
         </div>
 
-        {/* ICON */}
         <div
           style={{
             ...styles.brandIcon,
@@ -302,7 +278,6 @@ export default function Login({ onNavigate }) {
           )}
         </div>
 
-        {/* TITLE */}
         <h1
           style={{
             ...styles.title,
@@ -318,7 +293,6 @@ export default function Login({ onNavigate }) {
             : "Welcome back"}
         </h1>
 
-        {/* SUBTITLE */}
         <p
           style={{
             ...styles.subtitle,
@@ -334,14 +308,10 @@ export default function Login({ onNavigate }) {
             : "Log in to continue your eco-journey"}
         </p>
 
-        {/* LOGIN ERROR */}
         {error && !showAdminRegister && (
           <div style={styles.errorBox}>{error}</div>
         )}
 
-        {/* =====================================================
-            ADMIN REGISTRATION FORM
-        ===================================================== */}
         {isAdminMode && showAdminRegister ? (
           <form onSubmit={handleAdminRegister} style={styles.form}>
             <label style={styles.labelAdmin}>Email</label>
@@ -455,45 +425,26 @@ export default function Login({ onNavigate }) {
           </form>
         ) : (
           <>
-            {/* GOOGLE LOGIN */}
-            <button
-              type="button"
-              onClick={handleGoogleLogin}
-              disabled={googleLoading}
-              style={{
-                ...styles.googleBtn,
-                ...(isAdminMode ? styles.googleBtnAdmin : {}),
-              }}
-            >
-              <GoogleIcon />
-              {googleLoading ? "Signing in..." : "Continue with Google"}
-            </button>
+            {!isAdminMode && !isHotelMode && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleGoogleLogin}
+                  disabled={googleLoading}
+                  style={styles.googleBtn}
+                >
+                  <GoogleIcon />
+                  {googleLoading ? "Signing in..." : "Continue with Google"}
+                </button>
 
-            {/* DIVIDER */}
-            <div style={styles.dividerRow}>
-              <div
-                style={{
-                  ...styles.dividerLine,
-                  ...(isAdminMode ? styles.dividerLineAdmin : {}),
-                }}
-              />
-              <span
-                style={{
-                  ...styles.dividerText,
-                  ...(isAdminMode ? styles.dividerTextAdmin : {}),
-                }}
-              >
-                or
-              </span>
-              <div
-                style={{
-                  ...styles.dividerLine,
-                  ...(isAdminMode ? styles.dividerLineAdmin : {}),
-                }}
-              />
-            </div>
+                <div style={styles.dividerRow}>
+                  <div style={styles.dividerLine} />
+                  <span style={styles.dividerText}>or</span>
+                  <div style={styles.dividerLine} />
+                </div>
+              </>
+            )}
 
-            {/* EMAIL / PASSWORD LOGIN */}
             <form onSubmit={handleLogin} style={styles.form}>
               <label
                 style={{
@@ -519,7 +470,7 @@ export default function Login({ onNavigate }) {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder={isHotelMode ? "hotel@greentrip.com" : "you@example.com"}
+                  placeholder={isHotelMode ? "partner@hotel.com" : "you@example.com"}
                   required
                   autoComplete="email"
                   style={{
@@ -581,7 +532,6 @@ export default function Login({ onNavigate }) {
                 </button>
               </div>
 
-              {/* FORGOT PASSWORD */}
               {!isAdminMode && (
                 <button
                   type="button"
@@ -595,7 +545,6 @@ export default function Login({ onNavigate }) {
                 </button>
               )}
 
-              {/* RESET PASSWORD */}
               {showReset && !isAdminMode && (
                 <div style={styles.resetBox}>
                   <p style={styles.resetText}>
@@ -623,7 +572,6 @@ export default function Login({ onNavigate }) {
                 </div>
               )}
 
-              {/* LOGIN BUTTON */}
               <button
                 type="submit"
                 disabled={loading}
@@ -635,14 +583,13 @@ export default function Login({ onNavigate }) {
                 }}
               >
                 {loading
-                  ? "Checking..."
+                  ? "Authenticating..."
                   : isHotelMode
                   ? "Log In to Hotel Portal"
                   : "Log In"}
               </button>
             </form>
 
-            {/* BOTTOM NAVIGATION LINKS */}
             {isAdminMode ? (
               <p style={styles.switchText}>
                 Don't have an admin account?{" "}
@@ -661,7 +608,12 @@ export default function Login({ onNavigate }) {
                 New hotel partner?{" "}
                 <span
                   style={styles.switchLinkHotel}
-                  onClick={() => onNavigate?.("/register")}
+                  onClick={() => {
+                    if (typeof window !== "undefined") {
+                      sessionStorage.setItem("registerMode", "hotel");
+                    }
+                    onNavigate?.("/register");
+                  }}
                 >
                   Register hotel property
                 </span>
@@ -671,7 +623,12 @@ export default function Login({ onNavigate }) {
                 Don't have an account?{" "}
                 <span
                   style={styles.switchLink}
-                  onClick={() => onNavigate?.("/register")}
+                  onClick={() => {
+                    if (typeof window !== "undefined") {
+                      sessionStorage.setItem("registerMode", "traveler");
+                    }
+                    onNavigate?.("/register");
+                  }}
                 >
                   Sign Up
                 </span>
@@ -684,17 +641,9 @@ export default function Login({ onNavigate }) {
   );
 }
 
-// =========================================================
-// GOOGLE ICON
-// =========================================================
-
 function GoogleIcon() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 18 18"
-    >
+    <svg width="18" height="18" viewBox="0 0 18 18">
       <path
         fill="#4285F4"
         d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"
@@ -715,10 +664,6 @@ function GoogleIcon() {
   );
 }
 
-// =========================================================
-// STYLES
-// =========================================================
-
 const styles = {
   page: {
     minHeight: "100vh",
@@ -726,47 +671,33 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontFamily:
-      "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
     padding: 20,
     transition: "background 0.2s",
     boxSizing: "border-box",
   },
-
-  pageAdmin: {
-    background: "#0f172a",
-  },
-
-  pageHotel: {
-    background: "#fdf8f6",
-  },
-
+  pageAdmin: { background: "#0f172a" },
+  pageHotel: { background: "#fdf8f6" },
   card: {
     background: "#fff",
     borderRadius: 20,
     padding: "40px 36px",
     width: "100%",
     maxWidth: 420,
-    boxShadow:
-      "0 10px 30px rgba(0,0,0,0.06)",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
     textAlign: "center",
     boxSizing: "border-box",
   },
-
   cardAdmin: {
     background: "#1e293b",
     border: "1px solid #334155",
-    boxShadow:
-      "0 20px 45px rgba(0,0,0,0.4)",
+    boxShadow: "0 20px 45px rgba(0,0,0,0.4)",
   },
-
   cardHotel: {
     background: "#fff",
     border: "1px solid #fed7aa",
-    boxShadow:
-      "0 10px 30px rgba(217, 119, 6, 0.08)",
+    boxShadow: "0 10px 30px rgba(217, 119, 6, 0.08)",
   },
-
   tabRow: {
     display: "flex",
     gap: 4,
@@ -775,7 +706,6 @@ const styles = {
     padding: 4,
     marginBottom: 24,
   },
-
   tabBtn: {
     flex: 1,
     border: "none",
@@ -788,26 +718,9 @@ const styles = {
     cursor: "pointer",
     transition: "all 0.15s ease",
   },
-
-  tabBtnActive: {
-    background: "#fff",
-    color: "#16a34a",
-    boxShadow:
-      "0 1px 3px rgba(0,0,0,0.08)",
-  },
-
-  tabBtnActiveAdmin: {
-    background: "#0f172a",
-    color: "#38bdf8",
-  },
-
-  tabBtnActiveHotel: {
-    background: "#fff",
-    color: "#d97706",
-    boxShadow:
-      "0 1px 3px rgba(0,0,0,0.08)",
-  },
-
+  tabBtnActive: { background: "#fff", color: "#16a34a", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" },
+  tabBtnActiveAdmin: { background: "#0f172a", color: "#38bdf8" },
+  tabBtnActiveHotel: { background: "#fff", color: "#d97706", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" },
   brandIcon: {
     width: 56,
     height: 56,
@@ -818,37 +731,12 @@ const styles = {
     justifyContent: "center",
     margin: "0 auto 20px",
   },
-
-  brandIconAdmin: {
-    background: "#334155",
-  },
-
-  brandIconHotel: {
-    background: "#f59e0b",
-  },
-
-  title: {
-    fontSize: 24,
-    fontWeight: 800,
-    color: "#111827",
-    margin: 0,
-  },
-
-  titleAdmin: {
-    color: "#f1f5f9",
-  },
-
-  subtitle: {
-    color: "#6b7280",
-    fontSize: 14,
-    marginTop: 6,
-    marginBottom: 28,
-  },
-
-  subtitleAdmin: {
-    color: "#94a3b8",
-  },
-
+  brandIconAdmin: { background: "#334155" },
+  brandIconHotel: { background: "#f59e0b" },
+  title: { fontSize: 24, fontWeight: 800, color: "#111827", margin: 0 },
+  titleAdmin: { color: "#f1f5f9" },
+  subtitle: { color: "#6b7280", fontSize: 14, marginTop: 6, marginBottom: 28 },
+  subtitleAdmin: { color: "#94a3b8" },
   errorBox: {
     background: "#fee2e2",
     color: "#b91c1c",
@@ -859,7 +747,6 @@ const styles = {
     textAlign: "left",
     lineHeight: 1.4,
   },
-
   googleBtn: {
     width: "100%",
     display: "flex",
@@ -875,58 +762,15 @@ const styles = {
     color: "#111827",
     cursor: "pointer",
   },
-
-  googleBtnAdmin: {
-    background: "#0f172a",
-    border: "1px solid #334155",
-    color: "#e2e8f0",
-  },
-
-  dividerRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    margin: "20px 0",
-  },
-
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    background: "#e5e7eb",
-  },
-
-  dividerLineAdmin: {
-    background: "#334155",
-  },
-
-  dividerText: {
-    fontSize: 12.5,
-    color: "#9ca3af",
-  },
-
-  dividerTextAdmin: {
-    color: "#64748b",
-  },
-
-  form: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-    textAlign: "left",
-  },
-
-  label: {
-    fontSize: 13.5,
-    fontWeight: 600,
-    color: "#374151",
-    marginTop: 10,
-    marginBottom: 4,
-  },
-
-  labelAdmin: {
-    color: "#cbd5e1",
-  },
-
+  googleBtnAdmin: { background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0" },
+  dividerRow: { display: "flex", borderBottom: "none", alignItems: "center", gap: 12, margin: "20px 0" },
+  dividerLine: { flex: 1, height: 1, background: "#e5e7eb" },
+  dividerLineAdmin: { background: "#334155" },
+  dividerText: { fontSize: 12.5, color: "#9ca3af" },
+  dividerTextAdmin: { color: "#64748b" },
+  form: { display: "flex", flexDirection: "column", gap: 6, textAlign: "left" },
+  label: { fontSize: 13.5, fontWeight: 600, color: "#374151", marginTop: 10, marginBottom: 4 },
+  labelAdmin: { color: "#cbd5e1" },
   inputWrap: {
     display: "flex",
     alignItems: "center",
@@ -938,7 +782,6 @@ const styles = {
     minHeight: 48,
     boxSizing: "border-box",
   },
-
   inputWrapAdmin: {
     display: "flex",
     alignItems: "center",
@@ -950,11 +793,7 @@ const styles = {
     minHeight: 48,
     boxSizing: "border-box",
   },
-
-  inputIcon: {
-    flexShrink: 0,
-  },
-
+  inputIcon: { flexShrink: 0 },
   input: {
     border: "none",
     outline: "none",
@@ -965,7 +804,6 @@ const styles = {
     fontSize: 14.5,
     fontFamily: "inherit",
   },
-
   inputAdmin: {
     color: "#f1f5f9",
     width: "100%",
@@ -977,7 +815,6 @@ const styles = {
     fontFamily: "inherit",
     boxSizing: "border-box",
   },
-
   eyeBtn: {
     border: "none",
     background: "transparent",
@@ -988,7 +825,6 @@ const styles = {
     padding: 4,
     flexShrink: 0,
   },
-
   forgotBtn: {
     alignSelf: "flex-end",
     border: "none",
@@ -999,25 +835,9 @@ const styles = {
     cursor: "pointer",
     padding: "6px 0",
   },
-
-  resetBox: {
-    background: "#f9fafb",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 4,
-  },
-
-  resetText: {
-    fontSize: 13,
-    color: "#6b7280",
-    margin: "0 0 10px",
-  },
-
-  resetRow: {
-    display: "flex",
-    gap: 8,
-  },
-
+  resetBox: { background: "#f9fafb", borderRadius: 12, padding: 14, marginBottom: 4 },
+  resetText: { fontSize: 13, color: "#6b7280", margin: "0 0 10px" },
+  resetRow: { display: "flex", gap: 8 },
   resetInput: {
     flex: 1,
     border: "1px solid #e5e7eb",
@@ -1026,7 +846,6 @@ const styles = {
     fontSize: 13.5,
     outline: "none",
   },
-
   resetBtn: {
     border: "none",
     background: "#111827",
@@ -1037,14 +856,7 @@ const styles = {
     fontWeight: 600,
     cursor: "pointer",
   },
-
-  resetStatus: {
-    fontSize: 12.5,
-    color: "#16a34a",
-    marginTop: 8,
-    marginBottom: 0,
-  },
-
+  resetStatus: { fontSize: 12.5, color: "#16a34a", marginTop: 8, marginBottom: 0 },
   submitBtn: {
     marginTop: 20,
     background: "#16a34a",
@@ -1056,7 +868,6 @@ const styles = {
     fontWeight: 700,
     cursor: "pointer",
   },
-
   submitBtnAdmin: {
     marginTop: 20,
     background: "#38bdf8",
@@ -1068,7 +879,6 @@ const styles = {
     fontWeight: 800,
     cursor: "pointer",
   },
-
   submitBtnHotel: {
     marginTop: 20,
     background: "#d97706",
@@ -1080,36 +890,11 @@ const styles = {
     fontWeight: 700,
     cursor: "pointer",
   },
-
-  disabledBtn: {
-    opacity: 0.6,
-    cursor: "not-allowed",
-  },
-
-  switchText: {
-    fontSize: 13.5,
-    color: "#6b7280",
-    marginTop: 24,
-  },
-
-  switchLink: {
-    color: "#16a34a",
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-
-  switchLinkAdmin: {
-    color: "#38bdf8",
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-
-  switchLinkHotel: {
-    color: "#d97706",
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-
+  disabledBtn: { opacity: 0.6, cursor: "not-allowed" },
+  switchText: { fontSize: 13.5, color: "#6b7280", marginTop: 24 },
+  switchLink: { color: "#16a34a", fontWeight: 700, cursor: "pointer" },
+  switchLinkAdmin: { color: "#38bdf8", fontWeight: 700, cursor: "pointer" },
+  switchLinkHotel: { color: "#d97706", fontWeight: 700, cursor: "pointer" },
   backToLoginBtn: {
     marginTop: 10,
     background: "none",

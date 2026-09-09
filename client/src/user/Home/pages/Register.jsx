@@ -1,15 +1,26 @@
 import React, { useEffect, useState } from "react";
-import { Leaf, User, Mail, Lock, Eye, EyeOff, Hotel, MapPin } from "lucide-react";
-import { registerTourist, friendlyAuthError } from "../../../firebase/authService";
+import { Leaf, User, Mail, Lock, Eye, EyeOff, Hotel } from "lucide-react";
+import { registerTourist, registerHotel, friendlyAuthError } from "../../../firebase/authService";
 
-export default function Register({ onNavigate, initialMode = "hotel" }) {
-  // Checks if the user arrived from the Hotel login tab or default
+export default function Register({ onNavigate, initialMode = "traveler" }) {
   const [mode, setMode] = useState(() => {
-    if (typeof window !== "undefined" && window.location.hash.includes("hotel")) {
-      return "hotel";
+    if (typeof window !== "undefined") {
+      const saved = sessionStorage.getItem("registerMode");
+      if (saved === "hotel" || saved === "traveler") {
+        return saved;
+      }
+      if (window.location.hash.includes("hotel")) {
+        return "hotel";
+      }
     }
     return initialMode;
   });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("registerMode");
+    }
+  }, []);
 
   const isHotelMode = mode === "hotel";
 
@@ -21,9 +32,7 @@ export default function Register({ onNavigate, initialMode = "hotel" }) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
-  // Hotel Partner state
-  const [hotelName, setHotelName] = useState("");
-  const [hotelLocation, setHotelLocation] = useState("");
+  // Hotel state (Email & Password)
   const [hotelEmail, setHotelEmail] = useState("");
   const [hotelPassword, setHotelPassword] = useState("");
   const [hotelConfirmPassword, setHotelConfirmPassword] = useState("");
@@ -61,16 +70,14 @@ export default function Register({ onNavigate, initialMode = "hotel" }) {
     }
   };
 
-  const handleHotelSubmit = (e) => {
+  const handleHotelSubmit = async (e) => {
     e.preventDefault();
     setError("");
 
-    if (!hotelName.trim()) {
-      setError("Hotel property name is required.");
-      return;
-    }
-    if (!hotelLocation.trim()) {
-      setError("Location / State is required.");
+    const cleanEmail = hotelEmail.trim();
+
+    if (!cleanEmail) {
+      setError("Business email is required.");
       return;
     }
     if (hotelPassword.length < 6) {
@@ -83,12 +90,28 @@ export default function Register({ onNavigate, initialMode = "hotel" }) {
     }
 
     setLoading(true);
-    // Prototype flow: feedback message and redirect to the Hotel Dashboard
-    setTimeout(() => {
+    try {
+      await registerHotel({ email: cleanEmail, password: hotelPassword });
+
+      alert("Hotel partner account created! Please log in to complete your certification application.");
+      
+      // Store hotel login preference
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("loginMode", "hotel");
+      }
+      onNavigate("/login");
+    } catch (err) {
+      setError(friendlyAuthError(err));
+    } finally {
       setLoading(false);
-      alert(`Property "${hotelName}" registered successfully! Redirecting to the Hotel Portal.`);
-      onNavigate("/hotel-dashboard");
-    }, 400);
+    }
+  };
+
+  const handleGoToLogin = () => {
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("loginMode", isHotelMode ? "hotel" : "user");
+    }
+    onNavigate("/login");
   };
 
   return (
@@ -104,7 +127,6 @@ export default function Register({ onNavigate, initialMode = "hotel" }) {
           ...(isHotelMode ? styles.cardHotel : {}),
         }}
       >
-        {/* SEGMENTED TOGGLE */}
         <div style={styles.tabRow}>
           <button
             type="button"
@@ -135,7 +157,6 @@ export default function Register({ onNavigate, initialMode = "hotel" }) {
           </button>
         </div>
 
-        {/* BRAND ICON */}
         <div
           style={{
             ...styles.brandIcon,
@@ -149,49 +170,19 @@ export default function Register({ onNavigate, initialMode = "hotel" }) {
           )}
         </div>
 
-        {/* TITLE & SUBTITLE */}
         <h1 style={styles.title}>
-          {isHotelMode ? "Register Hotel Property" : "Join GreenTrip Malaysia"}
+          {isHotelMode ? "Register Hotel Partner" : "Join GreenTrip Malaysia"}
         </h1>
         <p style={styles.subtitle}>
           {isHotelMode
-            ? "Enroll your hotel for Green Certification audits"
+            ? "Create an account to begin your eco-certification audit"
             : "Create your traveler account"}
         </p>
 
         {error && <div style={styles.errorBox}>{error}</div>}
 
-        {/* =====================================================
-            HOTEL PARTNER REGISTRATION FORM
-        ===================================================== */}
         {isHotelMode ? (
           <form onSubmit={handleHotelSubmit} style={styles.form}>
-            <label style={styles.label}>Hotel Property Name</label>
-            <div style={styles.inputWrap}>
-              <Hotel size={18} color="#9ca3af" />
-              <input
-                type="text"
-                value={hotelName}
-                onChange={(e) => setHotelName(e.target.value)}
-                placeholder="e.g. Coastal Inn Kuala Lumpur"
-                required
-                style={styles.input}
-              />
-            </div>
-
-            <label style={styles.label}>Location / State</label>
-            <div style={styles.inputWrap}>
-              <MapPin size={18} color="#9ca3af" />
-              <input
-                type="text"
-                value={hotelLocation}
-                onChange={(e) => setHotelLocation(e.target.value)}
-                placeholder="e.g. Kuala Lumpur, Malaysia"
-                required
-                style={styles.input}
-              />
-            </div>
-
             <label style={styles.label}>Business Email</label>
             <div style={styles.inputWrap}>
               <Mail size={18} color="#9ca3af" />
@@ -199,7 +190,7 @@ export default function Register({ onNavigate, initialMode = "hotel" }) {
                 type="email"
                 value={hotelEmail}
                 onChange={(e) => setHotelEmail(e.target.value)}
-                placeholder="partner@coastalinn.com"
+                placeholder="partner@hotel.com"
                 required
                 style={styles.input}
               />
@@ -257,18 +248,11 @@ export default function Register({ onNavigate, initialMode = "hotel" }) {
               </button>
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              style={styles.submitBtnHotel}
-            >
-              {loading ? "Registering Property..." : "Register Property"}
+            <button type="submit" disabled={loading} style={styles.submitBtnHotel}>
+              {loading ? "Creating Account..." : "Create Hotel Account"}
             </button>
           </form>
         ) : (
-          /* =====================================================
-              TRAVELER REGISTRATION FORM
-          ===================================================== */
           <form onSubmit={handleTravelerSubmit} style={styles.form}>
             <label style={styles.label}>Full Name</label>
             <div style={styles.inputWrap}>
@@ -354,12 +338,11 @@ export default function Register({ onNavigate, initialMode = "hotel" }) {
           </form>
         )}
 
-        {/* BOTTOM SWITCH LINK */}
         <p style={styles.switchText}>
           Already have an account?{" "}
           <span
             style={isHotelMode ? styles.switchLinkHotel : styles.switchLink}
-            onClick={() => onNavigate("/login")}
+            onClick={handleGoToLogin}
           >
             Log In
           </span>
@@ -380,9 +363,7 @@ const styles = {
     padding: 20,
     boxSizing: "border-box",
   },
-  pageHotel: {
-    background: "#fdf8f6",
-  },
+  pageHotel: { background: "#fdf8f6" },
   card: {
     background: "#fff",
     borderRadius: 20,
@@ -393,18 +374,8 @@ const styles = {
     textAlign: "center",
     boxSizing: "border-box",
   },
-  cardHotel: {
-    border: "1px solid #fed7aa",
-    boxShadow: "0 10px 30px rgba(217, 119, 6, 0.08)",
-  },
-  tabRow: {
-    display: "flex",
-    gap: 4,
-    background: "#f3f4f6",
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 20,
-  },
+  cardHotel: { border: "1px solid #fed7aa", boxShadow: "0 10px 30px rgba(217, 119, 6, 0.08)" },
+  tabRow: { display: "flex", gap: 4, background: "#f3f4f6", borderRadius: 12, padding: 4, marginBottom: 20 },
   tabBtn: {
     flex: 1,
     border: "none",
@@ -417,16 +388,8 @@ const styles = {
     cursor: "pointer",
     transition: "all 0.15s ease",
   },
-  tabBtnActive: {
-    background: "#fff",
-    color: "#16a34a",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-  },
-  tabBtnActiveHotel: {
-    background: "#fff",
-    color: "#d97706",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-  },
+  tabBtnActive: { background: "#fff", color: "#16a34a", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" },
+  tabBtnActiveHotel: { background: "#fff", color: "#d97706", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" },
   brandIcon: {
     width: 56,
     height: 56,
@@ -437,9 +400,7 @@ const styles = {
     justifyContent: "center",
     margin: "0 auto 16px",
   },
-  brandIconHotel: {
-    background: "#f59e0b",
-  },
+  brandIconHotel: { background: "#f59e0b" },
   title: { fontSize: 24, fontWeight: 800, color: "#111827", margin: 0 },
   subtitle: { color: "#6b7280", fontSize: 14, marginTop: 6, marginBottom: 20 },
   errorBox: {
@@ -464,21 +425,8 @@ const styles = {
     minHeight: 46,
     boxSizing: "border-box",
   },
-  input: {
-    border: "none",
-    outline: "none",
-    background: "transparent",
-    flex: 1,
-    fontSize: 14,
-    minWidth: 0,
-  },
-  eyeBtn: {
-    border: "none",
-    background: "transparent",
-    cursor: "pointer",
-    display: "flex",
-    padding: 0,
-  },
+  input: { border: "none", outline: "none", background: "transparent", flex: 1, fontSize: 14, minWidth: 0 },
+  eyeBtn: { border: "none", background: "transparent", cursor: "pointer", display: "flex", padding: 0 },
   submitBtn: {
     marginTop: 18,
     background: "#16a34a",
