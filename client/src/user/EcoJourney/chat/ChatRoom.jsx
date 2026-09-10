@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Send, Users, MoreVertical, BellOff, Bell, Trash2, Paperclip, Mic, Pause, Play, Search, CheckSquare, Pin, LogOut, UserPlus, X, Copy, Check, CheckCheck } from "lucide-react";
+import { ChevronLeft, Send, Users, MoreVertical, BellOff, Bell, Trash2, Paperclip, Search, CheckSquare, Pin, LogOut, UserPlus, X, Copy, Check, CheckCheck } from "lucide-react";
 import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { db } from "../../../firebase/config";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
@@ -8,7 +8,6 @@ import {
   sendMessage,
   sendImageMessage,
   sendVideoMessage,
-  sendVoiceMessage,
   toggleMuteChat,
   deleteConversation,
   leaveGroup,
@@ -22,6 +21,38 @@ import {
  * you navigate to `/chat/:chatId`, e.g.:
  *   <ChatRoom chatId={params.chatId} onNavigate={onNavigate} />
  */
+function toDate(value) {
+  try {
+    if (!value) return null;
+    if (value?.toDate) return value.toDate();
+    if (value?.seconds != null) return new Date(Number(value.seconds) * 1000);
+    if (value instanceof Date) return value;
+    if (typeof value === "number") return new Date(value);
+    if (typeof value === "string") {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+  } catch {}
+  return null;
+}
+
+function formatMessageTime(value) {
+  const date = toDate(value);
+  return date ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+}
+
+function formatDateSeparator(value) {
+  const date = toDate(value);
+  if (!date) return "";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const messageDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((today - messageDay) / 86400000);
+  if (diffDays === 0) return "TODAY";
+  if (diffDays === 1) return "YESTERDAY";
+  return date.toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" });
+}
+
 export default function ChatRoom({ chatId, onNavigate }) {
   const { authUser, profile, loading } = useCurrentUser();
   const [chat, setChat] = useState(null);
@@ -36,12 +67,6 @@ export default function ChatRoom({ chatId, onNavigate }) {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [recordingPaused, setRecordingPaused] = useState(false);
-  const [recordingLevels, setRecordingLevels] = useState(
-    Array.from({ length: 28 }, () => 0.18)
-  );
   const [chatError, setChatError] = useState("");
   const [messageMenuId, setMessageMenuId] = useState(null);
   const [hoverMessageId, setHoverMessageId] = useState(null);
@@ -49,22 +74,7 @@ export default function ChatRoom({ chatId, onNavigate }) {
   // Media is previewed first. Nothing is uploaded/sent until the user
   // explicitly presses Send, similar to WhatsApp.
   const [pendingMedia, setPendingMedia] = useState([]);
-  const [pendingVoice, setPendingVoice] = useState(null);
-  const [sendingVoice, setSendingVoice] = useState(false);
   const fileInputRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const timerIntervalRef = useRef(null);
-  const recordingSecondsRef = useRef(0);
-  const recordingStartedAtRef = useRef(0);
-  const recordingPausedAtRef = useRef(0);
-  const recordingPausedTotalRef = useRef(0);
-  const sendRecordingNowRef = useRef(false);
-
-  // Web Audio API refs used only for the live microphone waveform.
-  const audioContextRef = useRef(null);
-  const analyserRef = useRef(null);
-  const analyserAnimationRef = useRef(null);
 
   // Visible in-page error banner — window.alert() can be silently
   // suppressed in some embedded/iframe browser previews, so surface
@@ -75,643 +85,173 @@ export default function ChatRoom({ chatId, onNavigate }) {
     setTimeout(() => setChatError(""), 6000);
   };
 
-  const formatDuration = (totalSeconds) => {
-    const m = Math.floor(totalSeconds / 60);
-    const s = totalSeconds % 60;
-    return `${m}:${s.toString().padStart(2, "0")}`;
-  };
+  /* =========================================================
+     LOAD THE CHAT DOCUMENT
+
+     IMPORTANT:
+     ChatList opens ChatRoom with:
+       onNavigate("/community/chat/room", chat.id)
+
+     Therefore ChatRoom receives the Firestore document id
+     through the chatId prop. This listener loads that document.
+  ========================================================= */
 
   useEffect(() => {
-    if (!chatId) return;
-    const unsubChat = onSnapshot(doc(db, "chats", chatId), (snap) => {
-      setChat(snap.exists() ? { id: snap.id, ...snap.data() } : null);
-    });
-    const unsubMessages = listenToMessages(chatId, setMessages);
+    if (!chatId) {
+      console.error(
+        "ChatRoom: chatId is missing.",
+        { chatId }
+      );
+
+      setChat(null);
+      setChatError(
+        "No chat ID was passed to ChatRoom."
+      );
+
+      return;
+    }
+
+    setChat(null);
+    setChatError("");
+
+    const chatRef = doc(
+      db,
+      "chats",
+      String(chatId)
+    );
+
+    const unsubscribe = onSnapshot(
+      chatRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          console.error(
+            "ChatRoom: chat document does not exist:",
+            chatId
+          );
+
+          setChat(null);
+          setChatError(
+            "This chat does not exist anymore."
+          );
+
+          return;
+        }
+
+        setChat({
+          id: snapshot.id,
+          ...snapshot.data(),
+        });
+
+        setChatError("");
+      },
+      (error) => {
+        console.error(
+          "ChatRoom: failed to load chat document:",
+          error
+        );
+
+        setChat(null);
+        setChatError(
+          error?.message ||
+            "Failed to load this chat."
+        );
+      }
+    );
+
     return () => {
-      unsubChat();
-      unsubMessages();
+      unsubscribe();
     };
   }, [chatId]);
 
+
+  /* =========================================================
+     LISTEN TO CHAT MESSAGES
+  ========================================================= */
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  // Mark incoming messages as seen when the chat is open.
-  useEffect(() => {
-    if (!chatId || !authUser?.uid || !messages.length) return;
-    markMessagesAsRead(chatId, authUser.uid).catch((err) => {
-      console.error("Unable to mark messages as seen:", err);
-    });
-  }, [chatId, authUser?.uid, messages]);
-
-  const handleSend = async (e) => {
-    e.preventDefault();
-    if (!text.trim() || sending) return;
-    setSending(true);
-    try {
-      await sendMessage(chatId, { uid: authUser.uid, displayName: profile?.name }, text);
-      setText("");
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handlePickMedia = () => {
-    if (uploadingMedia || recording || sendingVoice) return;
-    fileInputRef.current?.click();
-  };
-
-  const clearPendingMedia = () => {
-    pendingMedia.forEach((item) => {
-      if (item?.url) URL.revokeObjectURL(item.url);
-    });
-    setPendingMedia([]);
-  };
-
-  const removePendingMedia = (index) => {
-    setPendingMedia((current) => {
-      const item = current[index];
-      if (item?.url) URL.revokeObjectURL(item.url);
-      return current.filter((_, i) => i !== index);
-    });
-  };
-
-  const clearPendingVoice = () => {
-    if (pendingVoice?.url) URL.revokeObjectURL(pendingVoice.url);
-    setPendingVoice(null);
-  };
-
-  const handleMediaChange = (e) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = "";
-    if (!files.length) return;
-
-    const validFiles = files.filter((file) => {
-      const isImage = file.type.startsWith("image/");
-      const isVideo = file.type.startsWith("video/");
-      return isImage || isVideo;
-    });
-
-    if (!validFiles.length) {
-      reportError(new Error("Please choose image or video files."));
+    if (!chatId) {
+      setMessages([]);
       return;
     }
 
-    if (validFiles.length !== files.length) {
-      reportError(new Error("Only image and video files were added. Unsupported files were skipped."));
-    }
-
-    clearPendingVoice();
-
-    const selected = validFiles.map((file) => ({
-      file,
-      type: file.type.startsWith("image/") ? "image" : "video",
-      url: URL.createObjectURL(file),
-    }));
-
-    setPendingMedia((current) => [...current, ...selected]);
-  };
-
-  const handleSendPendingMedia = async () => {
-    if (!pendingMedia.length || uploadingMedia) return;
-
-    setUploadingMedia(true);
-    try {
-      const sender = {
-        uid: authUser.uid,
-        displayName: profile?.name,
-      };
-
-      for (const item of pendingMedia) {
-        if (item.type === "image") {
-          await sendImageMessage(chatId, sender, item.file);
-        } else {
-          await sendVideoMessage(chatId, sender, item.file);
-        }
-      }
-
-      clearPendingMedia();
-    } catch (err) {
-      reportError(err);
-    } finally {
-      setUploadingMedia(false);
-    }
-  };
-
-  const stopWaveformMonitor = () => {
-    if (analyserAnimationRef.current) {
-      cancelAnimationFrame(
-        analyserAnimationRef.current
-      );
-      analyserAnimationRef.current = null;
-    }
-
-    try {
-      analyserRef.current?.disconnect();
-    } catch {
-      // Ignore cleanup errors.
-    }
-
-    analyserRef.current = null;
-
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-    }
-
-    setRecordingLevels(
-      Array.from({ length: 28 }, () => 0.18)
-    );
-  };
-
-  const startWaveformMonitor = (stream) => {
-    const AudioContextClass =
-      window.AudioContext ||
-      window.webkitAudioContext;
-
-    if (!AudioContextClass) return;
-
-    try {
-      const audioContext =
-        new AudioContextClass();
-
-      const source =
-        audioContext.createMediaStreamSource(
-          stream
-        );
-
-      const analyser =
-        audioContext.createAnalyser();
-
-      analyser.fftSize = 64;
-      analyser.smoothingTimeConstant = 0.72;
-
-      source.connect(analyser);
-
-      audioContextRef.current =
-        audioContext;
-      analyserRef.current = analyser;
-
-      const data =
-        new Uint8Array(
-          analyser.frequencyBinCount
-        );
-
-      const draw = () => {
-        if (
-          !analyserRef.current ||
-          !audioContextRef.current
-        ) {
-          return;
-        }
-
-        analyser.getByteFrequencyData(data);
-
-        const barCount = 28;
-        const bars = [];
-
-        for (let i = 0; i < barCount; i += 1) {
-          const index = Math.floor(
-            (i / barCount) * data.length
-          );
-
-          const value =
-            data[index] / 255;
-
-          // Keep quiet microphones visible while
-          // still reacting strongly to speech.
-          bars.push(
-            Math.max(
-              0.12,
-              Math.min(1, value * 2.4)
-            )
-          );
-        }
-
-        setRecordingLevels(bars);
-
-        analyserAnimationRef.current =
-          requestAnimationFrame(draw);
-      };
-
-      if (audioContext.state === "suspended") {
-        audioContext.resume().catch(() => {});
-      }
-
-      draw();
-    } catch (err) {
-      console.warn(
-        "Live audio waveform unavailable:",
-        err
-      );
-    }
-  };
-
-  const getAudioDuration = (blob) =>
-    new Promise((resolve) => {
-      const url =
-        URL.createObjectURL(blob);
-
-      const audio =
-        document.createElement("audio");
-
-      const cleanup = () => {
-        URL.revokeObjectURL(url);
-        audio.removeAttribute("src");
-        audio.load();
-      };
-
-      audio.preload = "metadata";
-      audio.onloadedmetadata = () => {
-        const duration =
-          Number.isFinite(audio.duration)
-            ? audio.duration
-            : 0;
-
-        cleanup();
-        resolve(duration);
-      };
-
-      audio.onerror = () => {
-        cleanup();
-        resolve(0);
-      };
-
-      audio.src = url;
-    });
-
-  const startRecording = async () => {
-    if (
-      pendingMedia.length ||
-      pendingVoice ||
-      recording ||
-      uploadingMedia
-    ) {
-      return;
-    }
-
-    try {
-      if (
-        !navigator.mediaDevices ||
-        !navigator.mediaDevices.getUserMedia
-      ) {
-        throw new Error(
-          "This browser does not support microphone recording."
-        );
-      }
-
-      if (
-        typeof MediaRecorder ===
-        "undefined"
-      ) {
-        throw new Error(
-          "This browser does not support voice recording."
-        );
-      }
-
-      const stream =
-        await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
-
-      let mimeType = "";
-
-      const mimeCandidates = [
-        "audio/webm;codecs=opus",
-        "audio/webm",
-        "audio/ogg;codecs=opus",
-        "audio/mp4",
-      ];
-
-      for (const candidate of mimeCandidates) {
-        if (
-          MediaRecorder.isTypeSupported(
-            candidate
-          )
-        ) {
-          mimeType = candidate;
-          break;
-        }
-      }
-
-      const recorder = mimeType
-        ? new MediaRecorder(
-            stream,
-            { mimeType }
-          )
-        : new MediaRecorder(stream);
-
-      audioChunksRef.current = [];
-
-      recorder.ondataavailable = (event) => {
-        if (
-          event.data &&
-          event.data.size > 0
-        ) {
-          audioChunksRef.current.push(
-            event.data
-          );
-        }
-      };
-
-      recorder.onerror = (event) => {
-        console.error(
-          "MediaRecorder error:",
-          event
-        );
-      };
-
-      recorder.onstop = async () => {
-        stream
-          .getTracks()
-          .forEach((track) =>
-            track.stop()
-          );
-
-        clearInterval(
-          timerIntervalRef.current
-        );
-
-        stopWaveformMonitor();
-
-        const finalType =
-          recorder.mimeType ||
-          mimeType ||
-          "audio/webm";
-
-        const blob = new Blob(
-          audioChunksRef.current,
-          {
-            type: finalType,
-          }
-        );
-
-        const measuredDuration =
-          await getAudioDuration(blob);
-
-        const elapsedDuration =
-          Math.max(
-            0,
-            (Date.now() -
-              recordingStartedAtRef.current -
-              recordingPausedTotalRef.current) /
-              1000
-          );
-
-        // Prefer the real media duration.
-        // Fall back to elapsed recording time.
-        const duration =
-          measuredDuration > 0
-            ? measuredDuration
-            : elapsedDuration;
-
-        const shouldSendNow =
-          sendRecordingNowRef.current;
-
-        setRecording(false);
-        setRecordingPaused(false);
-        setRecordingSeconds(0);
-
-        recordingSecondsRef.current = 0;
-        recordingStartedAtRef.current = 0;
-        recordingPausedAtRef.current = 0;
-        recordingPausedTotalRef.current = 0;
-
-        mediaRecorderRef.current = null;
-        sendRecordingNowRef.current = false;
-
-        if (!blob.size) {
-          audioChunksRef.current = [];
-          return;
-        }
-
-        if (shouldSendNow) {
-          setSendingVoice(true);
-
-          try {
-            await sendVoiceMessage(
-              chatId,
-              {
-                uid: authUser.uid,
-                displayName:
-                  profile?.name,
-              },
-              blob,
-              duration
-            );
-          } catch (err) {
-            reportError(err);
-          } finally {
-            setSendingVoice(false);
-          }
-        } else {
-          const url =
-            URL.createObjectURL(blob);
-
-          setPendingVoice({
-            blob,
-            url,
-            duration,
-          });
-        }
-
-        audioChunksRef.current = [];
-      };
-
-      recorder.start(250);
-
-      mediaRecorderRef.current =
-        recorder;
-
-      recordingStartedAtRef.current =
-        Date.now();
-
-      recordingPausedAtRef.current = 0;
-      recordingPausedTotalRef.current = 0;
-
-      setRecording(true);
-      setRecordingPaused(false);
-      setRecordingSeconds(0);
-      setRecordingLevels(
-        Array.from(
-          { length: 28 },
-          () => 0.18
-        )
-      );
-
-      sendRecordingNowRef.current =
-        false;
-
-      startWaveformMonitor(stream);
-
-      timerIntervalRef.current =
-        setInterval(() => {
-          const currentRecorder =
-            mediaRecorderRef.current;
-
-          if (!currentRecorder) return;
-
-          if (
-            currentRecorder.state !==
-            "recording"
-          ) {
-            return;
-          }
-
-          const elapsed =
-            Math.max(
-              0,
-              (Date.now() -
-                recordingStartedAtRef.current -
-                recordingPausedTotalRef.current) /
-                1000
-            );
-
-          const seconds = Math.floor(
-            elapsed
-          );
-
-          recordingSecondsRef.current =
-            seconds;
-
-          setRecordingSeconds(
-            seconds
-          );
-        }, 100);
-    } catch (err) {
-      console.error(
-        "Unable to start voice recording:",
-        err
-      );
-
-      reportError(
-        new Error(
-          err?.message ||
-            "Couldn't access your microphone. Check browser permissions and try again."
-        )
-      );
-    }
-  };
-
-  const stopRecording = () => {
-    if (!mediaRecorderRef.current) return;
-    sendRecordingNowRef.current = false;
-    mediaRecorderRef.current.stop();
-    clearInterval(timerIntervalRef.current);
-  };
-
-  const sendRecordingNow = () => {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || sendingVoice) return;
-
-    sendRecordingNowRef.current = true;
-    if (recorder.state === "paused") {
-      recorder.resume();
-    }
-    recorder.stop();
-    clearInterval(timerIntervalRef.current);
-  };
-
-  const togglePauseRecording = () => {
-    const recorder =
-      mediaRecorderRef.current;
-
-    if (!recorder) return;
-
-    if (
-      recorder.state ===
-      "recording"
-    ) {
-      recorder.pause();
-
-      recordingPausedAtRef.current =
-        Date.now();
-
-      setRecordingPaused(true);
-    } else if (
-      recorder.state === "paused"
-    ) {
-      if (
-        recordingPausedAtRef.current
-      ) {
-        recordingPausedTotalRef.current +=
-          Date.now() -
-          recordingPausedAtRef.current;
-      }
-
-      recordingPausedAtRef.current = 0;
-
-      recorder.resume();
-      setRecordingPaused(false);
-    }
-  };
-
-  const deleteRecording = () => {
-    const recorder = mediaRecorderRef.current;
-
-    if (recorder && recorder.state !== "inactive") {
-      recorder.onstop = null;
-      recorder.stop();
-    }
-
-    mediaRecorderRef.current = null;
-    clearInterval(timerIntervalRef.current);
-    audioChunksRef.current = [];
-    stopWaveformMonitor();
-    setRecording(false);
-    setRecordingPaused(false);
-    setRecordingSeconds(0);
-    recordingSecondsRef.current = 0;
-    recordingStartedAtRef.current = 0;
-    recordingPausedAtRef.current = 0;
-    recordingPausedTotalRef.current = 0;
-    sendRecordingNowRef.current = false;
-  };
-
-  const handleSendPendingVoice = async () => {
-    if (!pendingVoice || sendingVoice) return;
-
-    setSendingVoice(true);
-    try {
-      await sendVoiceMessage(
+    const unsubscribe =
+      listenToMessages(
         chatId,
-        {
-          uid: authUser.uid,
-          displayName: profile?.name,
+        (newMessages) => {
+          setMessages(
+            Array.isArray(newMessages)
+              ? newMessages
+              : []
+          );
         },
-        pendingVoice.blob,
-        pendingVoice.duration
+        (error) => {
+          console.error(
+            "ChatRoom: failed to load messages:",
+            error
+          );
+
+          setChatError(
+            error?.message ||
+              "Failed to load messages."
+          );
+        }
       );
 
-      clearPendingVoice();
-    } catch (err) {
-      reportError(err);
-    } finally {
-      setSendingVoice(false);
-    }
-  };
-
-  // Clean up the timer/recorder if the component unmounts mid-recording.
-  useEffect(() => {
     return () => {
-      clearInterval(timerIntervalRef.current);
-      stopWaveformMonitor();
-
-      const recorder = mediaRecorderRef.current;
-      if (recorder && recorder.state !== "inactive") {
-        recorder.onstop = null;
-        recorder.stop();
+      if (
+        typeof unsubscribe ===
+        "function"
+      ) {
+        unsubscribe();
       }
     };
-  }, []);
+  }, [chatId]);
+
+
+  /* =========================================================
+     MARK MESSAGES AS READ / SEEN
+  ========================================================= */
+
+  useEffect(() => {
+    if (
+      !chatId ||
+      !authUser?.uid ||
+      !chat
+    ) {
+      return;
+    }
+
+    markMessagesAsRead(
+      chatId,
+      authUser.uid
+    ).catch((error) => {
+      console.error(
+        "ChatRoom: failed to mark messages as read:",
+        error
+      );
+    });
+  }, [
+    chatId,
+    authUser?.uid,
+    chat,
+    messages.length,
+  ]);
+
+
+  /* =========================================================
+     AUTO-SCROLL WHEN NEW MESSAGES ARRIVE
+  ========================================================= */
+
+  useEffect(() => {
+    if (!bottomRef.current) {
+      return;
+    }
+
+    bottomRef.current.scrollIntoView({
+      behavior: "smooth",
+    });
+  }, [messages.length]);
+
 
   const isMuted = !!chat?.mutedBy?.includes(authUser?.uid);
   const isPinned = !!chat?.pinnedBy?.includes(authUser?.uid);
@@ -816,7 +356,7 @@ export default function ChatRoom({ chatId, onNavigate }) {
 
   const handleCopyMessage = async (msg) => {
     setMessageMenuId(null);
-    const copyText = msg.text || (msg.type === "image" ? "Photo" : msg.type === "video" ? "Video" : msg.type === "audio" || msg.type === "voice" ? "Voice message" : "");
+    const copyText = msg.text || (msg.type === "image" ? "Photo" : msg.type === "video" ? "Video" : "");
     if (!copyText) return;
     try {
       await navigator.clipboard.writeText(copyText);
@@ -869,10 +409,12 @@ export default function ChatRoom({ chatId, onNavigate }) {
     );
   }, [messages, searchText, authUser?.uid]);
 
-  if (loading || !chat) {
+  if (loading) {
     return (
       <div style={styles.loadingPage}>
-        <p style={{ color: "#6b7280" }}>Loading chat...</p>
+        <p style={{ color: "#6b7280" }}>
+          Loading...
+        </p>
       </div>
     );
   }
@@ -880,9 +422,54 @@ export default function ChatRoom({ chatId, onNavigate }) {
   if (!authUser || !profile) {
     return (
       <div style={styles.loadingPage}>
-        <p style={{ color: "#6b7280", marginBottom: 16 }}>You're not logged in.</p>
-        <button type="button" onClick={() => onNavigate("/login")} style={styles.loginRedirectBtn}>
+        <p style={{ color: "#6b7280", marginBottom: 16 }}>
+          You're not logged in.
+        </p>
+
+        <button
+          type="button"
+          onClick={() => onNavigate("/login")}
+          style={styles.loginRedirectBtn}
+        >
           Go to Login
+        </button>
+      </div>
+    );
+  }
+
+  if (!chat) {
+    return (
+      <div style={styles.loadingPage}>
+        <p
+          style={{
+            color: "#b91c1c",
+            marginBottom: 16,
+            textAlign: "center",
+            maxWidth: 420,
+          }}
+        >
+          {chatError ||
+            "Unable to load this chat."}
+        </p>
+
+        <p
+          style={{
+            color: "#9ca3af",
+            fontSize: 12,
+            marginBottom: 16,
+          }}
+        >
+          Chat ID: {chatId || "missing"}
+        </p>
+
+        <button
+          type="button"
+          onClick={() =>
+            onNavigate("/community/chat")
+          }
+          style={styles.loginRedirectBtn}
+        >
+          Back to Chats
         </button>
       </div>
     );
@@ -915,8 +502,20 @@ export default function ChatRoom({ chatId, onNavigate }) {
           <>
             <div
               style={styles.headerClickable}
-              onClick={isGroup ? handleOpenGroupInfo : undefined}
-              title={isGroup ? "Open group info" : undefined}
+              onClick={
+                isGroup
+                  ? handleOpenGroupInfo
+                  : () =>
+                      onNavigate(
+                        "/community/chat/friend-profile",
+                        otherUid
+                      )
+              }
+              title={
+                isGroup
+                  ? "Open group info"
+                  : "Open friend profile"
+              }
             >
               <div style={isGroup ? styles.avatarGroup : styles.avatarFallback}>
                 {isGroup ? <Users size={16} /> : (title || "?").charAt(0).toUpperCase()}
@@ -1086,33 +685,18 @@ export default function ChatRoom({ chatId, onNavigate }) {
               msg.sentAt ||
               null;
 
-            let timestamp = "";
-
-            try {
-              let date = null;
-
-              if (rawTimestamp?.toDate) {
-                date = rawTimestamp.toDate();
-              } else if (rawTimestamp?.seconds != null) {
-                date = new Date(Number(rawTimestamp.seconds) * 1000);
-              } else if (rawTimestamp instanceof Date) {
-                date = rawTimestamp;
-              } else if (typeof rawTimestamp === "number") {
-                date = new Date(rawTimestamp);
-              } else if (typeof rawTimestamp === "string") {
-                const parsed = new Date(rawTimestamp);
-                if (!Number.isNaN(parsed.getTime())) date = parsed;
-              }
-
-              if (date && !Number.isNaN(date.getTime())) {
-                timestamp = date.toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                });
-              }
-            } catch {
-              timestamp = "";
-            }
+            const messageDate = toDate(rawTimestamp);
+            const messageIndex = filteredMessages.indexOf(msg);
+            const previousMessage = messageIndex > 0 ? filteredMessages[messageIndex - 1] : null;
+            const previousDate = previousMessage
+              ? toDate(previousMessage.created_at || previousMessage.createdAt || previousMessage.timestamp || previousMessage.sentAt)
+              : null;
+            const isNewDate = !!messageDate &&
+              (!previousDate ||
+                messageDate.getFullYear() !== previousDate.getFullYear() ||
+                messageDate.getMonth() !== previousDate.getMonth() ||
+                messageDate.getDate() !== previousDate.getDate());
+            const timestamp = formatMessageTime(rawTimestamp);
 
             const bubbleStyle = isDeletedForEveryone
               ? styles.bubbleDeleted(isMe)
@@ -1121,8 +705,14 @@ export default function ChatRoom({ chatId, onNavigate }) {
               : styles.bubbleTheirs;
 
             return (
-              <div
-                key={msg.id}
+              <div key={`${msg.id}-container`}>
+                {isNewDate && (
+                  <div style={styles.dateSeparator}>
+                    {formatDateSeparator(rawTimestamp)}
+                  </div>
+                )}
+                <div
+                  key={msg.id}
                 onClick={() => selectMode && toggleMessageSelection(msg.id)}
                 style={{
                   ...styles.messageRow,
@@ -1142,9 +732,6 @@ export default function ChatRoom({ chatId, onNavigate }) {
                 <div
                   style={{ ...styles.messageWrap, alignItems: isMe ? "flex-end" : "flex-start" }}
                   onMouseEnter={() => setHoverMessageId(msg.id)}
-                  onMouseLeave={() => {
-                    if (messageMenuId !== msg.id) setHoverMessageId(null);
-                  }}
                 >
                   {isGroup && !isMe && !isDeletedForEveryone && (
                     <div style={styles.bubbleSender}>{msg.senderName}</div>
@@ -1164,19 +751,6 @@ export default function ChatRoom({ chatId, onNavigate }) {
 
                         {msg.type === "video" && (msg.videoUrl || msg.mediaUrl) && (
                           <video controls preload="metadata" src={msg.videoUrl || msg.mediaUrl} style={styles.chatVideo} />
-                        )}
-
-                        {(msg.type === "voice" || msg.type === "audio") && (msg.audioUrl || msg.mediaUrl) && (
-                          <VoiceMessagePlayer
-                            src={
-                              msg.audioUrl ||
-                              msg.mediaUrl
-                            }
-                            duration={
-                              msg.duration
-                            }
-                            isMine={isMe}
-                          />
                         )}
 
                         {(!msg.type || msg.type === "text") && (
@@ -1208,14 +782,16 @@ export default function ChatRoom({ chatId, onNavigate }) {
                         ...(isMe ? { right: -42 } : { left: -42 }),
                       }}
                       onMouseEnter={() => setHoverMessageId(msg.id)}
+                      onMouseLeave={() => {
+                        setHoverMessageId(null);
+                        setMessageMenuId(null);
+                      }}
                     >
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setMessageMenuId((current) =>
-                            current === msg.id ? null : msg.id
-                          );
+                          setMessageMenuId(msg.id);
                         }}
                         style={styles.messageMenuBtn}
                         title="Message options"
@@ -1292,6 +868,7 @@ export default function ChatRoom({ chatId, onNavigate }) {
                   )}
                 </div>
               </div>
+              </div>
             );
           })
         )}
@@ -1357,66 +934,6 @@ export default function ChatRoom({ chatId, onNavigate }) {
         </div>
       )}
 
-      {pendingVoice && (
-        <div style={styles.mediaPreviewPanel}>
-          <div style={styles.previewHeader}>
-            <div style={styles.previewTitle}>Voice message</div>
-            <button
-              type="button"
-              onClick={clearPendingVoice}
-              disabled={sendingVoice}
-              style={styles.previewCloseBtn}
-              title="Cancel"
-            >
-              <X size={18} />
-            </button>
-          </div>
-
-          <div style={styles.voicePreviewBox}>
-            <div style={styles.voicePreviewIcon}>
-              <Mic size={19} color="#16a34a" />
-            </div>
-
-            <audio
-              controls
-              preload="metadata"
-              src={pendingVoice.url}
-              style={styles.previewAudio}
-            />
-
-            <span style={styles.voiceDurationLabel}>
-              {formatDuration(
-                Math.max(
-                  0,
-                  Math.round(
-                    pendingVoice.duration || 0
-                  )
-                )
-              )}
-            </span>
-          </div>
-
-          <div style={styles.previewActions}>
-            <button
-              type="button"
-              onClick={clearPendingVoice}
-              disabled={sendingVoice}
-              style={styles.cancelPreviewBtn}
-            >
-              Delete
-            </button>
-            <button
-              type="button"
-              onClick={handleSendPendingVoice}
-              disabled={sendingVoice}
-              style={styles.confirmPreviewBtn}
-            >
-              {sendingVoice ? "Sending..." : "Send"}
-            </button>
-          </div>
-        </div>
-      )}
-
       <form onSubmit={handleSend} style={styles.inputRow}>
         <input
           ref={fileInputRef}
@@ -1427,435 +944,48 @@ export default function ChatRoom({ chatId, onNavigate }) {
           style={{ display: "none" }}
         />
 
-        {recording ? (
-          <>
-            <button
-              type="button"
-              onClick={deleteRecording}
-              style={{ ...styles.iconBtn, background: "#fee2e2" }}
-              title="Delete recording"
-            >
-              <Trash2 size={18} color="#dc2626" />
-            </button>
+        <button
+          type="button"
+          onClick={handlePickMedia}
+          disabled={uploadingMedia || pendingMedia.length > 0}
+          style={styles.iconBtn}
+          title="Send an image or video"
+          aria-label="Send an image or video"
+        >
+          <Paperclip size={19} color="#6b7280" />
+        </button>
 
-            <div style={styles.recordingInput}>
-              <span style={styles.recordingDot}>●</span>
+        <input
+          type="text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={
+            pendingMedia.length > 0
+              ? "Finish or cancel the preview first..."
+              : "Type a message..."
+          }
+          disabled={pendingMedia.length > 0}
+          style={styles.input}
+        />
 
-              <strong>
-                {recordingPaused
-                  ? "Paused"
-                  : "Recording"}
-              </strong>
-
-              <div style={styles.waveform}>
-                {recordingLevels.map(
-                  (level, index) => (
-                    <span
-                      key={index}
-                      style={{
-                        ...styles.waveformBar,
-                        height: `${Math.max(
-                          5,
-                          7 + level * 25
-                        )}px`,
-                        opacity:
-                          recordingPaused
-                            ? 0.45
-                            : 0.55 +
-                              level * 0.45,
-                      }}
-                    />
-                  )
-                )}
-              </div>
-
-              <span style={styles.recordingTime}>
-                {formatDuration(
-                  recordingSeconds
-                )}
-              </span>
-            </div>
-
-            <button
-              type="button"
-              onClick={togglePauseRecording}
-              style={{ ...styles.iconBtn, background: "#f3f4f6" }}
-              title={recordingPaused ? "Resume recording" : "Pause recording"}
-            >
-              {recordingPaused ? (
-                <Play size={17} color="#16a34a" fill="#16a34a" />
-              ) : (
-                <Pause size={17} color="#374151" fill="#374151" />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={sendRecordingNow}
-              disabled={sendingVoice}
-              style={{ ...styles.sendBtn, width: 46, height: 46 }}
-              title="Send voice message"
-            >
-              <Send size={18} />
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={handlePickMedia}
-              disabled={uploadingMedia || pendingMedia.length > 0 || pendingVoice}
-              style={styles.iconBtn}
-              title="Send an image or video"
-            >
-              <Paperclip size={19} color="#6b7280" />
-            </button>
-
-            <button
-              type="button"
-              onClick={startRecording}
-              disabled={uploadingMedia || pendingMedia.length > 0 || pendingVoice}
-              style={styles.iconBtn}
-              title="Record a voice message"
-            >
-              <Mic size={19} color="#6b7280" />
-            </button>
-
-            <input
-              type="text"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={
-                pendingMedia.length > 0 || pendingVoice
-                  ? "Finish or cancel the preview first..."
-                  : "Type a message..."
-              }
-              disabled={pendingMedia.length > 0 || pendingVoice}
-              style={styles.input}
-            />
-
-            <button
-              type="submit"
-              disabled={sending || !text.trim() || pendingMedia.length > 0 || pendingVoice}
-              style={styles.sendBtn}
-              title="Send message"
-            >
-              <Send size={18} />
-            </button>
-          </>
-        )}
+        <button
+          type="submit"
+          disabled={
+            sending ||
+            !text.trim() ||
+            pendingMedia.length > 0
+          }
+          style={styles.sendBtn}
+          title="Send message"
+        >
+          <Send size={18} />
+        </button>
       </form>
 
       {chatError && <div style={styles.errorBanner}>⚠️ {chatError}</div>}
     </div>
   );
 }
-
-function getBrowserAudioUrl(src) {
-  if (!src || typeof src !== "string") {
-    return "";
-  }
-
-  if (
-    !src.includes("res.cloudinary.com/") ||
-    !src.includes("/upload/")
-  ) {
-    return src;
-  }
-
-  let audioUrl = src;
-
-  // Add the MP3 delivery transformation only once.
-  if (!audioUrl.includes("/upload/f_mp3/")) {
-    audioUrl = audioUrl.replace(
-      "/upload/",
-      "/upload/f_mp3/"
-    );
-  }
-
-  // Explicitly request an MP3 extension.
-  audioUrl = audioUrl.replace(
-    /\.(webm|weba|ogg|oga|mp4|m4a|wav|mp3)(\?.*)?$/i,
-    ".mp3$2"
-  );
-
-  return audioUrl;
-}
-
-/*
-  All voice-message players listen for this event.
-
-  When one voice message starts playing, every other
-  voice message in the same ChatRoom is paused.
-*/
-const VOICE_PLAY_EVENT = "greentrip:voice-play";
-
-function VoiceMessagePlayer({
-  src,
-  duration,
-  isMine,
-}) {
-  const audioRef = useRef(null);
-
-  const browserSrc =
-    getBrowserAudioUrl(src);
-
-  const [playbackSrc, setPlaybackSrc] =
-    useState(
-      browserSrc ||
-        src ||
-        ""
-    );
-
-  const [usingOriginal, setUsingOriginal] =
-    useState(
-      browserSrc === src ||
-        !browserSrc
-    );
-
-  const [durationValue, setDurationValue] =
-    useState(
-      Number.isFinite(
-        Number(duration)
-      )
-        ? Number(duration)
-        : 0
-    );
-
-  const [failed, setFailed] =
-    useState(false);
-
-  const [playing, setPlaying] =
-    useState(false);
-
-  /*
-    Update URL when the message changes.
-  */
-  useEffect(() => {
-    const nextBrowserSrc =
-      getBrowserAudioUrl(src);
-
-    setPlaybackSrc(
-      nextBrowserSrc ||
-        src ||
-        ""
-    );
-
-    setUsingOriginal(
-      nextBrowserSrc === src ||
-        !nextBrowserSrc
-    );
-
-    setFailed(false);
-
-    setDurationValue(
-      Number.isFinite(
-        Number(duration)
-      )
-        ? Number(duration)
-        : 0
-    );
-
-    setPlaying(false);
-  }, [src, duration]);
-
-  /*
-    Stop this player when another voice message
-    starts playing.
-  */
-  useEffect(() => {
-    const handleOtherVoicePlay =
-      (event) => {
-        const otherAudio =
-          event.detail?.audio;
-
-        if (
-          !otherAudio ||
-          otherAudio ===
-            audioRef.current
-        ) {
-          return;
-        }
-
-        otherAudio.pause();
-      };
-
-    window.addEventListener(
-      VOICE_PLAY_EVENT,
-      handleOtherVoicePlay
-    );
-
-    return () => {
-      window.removeEventListener(
-        VOICE_PLAY_EVENT,
-        handleOtherVoicePlay
-      );
-    };
-  }, []);
-
-  /*
-    Clean up when the component disappears.
-  */
-  useEffect(() => {
-    return () => {
-      audioRef.current?.pause();
-    };
-  }, []);
-
-  const handlePlay = () => {
-    const audio =
-      audioRef.current;
-
-    if (!audio) {
-      return;
-    }
-
-    /*
-      Tell every other voice player
-      to pause.
-    */
-    window.dispatchEvent(
-      new CustomEvent(
-        VOICE_PLAY_EVENT,
-        {
-          detail: {
-            audio,
-          },
-        }
-      )
-    );
-
-    setPlaying(true);
-  };
-
-  const handlePause = () => {
-    setPlaying(false);
-  };
-
-  const handleEnded = () => {
-    setPlaying(false);
-  };
-
-  const handleLoadedMetadata =
-    () => {
-      const actual =
-        audioRef.current?.duration;
-
-      if (
-        Number.isFinite(actual) &&
-        actual > 0
-      ) {
-        setDurationValue(
-          actual
-        );
-      }
-    };
-
-  const handleLoadedData =
-    () => {
-      setFailed(false);
-
-      const actual =
-        audioRef.current?.duration;
-
-      if (
-        Number.isFinite(actual) &&
-        actual > 0
-      ) {
-        setDurationValue(
-          actual
-        );
-      }
-    };
-
-  const handleError = () => {
-    /*
-      First try the original Cloudinary
-      URL if the MP3 delivery URL fails.
-
-      This helps with old voice messages.
-    */
-    if (
-      !usingOriginal &&
-      src &&
-      playbackSrc !== src
-    ) {
-      setUsingOriginal(true);
-      setPlaybackSrc(src);
-      setFailed(false);
-      setPlaying(false);
-      return;
-    }
-
-    setFailed(true);
-    setPlaying(false);
-  };
-
-  return (
-    <div
-      style={{
-        ...styles.voiceMessagePlayer,
-        ...(isMine
-          ? styles.voiceMessageMine
-          : styles.voiceMessageTheirs),
-      }}
-    >
-      <audio
-        ref={audioRef}
-        controls
-        preload="auto"
-        src={playbackSrc}
-        onPlay={handlePlay}
-        onPause={handlePause}
-        onEnded={handleEnded}
-        onLoadedMetadata={
-          handleLoadedMetadata
-        }
-        onLoadedData={
-          handleLoadedData
-        }
-        onError={handleError}
-        style={styles.audioElement}
-      />
-
-      <div
-        style={{
-          ...styles.voiceDuration,
-          color: isMine
-            ? "rgba(255,255,255,.86)"
-            : "#6b7280",
-        }}
-      >
-        {failed
-          ? "Audio unavailable"
-          : formatVoiceDuration(
-              durationValue
-            )}
-      </div>
-    </div>
-  );
-}
-
-function formatVoiceDuration(totalSeconds) {
-  const safeSeconds = Math.max(
-    0,
-    Math.round(
-      Number(totalSeconds) || 0
-    )
-  );
-
-  const minutes = Math.floor(
-    safeSeconds / 60
-  );
-
-  const seconds =
-    safeSeconds % 60;
-
-  return `${minutes}:${String(
-    seconds
-  ).padStart(2, "0")}`;
-}
-
 
 const styles = {
   loadingPage: {
@@ -2016,6 +1146,18 @@ const styles = {
     cursor: "pointer",
     textAlign: "left",
   },
+  dateSeparator: {
+    alignSelf: "center",
+    margin: "12px 0 8px",
+    padding: "5px 10px",
+    borderRadius: 10,
+    background: "#f1f5f9",
+    color: "#64748b",
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+  },
+
   messagesArea: {
     flex: 1,
     overflowY: "auto",
@@ -2348,39 +1490,6 @@ const styles = {
     maxHeight: 300,
     borderRadius: 10,
   },
-  voicePreviewBox: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: 12,
-    background: "#fff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 12,
-  },
-
-  voicePreviewIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: "50%",
-    background: "#dcfce7",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-
-  voiceDurationLabel: {
-    color: "#6b7280",
-    fontSize: 12,
-    fontWeight: 700,
-    fontVariantNumeric: "tabular-nums",
-    whiteSpace: "nowrap",
-  },
-  previewAudio: {
-    flex: 1,
-    minWidth: 0,
-    width: "100%",
-  },
   previewActions: {
     display: "flex",
     justifyContent: "flex-end",
@@ -2404,52 +1513,6 @@ const styles = {
     padding: "9px 20px",
     fontWeight: 700,
     cursor: "pointer",
-  },
-  recordingInput: {
-    flex: 1,
-    minWidth: 0,
-    height: 46,
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "0 16px",
-    border: "1px solid #e5e7eb",
-    borderRadius: 24,
-    background: "#fff",
-    color: "#374151",
-    fontSize: 14,
-  },
-  recordingDot: {
-    color: "#dc2626",
-    fontSize: 12,
-  },
-  recordingTime: {
-    fontVariantNumeric: "tabular-nums",
-    fontWeight: 700,
-    color: "#111827",
-    marginLeft: 2,
-    minWidth: 34,
-    textAlign: "right",
-  },
-
-  waveform: {
-    flex: 1,
-    minWidth: 80,
-    height: 32,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 2,
-    overflow: "hidden",
-  },
-
-  waveformBar: {
-    width: 3,
-    minHeight: 5,
-    borderRadius: 999,
-    background: "#16a34a",
-    transition: "height 80ms ease, opacity 80ms ease",
-    flexShrink: 0,
   },
   errorBanner: {
     textAlign: "center",

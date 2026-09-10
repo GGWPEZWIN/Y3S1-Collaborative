@@ -23,6 +23,33 @@ import { listenToFriends } from "../../../firebase/friendService";
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 
+function toDate(value) {
+  try {
+    if (!value) return null;
+    if (value?.toDate) return value.toDate();
+    if (value?.seconds != null) return new Date(Number(value.seconds) * 1000);
+    if (value instanceof Date) return value;
+    if (typeof value === "number") return new Date(value);
+    if (typeof value === "string") {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+  } catch {}
+  return null;
+}
+
+function formatChatListDate(value) {
+  const date = toDate(value);
+  if (!date) return "";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const messageDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((today - messageDay) / 86400000);
+  if (diffDays === 0) return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (diffDays === 1) return "Yesterday";
+  return date.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+}
+
 export default function ChatList({ onNavigate }) {
   const { authUser, profile, loading } = useCurrentUser();
 
@@ -312,6 +339,12 @@ export default function ChatList({ onNavigate }) {
     }
 
     return chat.lastMessage;
+  }
+
+  function getLastMessageStatus(chat) {
+    if (!authUser?.uid || chat.lastMessageSenderId !== authUser.uid) return null;
+    const readBy = Array.isArray(chat.lastMessageReadBy) ? chat.lastMessageReadBy : [];
+    return readBy.some((uid) => uid !== authUser.uid) ? "seen" : "sent";
   }
 
 
@@ -623,12 +656,21 @@ export default function ChatList({ onNavigate }) {
 
                         </div>
 
-                        <div
-                          style={
-                            styles.lastMessage
-                          }
-                        >
-                          {getLastMessage(chat)}
+                        <div style={styles.lastMessageRow}>
+                          <div style={styles.lastMessage}>
+                            {getLastMessageStatus(chat) === "seen" && (
+                              <span style={styles.listSeenTicks} title="Seen">✓✓</span>
+                            )}
+                            {getLastMessageStatus(chat) === "sent" && (
+                              <span style={styles.listSentTick} title="Sent">✓</span>
+                            )}
+                            {getLastMessage(chat)}
+                          </div>
+                          {chat.lastMessageAt && (
+                            <span style={styles.chatDate}>
+                              {formatChatListDate(chat.lastMessageAt)}
+                            </span>
+                          )}
                         </div>
 
                       </div>
@@ -1177,6 +1219,35 @@ const styles = {
     background: "#dcfce7",
     borderRadius: 999,
     padding: "3px 8px",
+  },
+
+  lastMessageRow: {
+    marginTop: 5,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    minWidth: 0,
+  },
+
+  chatDate: {
+    marginLeft: "auto",
+    flexShrink: 0,
+    color: "#94a3b8",
+    fontSize: 12,
+    fontWeight: 600,
+  },
+
+  listSeenTicks: {
+    color: "#16a34a",
+    fontWeight: 800,
+    marginRight: 4,
+    letterSpacing: "-2px",
+  },
+
+  listSentTick: {
+    color: "#94a3b8",
+    fontWeight: 800,
+    marginRight: 4,
   },
 
   lastMessage: {
