@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import html2canvas from "html2canvas";
 import {
   Share2,
@@ -14,12 +14,11 @@ import {
 import Layout from "../../../shared/components/Layout";
 
 import {
-  getCurrentUser,
   getTravelHistory,
 } from "../../../firebase/travelHistoryService";
 
 import {
-  getOrCreateEcoReport,
+  getEcoReport,
 } from "../../../firebase/ecoReportService";
 
 import {
@@ -77,7 +76,7 @@ export default function EcoReportCard({
         // DETAIL PAGE
         // ------------------------------------------------------
         if (tripId) {
-          const data = await getOrCreateEcoReport(tripId);
+          const data = await getEcoReport(tripId);
 
           if (!mounted) return;
           setReport(data);
@@ -101,7 +100,16 @@ export default function EcoReportCard({
             .filter((trip) => trip?.id)
             .map(async (trip) => {
               try {
-                const data = await getOrCreateEcoReport(trip.id);
+                const data = await getEcoReport(trip.id);
+
+                if (!data) {
+                  return {
+                    tripId: trip.id,
+                    trip,
+                    reportError:
+                      "Report available after trip completion",
+                  };
+                }
 
                 return {
                   ...data,
@@ -216,7 +224,7 @@ export default function EcoReportCard({
       return (
         <div style={styles.loadingPage}>
           <p style={styles.errorText}>
-            Eco report not found.
+            Eco report not found. Report available after trip completion.
           </p>
           <button
             type="button"

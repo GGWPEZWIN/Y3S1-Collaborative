@@ -82,9 +82,165 @@ service cloud.firestore {
         // =====================================================
         match /ecoReport/{reportId} {
 
-          allow read, create, update, delete:
-            if request.auth != null
-            && request.auth.uid == userId;
+          function finishLockPath() {
+            return /databases/$(database)/documents/activeTripLocks/$(request.auth.uid);
+          }
+
+          function finishSessionPath(sessionId) {
+            return /databases/$(database)/documents/tripSessions/$(sessionId);
+          }
+
+          function finishItineraryPath(itineraryId) {
+            return /databases/$(database)/documents/itineraries/$(itineraryId);
+          }
+
+          function isReportScore(value) {
+            return (value is int || value is float) && value >= 0 && value <= 100;
+          }
+
+          function isOptionalDate(value) {
+            return value == null || value is timestamp || value is string;
+          }
+
+          function ecoReportWriteKeys() {
+            return [
+              "userId",
+              "itineraryId",
+              "tripId",
+              "sessionId",
+              "tripName",
+              "originName",
+              "destinationNames",
+              "startDate",
+              "endDate",
+              "location",
+              "planEcoScore",
+              "transportationEcoScore",
+              "finalEcoScore",
+              "ecoScore",
+              "scoreCompleteness",
+              "scoreFormulaVersion",
+              "confirmedTransportationCarbonKg",
+              "carbonScope",
+              "carbonVersion",
+              "segments",
+              "status",
+              "visibility",
+              "publishedAt",
+              "source",
+              "version",
+              "createdAt",
+              "updatedAt",
+              "completedAt"
+            ];
+          }
+
+          function validFinishReportPayload(tripId) {
+            let data = request.resource.data;
+            let lockPath = finishLockPath();
+            let sessionId = data.sessionId;
+            let sessionPath = finishSessionPath(sessionId);
+            let itineraryPath = finishItineraryPath(tripId);
+
+            return request.auth != null
+                   && request.auth.uid == userId
+                   && reportId == "report"
+                   && data.keys().hasAll(ecoReportWriteKeys())
+                   && data.keys().hasOnly(ecoReportWriteKeys())
+                   && data.userId == request.auth.uid
+                   && data.itineraryId == tripId
+                   && data.tripId == tripId
+                   && data.sessionId is string
+                   && data.sessionId.size() > 0
+                   && data.tripName is string
+                   && data.originName is string
+                   && data.destinationNames is list
+                   && isOptionalDate(data.startDate)
+                   && isOptionalDate(data.endDate)
+                   && data.location is string
+                   && (data.planEcoScore == null || isReportScore(data.planEcoScore))
+                   && isReportScore(data.transportationEcoScore)
+                   && isReportScore(data.finalEcoScore)
+                   && data.ecoScore == data.finalEcoScore
+                   && data.scoreCompleteness in ["plan_and_transport", "transport_only"]
+                   && data.scoreFormulaVersion == "plan-transport-mean-v1"
+                   && (data.confirmedTransportationCarbonKg is int || data.confirmedTransportationCarbonKg is float)
+                   && data.confirmedTransportationCarbonKg >= 0
+                   && data.carbonScope == "completed_segments_only"
+                   && data.carbonVersion == "prototype-uk-ghg-2026-v1"
+                   && data.segments is list
+                   && data.status == "Completed"
+                   && data.visibility == "private"
+                   && data.publishedAt == null
+                   && data.source == "module2_finish_trip"
+                   && data.version == 1
+                   && data.createdAt == request.time
+                   && data.updatedAt == request.time
+                   && data.completedAt == request.time
+                   && exists(lockPath)
+                   && get(lockPath).data.userId == request.auth.uid
+                   && get(lockPath).data.sessionId == sessionId
+                   && get(lockPath).data.itineraryId == tripId
+                   && !existsAfter(lockPath)
+                   && existsAfter(sessionPath)
+                   && getAfter(sessionPath).data.status == "completed"
+                   && getAfter(sessionPath).data.userId == request.auth.uid
+                   && getAfter(sessionPath).data.itineraryId == tripId
+                   && existsAfter(itineraryPath)
+                   && getAfter(itineraryPath).data.module2Complete == true
+                   && getAfter(itineraryPath).data.status == "Completed";
+          }
+
+          function isLegacyReportStub() {
+            return !(resource.data.keys().hasAll(["source"])
+                     && resource.data.source == "module2_finish_trip");
+          }
+
+          function validEcoReportPublish() {
+            let before = resource.data;
+            let after = request.resource.data;
+
+            return request.auth != null
+                   && request.auth.uid == userId
+                   && before.userId == request.auth.uid
+                   && before.source == "module2_finish_trip"
+                   && after.userId == before.userId
+                   && after.sessionId == before.sessionId
+                   && after.itineraryId == before.itineraryId
+                   && after.finalEcoScore == before.finalEcoScore
+                   && after.ecoScore == before.ecoScore
+                   && after.planEcoScore == before.planEcoScore
+                   && after.transportationEcoScore == before.transportationEcoScore
+                   && after.confirmedTransportationCarbonKg == before.confirmedTransportationCarbonKg
+                   && after.segments == before.segments
+                   && after.completedAt == before.completedAt
+                   && after.tripName == before.tripName
+                   && after.source == before.source
+                   && after.visibility == "public"
+                   && after.publishedAt == request.time
+                   && after.updatedAt == request.time
+                   && after.diff(before).affectedKeys().hasOnly([
+                        "visibility",
+                        "publishedAt",
+                        "updatedAt"
+                      ]);
+          }
+
+          allow read: if request.auth != null
+                      && (
+                        request.auth.uid == userId ||
+                        (
+                          resource.data.visibility == "public"
+                          && resource.data.source == "module2_finish_trip"
+                        )
+                      );
+
+          allow create: if validFinishReportPayload(tripId);
+
+          allow update: if (isLegacyReportStub() && validFinishReportPayload(tripId))
+                        || validEcoReportPublish();
+
+          allow delete: if false;
         }
       }
 
@@ -437,25 +593,68 @@ service cloud.firestore {
     //
     match /itineraries/{itineraryId} {
 
-      // A user may only read their own itineraries. The getMyItineraries()
-      // query filters on `userId == request.auth.uid`, so it stays within
-      // this rule; getItinerary() only ever loads the owner's own trip.
+      function ownerLockPath() {
+        return /databases/$(database)/documents/activeTripLocks/$(request.auth.uid);
+      }
+
+      function thisItineraryLocked() {
+        return request.auth != null
+               && exists(ownerLockPath())
+               && get(ownerLockPath()).data.userId == request.auth.uid
+               && get(ownerLockPath()).data.itineraryId == itineraryId;
+      }
+
+      function validItineraryFinishUpdate() {
+        let before = resource.data;
+        let after = request.resource.data;
+        let lockPath = ownerLockPath();
+        let sessionId = get(lockPath).data.sessionId;
+        let sessionPath = /databases/$(database)/documents/tripSessions/$(sessionId);
+        let reportPath = /databases/$(database)/documents/users/$(request.auth.uid)/travelHistory/$(itineraryId)/ecoReport/report;
+
+        return request.auth != null
+               && before.userId == request.auth.uid
+               && after.userId == before.userId
+               && thisItineraryLocked()
+               && after.diff(before).affectedKeys().hasOnly([
+                    "module2Complete",
+                    "status",
+                    "isCompleted",
+                    "completedAt",
+                    "updatedAt"
+                  ])
+               && after.module2Complete == true
+               && after.status == "Completed"
+               && after.isCompleted == true
+               && after.completedAt == request.time
+               && after.updatedAt == request.time
+               && !existsAfter(lockPath)
+               && existsAfter(sessionPath)
+               && getAfter(sessionPath).data.status == "completed"
+               && getAfter(sessionPath).data.itineraryId == itineraryId
+               && existsAfter(reportPath)
+               && getAfter(reportPath).data.source == "module2_finish_trip"
+               && getAfter(reportPath).data.sessionId == sessionId
+               && getAfter(reportPath).data.visibility == "private";
+      }
+
       allow read: if request.auth != null
                   && resource.data.userId == request.auth.uid;
 
-      // Create: must be signed in and the new document must be stamped with
-      // the caller's own UID as the owner.
       allow create: if request.auth != null
                     && request.resource.data.userId == request.auth.uid;
 
-      // Update: only the owner, and ownership cannot be reassigned.
       allow update: if request.auth != null
                     && resource.data.userId == request.auth.uid
-                    && request.resource.data.userId == request.auth.uid;
+                    && request.resource.data.userId == request.auth.uid
+                    && (
+                      !thisItineraryLocked() ||
+                      validItineraryFinishUpdate()
+                    );
 
-      // Delete: only the owner.
       allow delete: if request.auth != null
-                    && resource.data.userId == request.auth.uid;
+                    && resource.data.userId == request.auth.uid
+                    && !thisItineraryLocked();
     }
 
 
@@ -465,8 +664,8 @@ service cloud.firestore {
     //
     // tripSessions/{sessionId} is Module 2 activation history.
     // Module 1 itineraries stay in the existing `itineraries` collection.
-    // Start and cancel must be atomic with activeTripLocks/{uid}.
-    // Clients may not mark a session completed or delete history.
+    // Start, cancel, and finish must be atomic with activeTripLocks/{uid}.
+    // Segment completion cannot mark the session completed.
     //
     function isSignedIn() {
       return request.auth != null;
@@ -486,6 +685,10 @@ service cloud.firestore {
 
     function activeLockPath(uid) {
       return /databases/$(database)/documents/activeTripLocks/$(uid);
+    }
+
+    function ecoReportPath(uid, itineraryId) {
+      return /databases/$(database)/documents/users/$(uid)/travelHistory/$(itineraryId)/ecoReport/report;
     }
 
     function ownedCompleteItinerary(itineraryId) {
@@ -735,6 +938,58 @@ service cloud.firestore {
              && getAfter(tripSessionPath(data.sessionId)).data.status == "active";
     }
 
+    // Finish cannot enumerate completedSegments/segment-0..n-1 here:
+    // Firestore rules have no loop over a dynamic totalSegments count.
+    // Sequential progress pairing plus currentSegmentIndex == totalSegments
+    // is the rule-side guarantee; the client transaction still reads every
+    // expected completion document before writing.
+    function validTripSessionComplete(sessionId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let lockPath = activeLockPath(request.auth.uid);
+      let itineraryId = before.itineraryId;
+      let reportPath = ecoReportPath(request.auth.uid, itineraryId);
+
+      return isSignedIn()
+             && before.userId == request.auth.uid
+             && after.userId == before.userId
+             && after.itineraryId == before.itineraryId
+             && after.itineraryTitle == before.itineraryTitle
+             && before.status == "active"
+             && after.status == "completed"
+             && after.currentSegmentIndex == before.totalSegments
+             && after.totalSegments == before.totalSegments
+             && after.totalSegments > 0
+             && after.startedAt == before.startedAt
+             && after.version == before.version
+             && after.cancelledAt == before.cancelledAt
+             && after.cancellationReason == before.cancellationReason
+             && after.completedAt == request.time
+             && after.updatedAt == request.time
+             && after.diff(before).affectedKeys().hasOnly([
+                  "status",
+                  "completedAt",
+                  "updatedAt"
+                ])
+             && exists(lockPath)
+             && get(lockPath).data.userId == request.auth.uid
+             && get(lockPath).data.sessionId == sessionId
+             && get(lockPath).data.itineraryId == itineraryId
+             && get(lockPath).data.status == "active"
+             && !existsAfter(lockPath)
+             && existsAfter(itineraryPath(itineraryId))
+             && getAfter(itineraryPath(itineraryId)).data.userId == request.auth.uid
+             && getAfter(itineraryPath(itineraryId)).data.module2Complete == true
+             && getAfter(itineraryPath(itineraryId)).data.status == "Completed"
+             && getAfter(itineraryPath(itineraryId)).data.isCompleted == true
+             && existsAfter(reportPath)
+             && getAfter(reportPath).data.source == "module2_finish_trip"
+             && getAfter(reportPath).data.sessionId == sessionId
+             && getAfter(reportPath).data.userId == request.auth.uid
+             && getAfter(reportPath).data.visibility == "private"
+             && getAfter(reportPath).data.publishedAt == null;
+    }
+
     function validCancelledLinkedSession(lockData) {
       let sessionPath = tripSessionPath(lockData.sessionId);
 
@@ -748,6 +1003,24 @@ service cloud.firestore {
              && getAfter(sessionPath).data.cancelledAt is timestamp;
     }
 
+    function validFinishLinkedSession(lockData) {
+      let sessionPath = tripSessionPath(lockData.sessionId);
+      let reportPath = ecoReportPath(request.auth.uid, lockData.itineraryId);
+
+      return existsAfter(sessionPath)
+             && getAfter(sessionPath).data.userId == request.auth.uid
+             && getAfter(sessionPath).data.userId == lockData.userId
+             && getAfter(sessionPath).data.itineraryId == lockData.itineraryId
+             && getAfter(sessionPath).data.status == "completed"
+             && getAfter(sessionPath).data.completedAt is timestamp
+             && existsAfter(itineraryPath(lockData.itineraryId))
+             && getAfter(itineraryPath(lockData.itineraryId)).data.module2Complete == true
+             && existsAfter(reportPath)
+             && getAfter(reportPath).data.source == "module2_finish_trip"
+             && getAfter(reportPath).data.sessionId == lockData.sessionId
+             && getAfter(reportPath).data.visibility == "private";
+    }
+
     match /tripSessions/{sessionId} {
 
       allow get: if isSignedIn()
@@ -758,7 +1031,8 @@ service cloud.firestore {
       allow create: if validTripSessionCreate(sessionId);
 
       allow update: if validTripSessionCancel()
-                    || validTripSessionProgress(sessionId);
+                    || validTripSessionProgress(sessionId)
+                    || validTripSessionComplete(sessionId);
 
       allow delete: if false;
 
@@ -803,7 +1077,10 @@ service cloud.firestore {
       allow delete: if isSignedIn()
                     && request.auth.uid == lockUserId
                     && resource.data.userId == request.auth.uid
-                    && validCancelledLinkedSession(resource.data);
+                    && (
+                      validCancelledLinkedSession(resource.data) ||
+                      validFinishLinkedSession(resource.data)
+                    );
     }
   }
 }

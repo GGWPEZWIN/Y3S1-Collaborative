@@ -5,7 +5,7 @@ import {
   getDocs,
   orderBy,
   query,
-  setDoc,
+  runTransaction,
   serverTimestamp,
 } from "firebase/firestore";
 
@@ -160,34 +160,6 @@ function calculateGrade(
     return "C";
 
   return "D";
-}
-
-
-// ============================================================
-// GRADE DESCRIPTION
-// ============================================================
-
-function getGradeLabel(
-  grade
-) {
-
-  switch (grade) {
-
-    case "A+":
-      return "Outstanding";
-
-    case "A":
-      return "Excellent";
-
-    case "B":
-      return "Good";
-
-    case "C":
-      return "Fair";
-
-    default:
-      return "Needs Improvement";
-  }
 }
 
 
@@ -609,428 +581,117 @@ export async function getTravelHistorySummary() {
 }
 
 
-// ============================================================
-// GET / CREATE ECO REPORT
-// ============================================================
-//
-// Firebase path:
-//
-// users
-//   └── UID
-//       └── travelHistory
-//           └── TRIP_ID
-//               └── ecoReport
-//                   └── report
-//
-// ============================================================
+export const ECO_REPORT_ERROR = {
+  AUTH_REQUIRED: "AUTH_REQUIRED",
+  NOT_FOUND: "REPORT_NOT_FOUND",
+  UNAUTHORIZED: "UNAUTHORIZED",
+  NOT_MODULE2_REPORT: "NOT_MODULE2_REPORT",
+  UNAVAILABLE: "UNAVAILABLE",
+};
 
-export async function getOrCreateEcoReport(
-  tripId
-) {
-
-  const firebaseUser =
-    await getLoggedInUser();
-
-
-  if (!tripId) {
-
-    throw new Error(
-      "Trip ID is required to generate the Eco-Report Card."
-    );
+export class EcoReportError extends Error {
+  constructor(code) {
+    super(code);
+    this.name = "EcoReportError";
+    this.code = code;
   }
-
-
-  // ----------------------------------------------------------
-  // GET TRIP
-  // ----------------------------------------------------------
-
-  const tripRef =
-    doc(
-      db,
-      "users",
-      firebaseUser.uid,
-      "travelHistory",
-      tripId
-    );
-
-
-  const tripSnapshot =
-    await getDoc(
-      tripRef
-    );
-
-
-  if (
-    !tripSnapshot.exists()
-  ) {
-
-    throw new Error(
-      "Travel history record was not found."
-    );
-  }
-
-
-  const trip =
-    convertTrip(
-      tripSnapshot
-    );
-
-
-  // ----------------------------------------------------------
-  // REPORT LOCATION
-  // ----------------------------------------------------------
-
-  const reportRef =
-    doc(
-      db,
-      "users",
-      firebaseUser.uid,
-      "travelHistory",
-      tripId,
-      "ecoReport",
-      "report"
-    );
-
-
-  // ----------------------------------------------------------
-  // CHECK EXISTING REPORT
-  // ----------------------------------------------------------
-
-  const existingReport =
-    await getDoc(
-      reportRef
-    );
-
-
-  if (
-    existingReport.exists()
-  ) {
-
-    return {
-
-      id:
-        existingReport.id,
-
-      ...existingReport.data(),
-    };
-  }
-
-
-  // ----------------------------------------------------------
-  // CREATE BREAKDOWN
-  // ----------------------------------------------------------
-
-  const score =
-    Number(
-      trip.ecoScore
-    ) || 0;
-
-
-  const breakdown = [
-
-    {
-      label:
-        "Transportation",
-
-      value:
-        Math.min(
-          100,
-          Math.max(
-            0,
-            Number(
-              trip.transportationScore ??
-              trip.transportScore ??
-              Math.round(
-                score * 0.96
-              )
-            )
-          )
-        ),
-    },
-
-    {
-      label:
-        "Accommodation",
-
-      value:
-        Math.min(
-          100,
-          Math.max(
-            0,
-            Number(
-              trip.accommodationScore ??
-              Math.round(
-                score * 0.96
-              )
-            )
-          )
-        ),
-    },
-
-    {
-      label:
-        "Activities",
-
-      value:
-        Math.min(
-          100,
-          Math.max(
-            0,
-            Number(
-              trip.activitiesScore ??
-              Math.round(
-                score * 0.94
-              )
-            )
-          )
-        ),
-    },
-
-    {
-      label:
-        "Waste & Resources",
-
-      value:
-        Math.min(
-          100,
-          Math.max(
-            0,
-            Number(
-              trip.wasteScore ??
-              Math.round(
-                score * 0.87
-              )
-            )
-          )
-        ),
-    },
-
-  ];
-
-
-  // ----------------------------------------------------------
-  // CARBON BREAKDOWN
-  // ----------------------------------------------------------
-
-  const carbon =
-    Number(
-      trip.carbonKg
-    ) || 0;
-
-
-  let carbonSplit = [];
-
-
-  if (trip.carbonSplit) {
-
-    carbonSplit =
-      trip.carbonSplit;
-
-  } else {
-
-    // If your trip document already
-    // contains transportation/accommodation
-    // carbon values, use them.
-
-    const hotel =
-      Number(
-        trip.hotelCarbon ??
-        trip.accommodationCarbon ??
-        carbon * 0.25
-      );
-
-    const train =
-      Number(
-        trip.trainCarbon ??
-        carbon * 0.45
-      );
-
-    const bus =
-      Number(
-        trip.busCarbon ??
-        carbon * 0.30
-      );
-
-
-    carbonSplit = [
-
-      {
-        name: "Hotel",
-        value:
-          Number(
-            hotel.toFixed(2)
-          ),
-        color:
-          "#3b82f6",
-      },
-
-      {
-        name: "Train",
-        value:
-          Number(
-            train.toFixed(2)
-          ),
-        color:
-          "#facc15",
-      },
-
-      {
-        name: "Bus",
-        value:
-          Number(
-            bus.toFixed(2)
-          ),
-        color:
-          "#22c55e",
-      },
-
-    ];
-  }
-
-
-  // ----------------------------------------------------------
-  // ENVIRONMENTAL IMPACT
-  // ----------------------------------------------------------
-
-  const impact = [
-
-    {
-      icon: "🌳",
-
-      value:
-        Number(
-          carbon * 0.073
-        ).toFixed(1),
-
-      sub:
-        "trees equivalent",
-
-      label:
-        "Trees Equivalent",
-    },
-
-    {
-      icon: "♻️",
-
-      value:
-        Math.max(
-          1,
-          Math.round(
-            carbon * 1.5
-          )
-        ),
-
-      sub:
-        "bottles",
-
-      label:
-        "Plastic Bottles Avoided",
-    },
-
-    {
-      icon: "📉",
-
-      value:
-        `-${Math.max(
-          1,
-          Math.round(
-            100 -
-            score
-          )
-        )}%`,
-
-      sub:
-        "vs. Avg Tourist",
-
-      label:
-        "Carbon",
-    },
-
-    {
-      icon: "🚌",
-
-      value:
-        "100%",
-
-      sub:
-        "of travel",
-
-      label:
-        "Public Transport",
-    },
-
-  ];
-
-
-  // ----------------------------------------------------------
-  // CREATE REPORT
-  // ----------------------------------------------------------
-
-  const reportData = {
-
-    tripId:
-      trip.id,
-
-    tripName:
-      trip.name,
-
-    location:
-      trip.location,
-
-    startDate:
-      trip.startDate,
-
-    endDate:
-      trip.endDate,
-
-    status:
-      trip.status,
-
-    ecoScore:
-      trip.ecoScore,
-
-    grade:
-      trip.grade,
-
-    gradeLabel:
-      getGradeLabel(
-        trip.grade
-      ),
-
-    carbonKg:
-      trip.carbonKg,
-
-    badgesEarned:
-      trip.badgesEarned,
-
-    breakdown,
-
-    carbonSplit,
-
-    impact,
-
-    createdAt:
-      serverTimestamp(),
-
-    updatedAt:
-      serverTimestamp(),
-  };
-
-
-  // ----------------------------------------------------------
-  // SAVE TO FIREBASE
-  // ----------------------------------------------------------
-
-  await setDoc(
-    reportRef,
-    reportData
+}
+
+function reportDocRef(uid, tripId) {
+  return doc(
+    db,
+    "users",
+    uid,
+    "travelHistory",
+    tripId,
+    "ecoReport",
+    "report"
   );
+}
 
+function mapEcoReportFailure(error) {
+  if (error instanceof EcoReportError) return error;
+  const code = typeof error?.code === "string" ? error.code : "";
+  if (code === "permission-denied" || code === "unauthenticated") {
+    return new EcoReportError(ECO_REPORT_ERROR.UNAUTHORIZED);
+  }
+  return new EcoReportError(ECO_REPORT_ERROR.UNAVAILABLE);
+}
 
-  return {
+export async function getEcoReport(tripId) {
+  try {
+    const firebaseUser = await getLoggedInUser();
+    const id = typeof tripId === "string" ? tripId.trim() : "";
+    if (!id) {
+      throw new EcoReportError(ECO_REPORT_ERROR.NOT_FOUND);
+    }
 
-    id: "report",
+    const snapshot = await getDoc(reportDocRef(firebaseUser.uid, id));
+    if (!snapshot.exists()) return null;
+    const data = snapshot.data();
+    if (data.userId && data.userId !== firebaseUser.uid) {
+      throw new EcoReportError(ECO_REPORT_ERROR.UNAUTHORIZED);
+    }
+    return {
+      id: snapshot.id,
+      ...data,
+    };
+  } catch (error) {
+    throw mapEcoReportFailure(error);
+  }
+}
 
-    ...reportData,
-  };
+export async function getOrCreateEcoReport(tripId) {
+  return getEcoReport(tripId);
+}
+
+export async function publishEcoReport(tripId) {
+  try {
+    const firebaseUser = await getLoggedInUser();
+    const id = typeof tripId === "string" ? tripId.trim() : "";
+    if (!id) {
+      throw new EcoReportError(ECO_REPORT_ERROR.NOT_FOUND);
+    }
+    return await runTransaction(db, async (transaction) => {
+      const reportRef = reportDocRef(firebaseUser.uid, id);
+      const snapshot = await transaction.get(reportRef);
+      if (!snapshot.exists()) {
+        throw new EcoReportError(ECO_REPORT_ERROR.NOT_FOUND);
+      }
+
+      const data = snapshot.data();
+      if (data.userId !== firebaseUser.uid) {
+        throw new EcoReportError(ECO_REPORT_ERROR.UNAUTHORIZED);
+      }
+      if (data.source !== "module2_finish_trip") {
+        throw new EcoReportError(ECO_REPORT_ERROR.NOT_MODULE2_REPORT);
+      }
+
+      if (data.visibility === "public") {
+        return {
+          id: snapshot.id,
+          ...data,
+          alreadyPublic: true,
+        };
+      }
+
+      const now = serverTimestamp();
+      transaction.update(reportRef, {
+        visibility: "public",
+        publishedAt: now,
+        updatedAt: now,
+      });
+
+      return {
+        id: snapshot.id,
+        ...data,
+        visibility: "public",
+        publishedAt: now,
+        updatedAt: now,
+        alreadyPublic: false,
+      };
+    });
+  } catch (error) {
+    throw mapEcoReportFailure(error);
+  }
 }

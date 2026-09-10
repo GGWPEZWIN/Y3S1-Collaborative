@@ -19,6 +19,9 @@ import {
   planSegmentCompletion,
   SEGMENT_COMPLETION_ERROR,
 } from "../user/AIRecommendation/services/navigation/segmentCompletion.js";
+import { REPORT_DOCUMENT_ID } from "../user/AIRecommendation/services/report/constants.js";
+import { FINISH_TRIP_ERROR, planFinishTrip } from "../user/AIRecommendation/services/report/finishTripPlan.js";
+import { buildEcoReportSnapshot } from "../user/AIRecommendation/services/report/reportSnapshot.js";
 
 /*
  * ============================================================
@@ -27,13 +30,14 @@ import {
  *
  * Reuses the shared Firebase app from ./config (no new app).
  *
- * Module 1 still owns itineraries/{itineraryId}. This service never writes
- * itinerary status or destination order.
+ * Module 1 still owns itinerary planning fields (title, order, destinations,
+ * Plan Eco-Score). Finish Trip writes only itinerary completion flags.
  *
  * Module 2 owns:
- *   tripSessions/{sessionId}     — activation history (kept on cancel)
+ *   tripSessions/{sessionId}     — activation history (kept on cancel/complete)
  *   tripSessions/{sessionId}/completedSegments/{segmentId}
  *   activeTripLocks/{uid}        — deterministic one-active-trip lock
+ *   users/{uid}/travelHistory/{itineraryId}/ecoReport/report
  * ============================================================
  */
 
@@ -41,12 +45,17 @@ const ITINERARIES = "itineraries";
 const TRIP_SESSIONS = "tripSessions";
 const ACTIVE_LOCKS = "activeTripLocks";
 const COMPLETED_SEGMENTS = "completedSegments";
+const USERS = "users";
+const TRAVEL_HISTORY = "travelHistory";
+const ECO_REPORT = "ecoReport";
 
 export const TRIP_SESSION_ERROR = {
   AUTH_REQUIRED: "AUTH_REQUIRED",
   ITINERARY_NOT_FOUND: "ITINERARY_NOT_FOUND",
   UNAUTHORIZED: "UNAUTHORIZED",
   MODULE1_INCOMPLETE: "MODULE1_INCOMPLETE",
+  MODULE2_ALREADY_COMPLETE: "MODULE2_ALREADY_COMPLETE",
+  TRIP_ALREADY_COMPLETED: "TRIP_ALREADY_COMPLETED",
   NOT_ROUTEABLE: "NOT_ROUTEABLE",
   ACTIVE_TRIP_EXISTS: "ACTIVE_TRIP_EXISTS",
   SESSION_MISMATCH: "SESSION_MISMATCH",
@@ -54,7 +63,10 @@ export const TRIP_SESSION_ERROR = {
   SEGMENT_NOT_CURRENT: "SEGMENT_NOT_CURRENT",
   SEGMENT_SKIP: "SEGMENT_SKIP",
   ALL_SEGMENTS_DONE: "ALL_SEGMENTS_DONE",
+  SEGMENTS_INCOMPLETE: "SEGMENTS_INCOMPLETE",
   INVALID_SNAPSHOT: "INVALID_SNAPSHOT",
+  REPORT_CONFLICT: "REPORT_CONFLICT",
+  REPORT_INCONSISTENT: "REPORT_INCONSISTENT",
   UNAVAILABLE: "UNAVAILABLE",
 };
 
@@ -113,6 +125,12 @@ function assertOwnedRouteableItinerary(itinerarySnap, uid) {
   if (raw.module1Complete !== true) {
     throw new TripSessionError(TRIP_SESSION_ERROR.MODULE1_INCOMPLETE);
   }
+  if (raw.module2Complete === true) {
+    throw new TripSessionError(TRIP_SESSION_ERROR.MODULE2_ALREADY_COMPLETE);
+  }
+  if (raw.status === "Completed") {
+    throw new TripSessionError(TRIP_SESSION_ERROR.TRIP_ALREADY_COMPLETED);
+  }
 
   const { itinerary } = normalizeModule1Itinerary(raw);
   if (!itinerary) {
@@ -120,8 +138,7 @@ function assertOwnedRouteableItinerary(itinerarySnap, uid) {
   }
 
   const segments = buildOrderedSegments(itinerary);
-  const routeableCount = segments.filter((segment) => segment.routeable).length;
-  if (routeableCount < 1) {
+  if (segments.length < 1 || !segments.every((segment) => segment.routeable)) {
     throw new TripSessionError(TRIP_SESSION_ERROR.NOT_ROUTEABLE);
   }
 
@@ -574,6 +591,174 @@ export async function completeCurrentSegment({
         currentSegmentIndex: plan.sessionUpdate.currentSegmentIndex,
         allDestinationsReached:
           plan.sessionUpdate.currentSegmentIndex >= session.totalSegments,
+      };
+    });
+  } catch (error) {
+    throw mapFirebaseFailure(error);
+  }
+}
+
+function reportRefFor(uid, itineraryId) {
+  return doc(db, USERS, uid, TRAVEL_HISTORY, itineraryId, ECO_REPORT, REPORT_DOCUMENT_ID);
+}
+
+function historyRefFor(uid, itineraryId) {
+  return doc(db, USERS, uid, TRAVEL_HISTORY, itineraryId);
+}
+
+function asExistingReport(snap) {
+  if (!snap?.exists()) return null;
+  return { id: snap.id, ...snap.data() };
+}
+
+function throwFinishPlanError(plan) {
+  const code =
+    FINISH_TRIP_ERROR[plan.code] ||
+    TRIP_SESSION_ERROR[plan.code] ||
+    plan.code ||
+    TRIP_SESSION_ERROR.UNAVAILABLE;
+  throw new TripSessionError(code);
+}
+
+/**
+ * Completes the signed-in user's trip after every saved hop has a completion
+ * record. One transaction writes session completion, itinerary completion
+ * flags, travel-history metadata, the private Eco Report, and lock deletion.
+ * Does not call Google Routes or change rewards/achievements.
+ */
+export async function finishTripSession(sessionId) {
+  const id = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (!id) {
+    throw new TripSessionError(TRIP_SESSION_ERROR.SESSION_MISMATCH);
+  }
+
+  const user = await getLoggedInUser();
+
+  try {
+    return await runTransaction(db, async (transaction) => {
+      const lockRef = doc(db, ACTIVE_LOCKS, user.uid);
+      const sessionRef = doc(db, TRIP_SESSIONS, id);
+      const lockSnap = await transaction.get(lockRef);
+      const sessionSnap = await transaction.get(sessionRef);
+
+      if (!sessionSnap.exists()) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.SESSION_MISMATCH);
+      }
+
+      const session = asSession(sessionSnap.id, sessionSnap.data());
+      if (session.userId !== user.uid) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.UNAUTHORIZED);
+      }
+
+      const itineraryRef = doc(db, ITINERARIES, session.itineraryId);
+      const historyRef = historyRefFor(user.uid, session.itineraryId);
+      const reportRef = reportRefFor(user.uid, session.itineraryId);
+      const itinerarySnap = await transaction.get(itineraryRef);
+      const historySnap = await transaction.get(historyRef);
+      const reportSnap = await transaction.get(reportRef);
+      const lock = lockSnap.exists() ? asLock(lockSnap.data()) : null;
+      const itinerary = itinerarySnap.exists()
+        ? { id: itinerarySnap.id, ...itinerarySnap.data() }
+        : null;
+      const existingReport = asExistingReport(reportSnap);
+
+      const completions = [];
+      if (session.status === "active" && Number.isInteger(session.totalSegments) && session.totalSegments > 0) {
+        for (let index = 0; index < session.totalSegments; index += 1) {
+          const segmentId = completedSegmentDocumentId(index);
+          if (!segmentId) {
+            completions.push(null);
+            continue;
+          }
+          const completionRef = doc(
+            db,
+            TRIP_SESSIONS,
+            session.sessionId,
+            COMPLETED_SEGMENTS,
+            segmentId
+          );
+          const completionSnap = await transaction.get(completionRef);
+          completions.push(
+            completionSnap.exists()
+              ? asCompletedSegment(completionSnap.id, completionSnap.data())
+              : null
+          );
+        }
+      }
+
+      const plan = planFinishTrip({
+        user,
+        lock,
+        session,
+        itinerary,
+        completions,
+        existingReport,
+      });
+
+      if (plan.type === "idempotent") {
+        return {
+          idempotent: true,
+          sessionId: session.sessionId,
+          itineraryId: session.itineraryId,
+          report: plan.report,
+        };
+      }
+
+      if (plan.type !== "commit") {
+        throwFinishPlanError(plan);
+      }
+
+      const snapshot = buildEcoReportSnapshot(plan.snapshotInput);
+      if (!snapshot) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.INVALID_SNAPSHOT);
+      }
+
+      const now = serverTimestamp();
+      const report = {
+        ...snapshot,
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+      };
+
+      transaction.update(sessionRef, {
+        status: "completed",
+        completedAt: now,
+        updatedAt: now,
+      });
+      transaction.update(itineraryRef, {
+        module2Complete: true,
+        status: "Completed",
+        isCompleted: true,
+        completedAt: now,
+        updatedAt: now,
+      });
+
+      const historyUpdate = {
+        ...plan.historyUpdate,
+        completedAt: now,
+        updatedAt: now,
+      };
+      if (historySnap.exists()) {
+        transaction.update(historyRef, historyUpdate);
+      } else {
+        transaction.set(historyRef, {
+          itineraryId: session.itineraryId,
+          title: session.itineraryTitle || itinerary?.title || "",
+          name: session.itineraryTitle || itinerary?.title || "",
+          ...historyUpdate,
+          createdAt: now,
+        });
+      }
+
+      transaction.set(reportRef, report);
+      transaction.delete(lockRef);
+
+      return {
+        idempotent: false,
+        sessionId: session.sessionId,
+        itineraryId: session.itineraryId,
+        report: { id: REPORT_DOCUMENT_ID, ...report },
       };
     });
   } catch (error) {

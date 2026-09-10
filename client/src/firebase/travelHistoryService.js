@@ -935,7 +935,7 @@ export async function getTravelHistorySummary() {
  *     return it.
  *
  * If it does not exist:
- *     create it from Travel History.
+ *     return null. Reports are created only by Module 2 Finish Trip.
  * ============================================================
  */
 
@@ -951,51 +951,6 @@ export async function getOrCreateEcoReport(
     );
   }
 
-  /*
-   * ==========================================================
-   * GET TRIP
-   * ==========================================================
-   */
-
-  const tripRef =
-    doc(
-      db,
-      "users",
-      firebaseUser.uid,
-      "travelHistory",
-      tripId
-    );
-
-  const tripSnapshot =
-    await getDoc(
-      tripRef
-    );
-
-  if (
-    !tripSnapshot.exists()
-  ) {
-    throw new Error(
-      "Travel history record was not found."
-    );
-  }
-
-  const trip =
-    convertTrip(
-      tripSnapshot
-    );
-
-  /*
-   * ==========================================================
-   * REPORT LOCATION
-   * ==========================================================
-   *
-   * users/{uid}
-   *    └── travelHistory
-   *          └── {tripId}
-   *                └── ecoReport
-   *                      └── report
-   */
-
   const reportRef =
     doc(
       db,
@@ -1006,12 +961,6 @@ export async function getOrCreateEcoReport(
       "ecoReport",
       "report"
     );
-
-  /*
-   * ==========================================================
-   * CHECK EXISTING REPORT
-   * ==========================================================
-   */
 
   const existingReport =
     await getDoc(
@@ -1029,59 +978,5 @@ export async function getOrCreateEcoReport(
     };
   }
 
-  /*
-   * ==========================================================
-   * CREATE REPORT
-   * ==========================================================
-   */
-
-  const reportData = {
-    tripId:
-      trip.id,
-
-    tripName:
-      trip.name,
-
-    location:
-      trip.location,
-
-    startDate:
-      trip.startDate,
-
-    endDate:
-      trip.endDate,
-
-    status:
-      trip.status,
-
-    ecoScore:
-      trip.ecoScore,
-
-    grade:
-      trip.grade,
-
-    carbonKg:
-      trip.carbonKg,
-
-    badgesEarned:
-      trip.badgesEarned,
-
-    createdAt:
-      serverTimestamp(),
-
-    updatedAt:
-      serverTimestamp(),
-  };
-
-  await setDoc(
-    reportRef,
-    reportData
-  );
-
-  return {
-    id:
-      "report",
-
-    ...reportData,
-  };
+  return null;
 }
