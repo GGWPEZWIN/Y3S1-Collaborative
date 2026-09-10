@@ -1,17 +1,20 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Trophy, ChevronLeft, TrendingDown } from "lucide-react";
 import Layout from "../../../shared/components/Layout";
 
-const user = { name: "Keshi", ecoScore: 8750 };
+// Firebase Imports
+import { useCurrentUser } from "../../../firebase/useCurrentUser";
+import { db } from "../../../firebase/config";
+import { collection, getDocs, query, orderBy } from "firebase/firestore";
 
-const LEADERBOARD = [
-  { rank: 1, name: "Alan Walker", avatarBg: "#f59e0b", avatarLetter: "A", points: 15240, co2: "567.8 kg" },
-  { rank: 2, name: "Wim", avatarBg: "#3b82f6", avatarLetter: "W", points: 14890, co2: "532.1 kg" },
-  { rank: 3, name: "Nur Ain", avatarBg: "#22c55e", avatarLetter: "N", points: 11020, co2: "387 kg" },
-  { rank: 4, name: "Jason Lee", avatarBg: "#8b5cf6", avatarLetter: "J", points: 9350, co2: "320 kg" },
-  { rank: 5, name: "Keshi", avatarBg: "#06b6d4", avatarLetter: "K", points: 8750, co2: "301 kg", me: true },
-  { rank: 6, name: "Emily Wong", avatarBg: "#ec4899", avatarLetter: "E", points: 8410, co2: "295 kg" },
-  { rank: 7, name: "Daniel", avatarBg: "#84cc16", avatarLetter: "D", points: 8010, co2: "281 kg" },
+const AVATAR_COLORS = [
+  "#f59e0b",
+  "#3b82f6",
+  "#22c55e",
+  "#8b5cf6",
+  "#06b6d4",
+  "#ec4899",
+  "#84cc16",
 ];
 
 const RANK_STYLES = {
@@ -23,10 +26,85 @@ const RANK_STYLES = {
 const TABS = ["Global", "By State", "Friends"];
 
 export default function ChallengeLeaderboard({ onNavigate }) {
+  const { authUser, profile, loading: userLoading } = useCurrentUser();
   const [tab, setTab] = useState("Global");
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [loadingLeaderboard, setLoadingLeaderboard] = useState(true);
+
+  // Fetch users from Firestore and sort by eco_score
+  useEffect(() => {
+    const fetchLeaderboard = async () => {
+      try {
+        const usersRef = collection(db, "users");
+        const q = query(usersRef, orderBy("eco_score", "desc"));
+        const querySnapshot = await getDocs(q);
+
+        const fetchedUsers = [];
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          fetchedUsers.push({
+            id: doc.id,
+            name: data.name || data.displayName || "Eco Warrior",
+            points: data.eco_score ?? data.ecoScore ?? 0,
+            co2: data.co2_saved
+              ? `${data.co2_saved} kg`
+              : data.co2Saved
+              ? `${data.co2Saved} kg`
+              : `${((data.eco_score ?? data.ecoScore ?? 0) * 0.035).toFixed(1)} kg`,
+          });
+        });
+
+        // Fallback client-side sort
+        fetchedUsers.sort((a, b) => b.points - a.points);
+
+        // Format for UI structure
+        const formatted = fetchedUsers.map((u, index) => ({
+          rank: index + 1,
+          name: u.name,
+          avatarBg: AVATAR_COLORS[index % AVATAR_COLORS.length],
+          avatarLetter: (u.name[0] || "U").toUpperCase(),
+          points: u.points,
+          co2: u.co2,
+          me: authUser ? u.id === authUser.uid : false,
+        }));
+
+        setLeaderboard(formatted);
+      } catch (err) {
+        console.error("Error fetching leaderboard from Firestore:", err);
+      } finally {
+        setLoadingLeaderboard(false);
+      }
+    };
+
+    fetchLeaderboard();
+  }, [authUser]);
+
+  // Construct current user for Layout & Highlight Card
+  const currentUserObj = profile
+    ? {
+        ...profile,
+        name: profile.name || "User",
+        ecoScore: profile.eco_score ?? profile.ecoScore ?? 0,
+        eco_score: profile.eco_score ?? profile.ecoScore ?? 0,
+      }
+    : { name: "Keshi", ecoScore: 0 };
+
+  const currentUserInLeaderboard = leaderboard.find((p) => p.me);
+  const myRank = currentUserInLeaderboard ? `#${currentUserInLeaderboard.rank}` : "#-";
+  const myPoints = currentUserInLeaderboard
+    ? currentUserInLeaderboard.points.toLocaleString()
+    : (currentUserObj.ecoScore || 0).toLocaleString();
+
+  if (userLoading || loadingLeaderboard) {
+    return (
+      <div style={styles.loadingPage}>
+        <p style={{ color: "#6b7280" }}>Loading leaderboard...</p>
+      </div>
+    );
+  }
 
   return (
-    <Layout active="challenges" user={user} onNavigate={onNavigate}>
+    <Layout active="challenges" user={currentUserObj} onNavigate={onNavigate}>
       <div style={styles.content}>
         <button type="button" onClick={() => onNavigate("/challenges")} style={styles.backBtn}>
           <ChevronLeft size={16} />
@@ -42,8 +120,8 @@ export default function ChallengeLeaderboard({ onNavigate }) {
             <Trophy size={30} color="#fbbf24" fill="#fbbf24" />
           </div>
           <div style={styles.highlightLabel}>Your Rank</div>
-          <div style={styles.highlightRank}>#5</div>
-          <div style={styles.highlightSub}>8,750 Eco Points</div>
+          <div style={styles.highlightRank}>{myRank}</div>
+          <div style={styles.highlightSub}>{myPoints} Eco Points</div>
         </div>
 
         {/* Tabs */}
@@ -67,7 +145,7 @@ export default function ChallengeLeaderboard({ onNavigate }) {
 
         {/* List */}
         <div style={styles.list}>
-          {LEADERBOARD.map((p) => {
+          {leaderboard.map((p) => {
             const rankStyle = RANK_STYLES[p.rank];
             return (
               <div key={p.rank} style={{ ...styles.row, ...(p.me ? styles.rowMe : {}) }}>
@@ -103,6 +181,13 @@ export default function ChallengeLeaderboard({ onNavigate }) {
 }
 
 const styles = {
+  loadingPage: {
+    minHeight: "100vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#f9fafb",
+  },
   content: { padding: "28px 32px", maxWidth: 1180, width: "100%", margin: "0 auto", textAlign: "left" },
   backBtn: {
     display: "flex",

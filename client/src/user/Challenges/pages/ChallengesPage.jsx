@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from "react";
 import Layout from "../../../shared/components/Layout";
-import StatCard from "../../../shared/components/StatCard";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
+
+// ============================================================
+// FIREBASE FIRESTORE IMPORTS
+// ============================================================
+import { db } from "../../../firebase/config";
+import { collection, getDocs } from "firebase/firestore";
 
 import {
   Award,
@@ -17,13 +22,9 @@ import {
   Users,
 } from "lucide-react";
 
-const STATS = [
-  { icon: Award, iconColor: "#f97316", label: "Available Challenges", value: "6", sub: "Active nationwide" },
-  { icon: Calendar, iconColor: "#7c3aed", label: "Total Participants", value: "13,360", sub: "Active eco-warriors" },
-  { icon: TrendingUp, iconColor: "#3b82f6", label: "Collective Impact", value: "12,450 kg", sub: "CO₂ saved this month" },
-];
-
-const RANK = { position: 5 };
+// Default image fallback matching AdminChallengePage
+const DEFAULT_IMAGE_URL =
+  "https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?w=800&q=80";
 
 const CHALLENGES = [
   {
@@ -106,10 +107,41 @@ function difficultyPillStyle(level) {
   return { background: "#fee2e2", color: "#b91c1c" };
 }
 
+function calculateRank(score) {
+  if (score >= 1000) return 1;
+  if (score >= 750) return 2;
+  if (score >= 500) return 3;
+  if (score >= 300) return 4;
+  if (score >= 150) return 5;
+  if (score >= 80) return 8;
+  if (score >= 30) return 12;
+  return 20;
+}
+
+function StatCard({ icon: Icon, iconColor, label, value, sub }) {
+  return (
+    <div style={styles.card}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        {Icon && <Icon size={20} color={iconColor} />}
+        <span style={{ fontSize: 13.5, color: "#6b7280", fontWeight: 600 }}>{label}</span>
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: "#111827" }}>{value}</div>
+      <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 2 }}>{sub}</div>
+    </div>
+  );
+}
+
 function ChallengeCard({ c, onNavigate, userChallengeState }) {
   const isJoined = userChallengeState?.joined || false;
   const progress = userChallengeState?.progress || 0;
   const isCompleted = progress >= 100;
+
+  // Safe participant calculation guaranteeing 0 instead of NA or NaN
+  const baseParticipants =
+    c.participants !== undefined && c.participants !== null
+      ? Number(c.participants) || 0
+      : 0;
+  const totalCardParticipants = baseParticipants + (isJoined ? 1 : 0);
 
   const handleViewChallenge = () => {
     onNavigate?.("/challenges/details", c.id);
@@ -117,7 +149,14 @@ function ChallengeCard({ c, onNavigate, userChallengeState }) {
 
   return (
     <div style={{ ...styles.challengeCard, ...(isJoined ? styles.joinedCardBorder : {}) }}>
-      <img src={c.imageUrl} alt={c.title} style={styles.challengeImage} />
+      <img
+        src={c.imageUrl || DEFAULT_IMAGE_URL}
+        alt={c.title}
+        style={styles.challengeImage}
+        onError={(e) => {
+          e.currentTarget.src = DEFAULT_IMAGE_URL;
+        }}
+      />
 
       <div style={{ padding: 20 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
@@ -186,7 +225,7 @@ function ChallengeCard({ c, onNavigate, userChallengeState }) {
           <span style={styles.statRowLabel}>Participants</span>
           <span style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}>
             <Users size={14} />
-            {(c.participants + (isJoined ? 1 : 0)).toLocaleString()}
+            {totalCardParticipants.toLocaleString()}
           </span>
         </div>
 
@@ -210,31 +249,107 @@ function ChallengeCard({ c, onNavigate, userChallengeState }) {
 }
 
 export default function ChallengesPage({ onNavigate }) {
-  // ============================================================
-  // FIREBASE USER AUTHENTICATION & PROFILE
-  // ============================================================
   const { authUser, profile, loading } = useCurrentUser();
 
+  const [challengesList, setChallengesList] = useState(CHALLENGES);
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState("All");
   const [themeFilter, setThemeFilter] = useState("All");
   const [difficultyFilter, setDifficultyFilter] = useState("All");
-  const [userChallenges, setUserChallenges] = useState({});
 
+  // Fetch challenge list directly from Firestore database and merge with default CHALLENGES
   useEffect(() => {
-    const saved = localStorage.getItem("greentrip_user_challenges");
-    if (saved) {
+    const fetchChallengesFromDatabase = async () => {
       try {
-        setUserChallenges(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to parse user challenges", e);
+        let deletedIds = [];
+        try {
+          const saved = localStorage.getItem("greentrip_deleted_challenge_ids");
+          if (saved) deletedIds = JSON.parse(saved);
+        } catch (e) {}
+
+        const querySnapshot = await getDocs(collection(db, "challenges"));
+        const fetched = [];
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          fetched.push({
+            id: data.id || docSnap.id,
+            ...data,
+            imageUrl: data.imageUrl || DEFAULT_IMAGE_URL,
+            participants:
+              data.participants !== undefined && data.participants !== null
+                ? Number(data.participants) || 0
+                : 0,
+          });
+        });
+
+        // Merge Firestore challenges with default CHALLENGES (filtering out replaced or deleted IDs)
+        const firestoreIds = new Set(fetched.map((item) => String(item.id)));
+        const activeDummies = CHALLENGES.filter(
+          (dummy) =>
+            !firestoreIds.has(String(dummy.id)) &&
+            !deletedIds.includes(String(dummy.id))
+        );
+
+        setChallengesList([...fetched, ...activeDummies]);
+      } catch (err) {
+        console.error("Error fetching challenges list from Firestore:", err);
       }
-    }
+    };
+
+    fetchChallengesFromDatabase();
   }, []);
 
-  // ============================================================
-  // LOADING STATE
-  // ============================================================
+  // Load user challenges directly from Firestore profile data
+  const userChallenges = profile?.user_challenges || profile?.userChallenges || {};
+
+  const completedChallenges = challengesList.filter(
+    (c) => userChallenges[c.id]?.progress >= 100
+  );
+
+  const joinedChallengesCount = Object.values(userChallenges).filter(
+    (state) => state?.joined
+  ).length;
+
+  const availableCount = challengesList.length - completedChallenges.length;
+
+  const baseParticipants = 13360;
+  const totalParticipants = baseParticipants + joinedChallengesCount;
+
+  const baseCarbonKg = 12450;
+  const addedCarbonKg = completedChallenges.reduce(
+    (acc, c) => acc + (c.carbonKg || 0),
+    0
+  );
+  const totalCarbonImpact = baseCarbonKg + addedCarbonKg;
+
+  // Single Source of Truth from Firestore Profile
+  const totalEcoScore = profile?.eco_score ?? profile?.ecoScore ?? 0;
+  const currentRankPosition = calculateRank(totalEcoScore);
+
+  const dynamicStats = [
+    {
+      icon: Award,
+      iconColor: "#f97316",
+      label: "Available Challenges",
+      value: availableCount.toString(),
+      sub: "Active nationwide",
+    },
+    {
+      icon: Calendar,
+      iconColor: "#7c3aed",
+      label: "Total Participants",
+      value: totalParticipants.toLocaleString(),
+      sub: "Active eco-warriors",
+    },
+    {
+      icon: TrendingUp,
+      iconColor: "#3b82f6",
+      label: "Collective Impact",
+      value: `${totalCarbonImpact.toLocaleString(undefined, { maximumFractionDigits: 1 })} kg`,
+      sub: "CO₂ saved this month",
+    },
+  ];
+
   if (loading) {
     return (
       <div style={styles.loadingPage}>
@@ -243,9 +358,6 @@ export default function ChallengesPage({ onNavigate }) {
     );
   }
 
-  // ============================================================
-  // LOGIN CHECK
-  // ============================================================
   if (!authUser || !profile) {
     return (
       <div style={styles.loadingPage}>
@@ -261,13 +373,17 @@ export default function ChallengesPage({ onNavigate }) {
     );
   }
 
-  // Extract user info from Firebase Profile
   const user = {
+    ...profile,
     name: profile.name,
-    ecoScore: profile.eco_score ?? 0,
+    eco_score: totalEcoScore,
+    ecoScore: totalEcoScore,
   };
 
-  const filteredChallenges = CHALLENGES.filter((c) => {
+  const filteredChallenges = challengesList.filter((c) => {
+    const isCompleted = userChallenges[c.id]?.progress >= 100;
+    if (isCompleted) return false;
+
     const matchesSearch =
       c.title.toLowerCase().includes(search.toLowerCase()) ||
       c.description.toLowerCase().includes(search.toLowerCase());
@@ -284,14 +400,12 @@ export default function ChallengesPage({ onNavigate }) {
         <h1 style={styles.pageTitle}>Community Eco-Challenges</h1>
         <p style={styles.pageSubtitle}>Join sustainable activities and earn rewards</p>
 
-        {/* Stat cards */}
         <div style={styles.statGrid}>
-          {STATS.map((s) => (
+          {dynamicStats.map((s) => (
             <StatCard key={s.label} {...s} />
           ))}
         </div>
 
-        {/* Leaderboard summary */}
         <div style={{ ...styles.card, marginTop: 20 }}>
           <div style={styles.rowHeader}>
             <span style={styles.cardTitle}>Global Leaderboard</span>
@@ -301,13 +415,12 @@ export default function ChallengesPage({ onNavigate }) {
           </div>
           <p style={styles.leaderboardTagline}>🏆 Climb the ranks, inspire change.</p>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <span style={styles.rankNumber}>#{RANK.position}</span>
+            <span style={styles.rankNumber}>#{currentRankPosition}</span>
             <span style={{ fontWeight: 700, fontSize: 14.5 }}>Your Rank</span>
           </div>
-          <div style={styles.rankSub}>with {user.ecoScore.toLocaleString()} Eco Points</div>
+          <div style={styles.rankSub}>with {user.eco_score.toLocaleString()} Eco Points</div>
         </div>
 
-        {/* Search & Filters */}
         <div style={{ ...styles.card, marginTop: 20 }}>
           <div style={styles.searchBox}>
             <Search size={16} color="#9ca3af" />
@@ -377,7 +490,6 @@ export default function ChallengesPage({ onNavigate }) {
           </div>
         </div>
 
-        {/* Challenge Cards Grid */}
         <div style={styles.challengeGrid}>
           {filteredChallenges.length > 0 ? (
             filteredChallenges.map((c) => (
@@ -390,7 +502,7 @@ export default function ChallengesPage({ onNavigate }) {
             ))
           ) : (
             <div style={styles.noResults}>
-              No challenges found matching your filters.
+              No available challenges found matching your filters.
             </div>
           )}
         </div>
@@ -408,9 +520,7 @@ const styles = {
     justifyContent: "center",
     background: "#f9fafb",
   },
-  loadingText: {
-    color: "#6b7280",
-  },
+  loadingText: { color: "#6b7280" },
   loginRedirectBtn: {
     marginTop: 10,
     background: "#16a34a",

@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from "react";
 import Layout from "../../../shared/components/Layout";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
+
+// ============================================================
+// FIREBASE FIRESTORE IMPORTS
+// ============================================================
+import { db } from "../../../firebase/config";
+import { doc, updateDoc, increment, getDoc } from "firebase/firestore";
+
 import {
   ArrowLeft,
   MapPin,
@@ -18,7 +25,11 @@ import {
   AlertCircle,
 } from "lucide-react";
 
-// Database of individual challenges aligned with the community challenges list
+// Default image fallback matching AdminChallengePage
+const DEFAULT_IMAGE_URL =
+  "https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?w=800&q=80";
+
+// Database fallback of individual challenges
 const CHALLENGES_DATA = {
   1: {
     id: 1,
@@ -160,7 +171,49 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
   // ============================================================
   const { authUser, profile, loading } = useCurrentUser();
 
-  const challenge = CHALLENGES_DATA[challengeId] || CHALLENGES_DATA[1];
+  const [dbChallenge, setDbChallenge] = useState(null);
+
+  // Fetch challenge directly from Firestore database
+  useEffect(() => {
+    const fetchChallengeFromDatabase = async () => {
+      try {
+        const challengeDocRef = doc(db, "challenges", String(challengeId));
+        const challengeSnap = await getDoc(challengeDocRef);
+        if (challengeSnap.exists()) {
+          const data = challengeSnap.data();
+          setDbChallenge({
+            id: data.id || challengeSnap.id,
+            ...data,
+            imageUrl: data.imageUrl || DEFAULT_IMAGE_URL,
+            participants:
+              data.participants !== undefined && data.participants !== null
+                ? Number(data.participants) || 0
+                : 0,
+            allowedVerification: data.allowedVerification || ["image"],
+            rules: data.rules || [],
+          });
+        }
+      } catch (error) {
+        console.error("Error fetching challenge from Firestore:", error);
+      }
+    };
+
+    if (challengeId) {
+      fetchChallengeFromDatabase();
+    }
+  }, [challengeId]);
+
+  const rawChallenge =
+    dbChallenge || CHALLENGES_DATA[challengeId] || CHALLENGES_DATA[1];
+
+  const challenge = {
+    ...rawChallenge,
+    imageUrl: rawChallenge?.imageUrl || DEFAULT_IMAGE_URL,
+    participants:
+      rawChallenge?.participants !== undefined && rawChallenge?.participants !== null
+        ? Number(rawChallenge.participants) || 0
+        : 0,
+  };
 
   const [joined, setJoined] = useState(false);
   const [completed, setCompleted] = useState(false);
@@ -181,9 +234,35 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
     }
   }, [challengeId]);
 
-  // Load saved challenge progress from LocalStorage
+  // Load saved challenge progress from Firestore profile or User-Scoped LocalStorage fallback
   useEffect(() => {
-    const saved = localStorage.getItem("greentrip_user_challenges");
+    const profileChallenge =
+      profile?.user_challenges?.[challenge.id] ||
+      profile?.userChallenges?.[challenge.id];
+
+    if (profileChallenge) {
+      setJoined(profileChallenge.joined || profileChallenge.progress > 0 || false);
+      setCompleted(
+        profileChallenge.completed || profileChallenge.progress >= 100 || false
+      );
+      setImagePreview(profileChallenge.uploadedImage || null);
+      if (profileChallenge.gpsVerified) {
+        setGpsStatus({
+          success: true,
+          message: `Check-in verified at ${challenge.location}`,
+        });
+      } else {
+        setGpsStatus(null);
+      }
+      return;
+    }
+
+    // Key local storage to current user UID so new accounts start completely clean
+    const storageKey = authUser?.uid
+      ? `greentrip_user_challenges_${authUser.uid}`
+      : "greentrip_user_challenges";
+
+    const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -196,6 +275,8 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
               success: true,
               message: `Check-in verified at ${challenge.location}`,
             });
+          } else {
+            setGpsStatus(null);
           }
         } else {
           setJoined(false);
@@ -205,13 +286,31 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
         }
       } catch (e) {
         console.error("Error reading challenge state:", e);
+        setJoined(false);
+        setCompleted(false);
+        setImagePreview(null);
+        setGpsStatus(null);
       }
+    } else {
+      setJoined(false);
+      setCompleted(false);
+      setImagePreview(null);
+      setGpsStatus(null);
     }
-  }, [challenge.id]);
+  }, [challenge.id, profile, authUser?.uid]);
 
-  // Helper to persist state to LocalStorage
-  const saveChallengeState = (isJoined, isCompleted, imgData = null, gpsDone = false) => {
-    const saved = localStorage.getItem("greentrip_user_challenges");
+  // Helper to persist state to User-Scoped LocalStorage
+  const saveChallengeState = (
+    isJoined,
+    isCompleted,
+    imgData = null,
+    gpsDone = false
+  ) => {
+    const storageKey = authUser?.uid
+      ? `greentrip_user_challenges_${authUser.uid}`
+      : "greentrip_user_challenges";
+
+    const saved = localStorage.getItem(storageKey);
     let parsed = {};
     if (saved) {
       try {
@@ -227,12 +326,60 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
       gpsVerified: gpsDone || (gpsStatus?.success ?? false),
     };
 
-    localStorage.setItem("greentrip_user_challenges", JSON.stringify(parsed));
+    localStorage.setItem(storageKey, JSON.stringify(parsed));
   };
 
-  const handleJoin = () => {
+  // ============================================================
+  // DATABASE HELPER: SAVE COMPLETION STATE & INCREMENT ECO POINTS
+  // ============================================================
+  const saveCompletionToFirestore = async (
+    pointsEarned,
+    imgData = null,
+    gpsDone = false
+  ) => {
+    if (!authUser?.uid) return;
+
+    try {
+      const userRef = doc(db, "users", authUser.uid);
+
+      await updateDoc(userRef, {
+        eco_score: increment(pointsEarned),
+        [`user_challenges.${challenge.id}`]: {
+          joined: true,
+          completed: true,
+          progress: 100,
+          completedAt: new Date().toISOString(),
+          uploadedImage: imgData || imagePreview || null,
+          gpsVerified: gpsDone || (gpsStatus?.success ?? false),
+        },
+      });
+
+      console.log(
+        `Successfully updated user_challenges.${challenge.id} and added +${pointsEarned} eco_score in Firestore.`
+      );
+    } catch (err) {
+      console.error("Error saving challenge completion to Firestore:", err);
+    }
+  };
+
+  const handleJoin = async () => {
     setJoined(true);
     saveChallengeState(true, completed);
+
+    if (authUser?.uid) {
+      try {
+        const userRef = doc(db, "users", authUser.uid);
+        await updateDoc(userRef, {
+          [`user_challenges.${challenge.id}`]: {
+            joined: true,
+            completed: false,
+            progress: 50,
+          },
+        });
+      } catch (err) {
+        console.error("Error saving join state to Firestore:", err);
+      }
+    }
   };
 
   // Image Upload Handlers
@@ -255,10 +402,12 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
     if (!imagePreview) return;
     setIsSubmitting(true);
 
-    setTimeout(() => {
+    setTimeout(async () => {
       setIsSubmitting(false);
       setCompleted(true);
       saveChallengeState(true, true, imagePreview);
+
+      await saveCompletionToFirestore(challenge.points, imagePreview, false);
     }, 1200);
   };
 
@@ -267,43 +416,41 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
     setGpsLoading(true);
     setGpsStatus(null);
 
+    const completeGpsVerification = async (message) => {
+      setGpsLoading(false);
+      setGpsStatus({
+        success: true,
+        message: message,
+      });
+      setCompleted(true);
+      saveChallengeState(true, true, imagePreview, true);
+
+      await saveCompletionToFirestore(challenge.points, imagePreview, true);
+    };
+
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const { latitude, longitude } = position.coords;
-          setGpsLoading(false);
-          setGpsStatus({
-            success: true,
-            message: `Check-in verified! Coordinates: (${latitude.toFixed(
-              4
-            )}, ${longitude.toFixed(4)})`,
-          });
-          setCompleted(true);
-          saveChallengeState(true, true, imagePreview, true);
+          completeGpsVerification(
+            `Check-in verified! Coordinates: (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`
+          );
         },
         () => {
-          setGpsLoading(false);
-          setGpsStatus({
-            success: true,
-            message: `Check-in verified at ${challenge.location}!`,
-          });
-          setCompleted(true);
-          saveChallengeState(true, true, imagePreview, true);
+          completeGpsVerification(`Check-in verified at ${challenge.location}!`);
         },
         { timeout: 8000 }
       );
     } else {
       setTimeout(() => {
-        setGpsLoading(false);
-        setGpsStatus({
-          success: true,
-          message: `Check-in verified at ${challenge.location}!`,
-        });
-        setCompleted(true);
-        saveChallengeState(true, true, imagePreview, true);
+        completeGpsVerification(`Check-in verified at ${challenge.location}!`);
       }, 1000);
     }
   };
+
+  // Safe calculation of total participants (guarantees number instead of NA/NaN)
+  const baseParticipants = Number(challenge.participants) || 0;
+  const currentParticipants = baseParticipants + (joined ? 1 : 0);
 
   // ============================================================
   // 2. LOADING STATE
@@ -335,8 +482,10 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
   }
 
   const user = {
+    ...profile,
     name: profile.name,
-    ecoScore: profile.eco_score ?? 0,
+    eco_score: profile.eco_score ?? profile.ecoScore ?? 0,
+    ecoScore: profile.eco_score ?? profile.ecoScore ?? 0,
   };
 
   // ============================================================
@@ -357,9 +506,12 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
         {/* Hero banner */}
         <div style={styles.heroCard}>
           <img
-            src={challenge.imageUrl}
+            src={challenge.imageUrl || DEFAULT_IMAGE_URL}
             alt={challenge.title}
             style={styles.heroImage}
+            onError={(e) => {
+              e.currentTarget.src = DEFAULT_IMAGE_URL;
+            }}
           />
           <div style={styles.heroOverlay}>
             <div style={styles.badgeRow}>
@@ -406,7 +558,7 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
                   <Users size={18} color="#7c3aed" />
                   <div>
                     <div style={styles.quickStatValue}>
-                      {(challenge.participants + (joined ? 1 : 0)).toLocaleString()}
+                      {currentParticipants.toLocaleString()}
                     </div>
                     <div style={styles.quickStatLabel}>Participants</div>
                   </div>
