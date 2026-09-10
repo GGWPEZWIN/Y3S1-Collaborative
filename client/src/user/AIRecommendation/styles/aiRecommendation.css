@@ -1,6 +1,7 @@
 .m2-page {
   padding: 24px 32px 48px;
   max-width: 1120px;
+  margin-inline: auto;
 }
 
 .m2-header {
@@ -40,6 +41,16 @@
 .m2-badge--demo {
   background: #f3f4f6;
   color: #374151;
+}
+
+.m2-badge--private {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.m2-badge--public {
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .m2-notice {
@@ -917,9 +928,71 @@
   }
 }
 
+.m2-success-hero {
+  background: linear-gradient(180deg, #ecfdf5 0%, transparent 100%);
+  border-radius: 16px;
+  padding: 8px 4px 16px;
+}
+
+.m2-score-card {
+  text-align: center;
+}
+
+.m2-score-hero {
+  font-size: clamp(48px, 8vw, 72px);
+  font-weight: 800;
+  color: #14532d;
+  margin: 8px 0 12px;
+  line-height: 1;
+}
+
+.m2-segment-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.m2-segment-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 14px;
+  background: #fff;
+}
+
+.m2-segment-title {
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 8px;
+}
+
+.m2-complete .m2-btn--go {
+  width: 100%;
+  max-width: none;
+}
+
+.m2-complete .m2-overview-cta {
+  align-items: stretch;
+  width: 100%;
+}
+
+.m2-complete .m2-notice {
+  width: 100%;
+  margin-bottom: 0;
+  text-align: center;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .m2-loader,
   .m2-loading-mode {
     animation: none;
+  }
+
+  .m2-success-hero,
+  .m2-score-hero,
+  .m2-complete {
+    transition: none;
   }
 }
