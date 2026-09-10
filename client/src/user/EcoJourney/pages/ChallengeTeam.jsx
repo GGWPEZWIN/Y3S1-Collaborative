@@ -2161,7 +2161,7 @@ export default function ChallengeTeam({
                   {createMode ===
                   CHALLENGE_MODE.PARTNER
                     ? "Choose a challenge and invite exactly one friend. The challenge can only start after your partner accepts."
-                    : "Create a team, invite friends if you want, or leave it open so other GreenTrip users can find it and request to join."}
+                    : "Create a team with at least 2 members. Invite friends directly, or let other GreenTrip users find your team and request to join."}
                 </p>
               </div>
 
@@ -2448,10 +2448,10 @@ export default function ChallengeTeam({
                       <>
                         <Users size={16} />
                         Optional: invite as many
-                        friends as you like,
-                        or leave this empty and
-                        let users request to
-                        join from Find a Team.
+                        friends as you like. The team
+                        still needs at least 2 accepted
+                        members before the challenge
+                        can start.
                       </>
                     )}
                   </div>

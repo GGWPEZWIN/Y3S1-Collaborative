@@ -390,6 +390,123 @@ export default function ChatRoom({ chatId, onNavigate }) {
     }
   };
 
+
+  /* =========================================================
+     SEND TEXT MESSAGE
+  ========================================================= */
+
+  const handleSend = async (event) => {
+    event?.preventDefault();
+
+    const trimmed = text.trim();
+
+    if (!trimmed || sending || !chatId || !authUser?.uid) {
+      return;
+    }
+
+    setSending(true);
+
+    try {
+      await sendMessage(chatId, authUser, trimmed);
+      setText("");
+    } catch (err) {
+      reportError(err);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /* =========================================================
+     MEDIA PICKER / PREVIEW
+  ========================================================= */
+
+  const handlePickMedia = () => {
+    if (uploadingMedia || pendingMedia.length > 0) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleMediaChange = (event) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+
+    if (!files.length) return;
+
+    const validFiles = files.filter(
+      (file) =>
+        file.type.startsWith("image/") ||
+        file.type.startsWith("video/")
+    );
+
+    if (!validFiles.length) {
+      reportError(new Error("Please select an image or video file."));
+      return;
+    }
+
+    const previews = validFiles.map((file) => ({
+      file,
+      url: URL.createObjectURL(file),
+      type: file.type.startsWith("image/") ? "image" : "video",
+    }));
+
+    setPendingMedia((prev) => [...prev, ...previews]);
+  };
+
+  const removePendingMedia = (index) => {
+    setPendingMedia((prev) => {
+      const item = prev[index];
+
+      if (item?.url) {
+        URL.revokeObjectURL(item.url);
+      }
+
+      return prev.filter((_, itemIndex) => itemIndex !== index);
+    });
+  };
+
+  const clearPendingMedia = () => {
+    setPendingMedia((prev) => {
+      prev.forEach((item) => {
+        if (item?.url) URL.revokeObjectURL(item.url);
+      });
+
+      return [];
+    });
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  /* =========================================================
+     SEND PREVIEWED MEDIA
+  ========================================================= */
+
+  const handleSendPendingMedia = async () => {
+    if (!pendingMedia.length || uploadingMedia || !chatId || !authUser?.uid) {
+      return;
+    }
+
+    setUploadingMedia(true);
+
+    try {
+      for (const item of pendingMedia) {
+        if (!item?.file) continue;
+
+        if (item.type === "image") {
+          await sendImageMessage(chatId, authUser, item.file);
+        } else if (item.type === "video") {
+          await sendVideoMessage(chatId, authUser, item.file);
+        }
+      }
+
+      clearPendingMedia();
+    } catch (err) {
+      reportError(err);
+    } finally {
+      setUploadingMedia(false);
+    }
+  };
+
   const filteredMessages = useMemo(() => {
     const keyword = searchText.trim().toLowerCase();
 
@@ -475,8 +592,17 @@ export default function ChatRoom({ chatId, onNavigate }) {
     );
   }
 
-  const otherUid = !isGroup ? chat.members.find((m) => m !== authUser.uid) : null;
-  const title = isGroup ? chat.name : chat.memberNames?.[otherUid] || "Chat";
+  const memberList = Array.isArray(chat.members)
+    ? chat.members
+    : [];
+
+  const otherUid = !isGroup
+    ? memberList.find((m) => m !== authUser.uid)
+    : null;
+
+  const title = isGroup
+    ? chat.name || "Group Chat"
+    : chat.memberNames?.[otherUid] || "Chat";
 
   return (
     <div style={styles.page}>
@@ -533,7 +659,7 @@ export default function ChatRoom({ chatId, onNavigate }) {
                 </div>
                 {isGroup && (
                   <div style={styles.headerSubtitle}>
-                    {chat.members?.length || 0} members · tap for info
+                    {memberList.length} members · tap for info
                   </div>
                 )}
               </div>
