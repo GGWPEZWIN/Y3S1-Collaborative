@@ -78,13 +78,19 @@ export default function Step5Review({
     [destinationIds, draft.activityIds]
   );
 
-  const accommodation = useMemo(
-    () =>
+  const accommodation = useMemo(() => {
+    if (draft.accommodationId == null) return null;
+    // A selected Firebase hotel is carried on the draft — it isn't in the
+    // static catalogue this list searches.
+    if (draft.accommodation && draft.accommodation.id === draft.accommodationId) {
+      return draft.accommodation;
+    }
+    return (
       getAccommodationsForMany(destinationIds).find(
         (a) => a.id === draft.accommodationId
-      ) ?? null,
-    [destinationIds, draft.accommodationId]
-  );
+      ) ?? null
+    );
+  }, [destinationIds, draft.accommodationId, draft.accommodation]);
 
   // Activity / accommodation estimates only. Transport is not part of Module 1.
   const ecoScore = calcEcoScore(activities, accommodation);
@@ -351,7 +357,7 @@ export default function Step5Review({
           <p style={styles.successText}>
             {isEditing
               ? "Your itinerary has been updated."
-              : "Next, get transport and eco recommendations for this route."}
+              : "Your itinerary is saved. Start your trip to open the recommendation tab from your starting location."}
           </p>
           {isEditing ? (
             <button
@@ -367,7 +373,7 @@ export default function Step5Review({
               onClick={onGetRecommendation}
               style={{ ...w.nextBtn, ...(isPhone ? w.btnPhone : null) }}
             >
-              <Sparkles size={16} /> Get Green Recommendation
+              <Sparkles size={16} /> Start Trip
             </button>
           )}
         </div>

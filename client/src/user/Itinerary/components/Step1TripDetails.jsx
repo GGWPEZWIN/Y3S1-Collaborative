@@ -1,6 +1,10 @@
 import React from "react";
-import { ArrowRight, Leaf } from "lucide-react";
-import { TRAVELLER_STYLES, START_LOCATIONS } from "../constants/itineraryData";
+import { ArrowRight, Leaf, AlertCircle } from "lucide-react";
+import {
+  TRAVELLER_STYLES,
+  START_LOCATIONS,
+  formatDate,
+} from "../constants/itineraryData";
 import useMediaQuery, { BREAKPOINTS } from "../hooks/useMediaQuery";
 import * as w from "./wizardStyles";
 
@@ -14,8 +18,20 @@ import * as w from "./wizardStyles";
  * - draft    — the wizard's working itinerary object
  * - onChange(patch) — shallow-merges the patch into the draft
  * - onNext   — advance to step 2
+ * - datesStatus  — "loading" | "ready" | "error": state of the check that loads
+ *                  the traveller's existing itineraries for overlap detection
+ * - datesError   — message when datesStatus === "error" (non-blocking)
+ * - dateConflict — an existing itinerary { title, startDate, endDate } whose
+ *                  dates overlap the ones entered here, or null
  */
-export default function Step1TripDetails({ draft, onChange, onNext }) {
+export default function Step1TripDetails({
+  draft,
+  onChange,
+  onNext,
+  datesStatus = "ready",
+  datesError = null,
+  dateConflict = null,
+}) {
   const isPhone = useMediaQuery(BREAKPOINTS.phone);
 
   // The native date input can't express "end must not precede start", so the
@@ -23,12 +39,16 @@ export default function Step1TripDetails({ draft, onChange, onNext }) {
   const datesValid =
     !draft.startDate || !draft.endDate || draft.endDate >= draft.startDate;
 
+  const checkingDates = datesStatus === "loading";
+
   const canContinue =
     draft.name.trim() !== "" &&
     draft.startDate &&
     draft.endDate &&
     datesValid &&
-    Boolean(draft.startLocationId);
+    Boolean(draft.startLocationId) &&
+    !dateConflict &&
+    !checkingDates;
 
   const twoCol = { ...styles.twoCol, ...(isPhone ? styles.twoColPhone : null) };
 
@@ -87,6 +107,39 @@ export default function Step1TripDetails({ draft, onChange, onNext }) {
 
         {!datesValid && (
           <p style={styles.error}>End date must be on or after the start date.</p>
+        )}
+
+        {checkingDates && (
+          <p style={styles.checkingLine}>Checking your existing itineraries…</p>
+        )}
+
+        {datesValid && dateConflict && (
+          <div style={styles.conflictBox}>
+            <AlertCircle size={16} color="#b91c1c" />
+            <div>
+              <div style={{ fontWeight: 700 }}>
+                You already have an itinerary during these dates. Please choose
+                different dates.
+              </div>
+              <div style={styles.conflictSub}>
+                Clashes with{" "}
+                <strong>{dateConflict.title || "an existing itinerary"}</strong>{" "}
+                ({formatDate(dateConflict.startDate)} –{" "}
+                {formatDate(dateConflict.endDate)}).
+              </div>
+            </div>
+          </div>
+        )}
+
+        {datesStatus === "error" && (
+          <div style={styles.softWarnBox}>
+            <AlertCircle size={15} color="#b45309" />
+            <span>
+              {datesError ||
+                "We couldn't check your existing itineraries right now."}{" "}
+              You can continue — we'll check again when you save.
+            </span>
+          </div>
         )}
 
         <label style={styles.field}>
@@ -246,4 +299,35 @@ const styles = {
     display: "inline-block",
   },
   error: { color: "#b91c1c", fontSize: 13, margin: 0 },
+  checkingLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    color: "#6b7280",
+    fontSize: 12.5,
+    margin: 0,
+  },
+  conflictBox: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    background: "#fef2f2",
+    border: "1px solid #fecaca",
+    borderRadius: 10,
+    padding: "12px 14px",
+    color: "#b91c1c",
+    fontSize: 13,
+  },
+  conflictSub: { color: "#6b7280", fontSize: 12.5, marginTop: 3 },
+  softWarnBox: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    background: "#fffbeb",
+    border: "1px solid #fde68a",
+    borderRadius: 10,
+    padding: "10px 13px",
+    color: "#92400e",
+    fontSize: 12.5,
+  },
 };
