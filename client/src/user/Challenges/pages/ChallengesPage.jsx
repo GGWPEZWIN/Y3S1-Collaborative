@@ -1,44 +1,30 @@
-import React, { useState } from "react";
-import StatCard from "../../../shared/components/StatCard";
+import React, { useState, useEffect } from "react";
+import Layout from "../../../shared/components/Layout";
+import { useCurrentUser } from "../../../firebase/useCurrentUser";
+
+// ============================================================
+// FIREBASE FIRESTORE IMPORTS
+// ============================================================
+import { db } from "../../../firebase/config";
+import { collection, getDocs } from "firebase/firestore";
 
 import {
-  Home,
-  Map,
-  Navigation,
-  Users,
-  Zap,
   Award,
-  Trash2,
-  Leaf,
+  Calendar,
+  TrendingUp,
   Search,
   ChevronDown,
   ChevronRight,
   MapPin,
   TrendingDown,
-  Calendar,
-  TrendingUp,
+  CheckCircle2,
+  Clock,
+  Users,
 } from "lucide-react";
 
-const USER = { name: "Keshi", ecoScore: 8750 };
-
-const NAV_ITEMS = [
-  { icon: Home, label: "Dashboard", route: "/dashboard" },
-  { icon: Map, label: "Itinerary", route: "/itinerary" },
-  { icon: Navigation, label: "Recommendations", route: "/recommendations" },
-  { icon: Users, label: "Community", route: "/community" },
-  { icon: Zap, label: "Challenges", route: "/challenges" },
-  { icon: Award, label: "Certification", route: "/certification" },
-  { icon: Trash2, label: "Waste", route: "/waste" },
-];
-
-// StatCard.jsx expects icon as an actual lucide-react component + "sub" (not "sublabel")
-const STATS = [
-  { icon: Award, iconColor: "#f97316", label: "Available Challenges", value: "5", sub: "Active nationwide" },
-  { icon: Calendar, iconColor: "#7c3aed", label: "Total Participants", value: "13,360", sub: "Active eco-warriors" },
-  { icon: TrendingUp, iconColor: "#3b82f6", label: "Collective Impact", value: "12,450 kg", sub: "CO₂ saved this month" },
-];
-
-const RANK = { position: 5, points: 8750 };
+// Default image fallback matching AdminChallengePage
+const DEFAULT_IMAGE_URL =
+  "https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?w=800&q=80";
 
 const CHALLENGES = [
   {
@@ -65,6 +51,54 @@ const CHALLENGES = [
     participants: 5234,
     imageUrl: "https://images.unsplash.com/photo-1555126634-323283e090fa?w=600&q=80",
   },
+  {
+    id: 3,
+    title: "George Town Heritage Walk",
+    description: "Ditch the car and explore Penang's UNESCO Heritage site entirely on foot or by bicycle for a day.",
+    difficulty: "Easy",
+    tag: "Low-Carbon Transit",
+    location: "Penang",
+    points: 40,
+    carbonKg: 8.2,
+    participants: 1932,
+    imageUrl: "https://images.unsplash.com/photo-1599423528441-2a07d3b5b62b?w=600&q=80",
+  },
+  {
+    id: 4,
+    title: "Kinabalu Reforestation",
+    description: "Join local rangers to plant 5 native tree saplings at the base of Mount Kinabalu.",
+    difficulty: "Hard",
+    tag: "Reforestation",
+    location: "Sabah",
+    points: 150,
+    carbonKg: 45.0,
+    participants: 412,
+    imageUrl: "https://images.unsplash.com/photo-1511497584788-876760111969?w=600&q=80",
+  },
+  {
+    id: 5,
+    title: "Melaka River Cleanup",
+    description: "Participate in the weekend volunteer drive to collect and sort plastic waste along the Melaka River.",
+    difficulty: "Medium",
+    tag: "Zero-Plastic",
+    location: "Melaka",
+    points: 80,
+    carbonKg: null,
+    participants: 845,
+    imageUrl: "https://images.unsplash.com/photo-1618477461853-cf6ed80fbfc9?w=600&q=80",
+  },
+  {
+    id: 6,
+    title: "Bako Coastal Conservation",
+    description: "Help clear washed-up debris and plant mangroves along the Sarawak coastline.",
+    difficulty: "Hard",
+    tag: "Reforestation",
+    location: "Sarawak",
+    points: 120,
+    carbonKg: 25.5,
+    participants: 320,
+    imageUrl: "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=600&q=80",
+  },
 ];
 
 function difficultyPillStyle(level) {
@@ -73,52 +107,78 @@ function difficultyPillStyle(level) {
   return { background: "#fee2e2", color: "#b91c1c" };
 }
 
-function ChallengeCard({ c, onNavigate }) {
+function calculateRank(score) {
+  if (score >= 1000) return 1;
+  if (score >= 750) return 2;
+  if (score >= 500) return 3;
+  if (score >= 300) return 4;
+  if (score >= 150) return 5;
+  if (score >= 80) return 8;
+  if (score >= 30) return 12;
+  return 20;
+}
+
+function StatCard({ icon: Icon, iconColor, label, value, sub }) {
+  return (
+    <div style={styles.card}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        {Icon && <Icon size={20} color={iconColor} />}
+        <span style={{ fontSize: 13.5, color: "#6b7280", fontWeight: 600 }}>{label}</span>
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: "#111827" }}>{value}</div>
+      <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 2 }}>{sub}</div>
+    </div>
+  );
+}
+
+function ChallengeCard({ c, onNavigate, userChallengeState }) {
+  const isJoined = userChallengeState?.joined || false;
+  const progress = userChallengeState?.progress || 0;
+  const isCompleted = progress >= 100;
+
+  // Safe participant calculation guaranteeing 0 instead of NA or NaN
+  const baseParticipants =
+    c.participants !== undefined && c.participants !== null
+      ? Number(c.participants) || 0
+      : 0;
+  const totalCardParticipants = baseParticipants + (isJoined ? 1 : 0);
+
   const handleViewChallenge = () => {
-    // TEMPORARY DEBUG WRAPPER — remove once navigation is confirmed working.
-    try {
-      if (typeof onNavigate !== "function") {
-        alert("BUG FOUND: onNavigate is " + typeof onNavigate + " (not a function). It never reached this component as a prop.");
-        return;
-      }
-      onNavigate("/challenges/details", c.id);
-    } catch (err) {
-      alert("ERROR while navigating: " + err.message);
-    }
+    onNavigate?.("/challenges/details", c.id);
   };
 
   return (
-    <div style={styles.challengeCard}>
+    <div style={{ ...styles.challengeCard, ...(isJoined ? styles.joinedCardBorder : {}) }}>
       <img
-        src={c.imageUrl}
+        src={c.imageUrl || DEFAULT_IMAGE_URL}
         alt={c.title}
         style={styles.challengeImage}
+        onError={(e) => {
+          e.currentTarget.src = DEFAULT_IMAGE_URL;
+        }}
       />
 
       <div style={{ padding: 20 }}>
-        <div style={styles.challengeTitle}>{c.title}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+          <div style={styles.challengeTitle}>{c.title}</div>
+          {isCompleted ? (
+            <span style={styles.completedBadge}>
+              <CheckCircle2 size={12} /> Completed
+            </span>
+          ) : isJoined ? (
+            <span style={styles.inProgressBadge}>
+              <Clock size={12} /> In Progress
+            </span>
+          ) : null}
+        </div>
 
-        <p style={styles.challengeDesc}>
-          {c.description}
-        </p>
+        <p style={styles.challengeDesc}>{c.description}</p>
 
         <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-          <span
-            style={{
-              ...styles.pill,
-              ...difficultyPillStyle(c.difficulty),
-            }}
-          >
+          <span style={{ ...styles.pill, ...difficultyPillStyle(c.difficulty) }}>
             {c.difficulty}
           </span>
-
-          <span
-            style={{
-              ...styles.pill,
-              background: "#DBEAFE",
-              color: "#2563EB",
-            }}
-          >
+          <span style={{ ...styles.pill, background: "#DBEAFE", color: "#2563EB" }}>
             {c.tag}
           </span>
         </div>
@@ -128,209 +188,357 @@ function ChallengeCard({ c, onNavigate }) {
           {c.location}
         </div>
 
+        {isJoined && (
+          <div style={styles.cardProgressSection}>
+            <div style={styles.cardProgressRow}>
+              <span style={styles.cardProgressLabel}>Progress</span>
+              <span style={styles.cardProgressVal}>{progress}%</span>
+            </div>
+            <div style={styles.cardProgressTrack}>
+              <div
+                style={{
+                  ...styles.cardProgressFill,
+                  width: `${progress}%`,
+                  background: isCompleted ? "#16a34a" : "#2563eb",
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         <div style={styles.statRow}>
           <span style={styles.statRowLabel}>Reward</span>
-          <span style={styles.rewardValue}>
-            +{c.points} pts
-          </span>
+          <span style={styles.rewardValue}>+{c.points} pts</span>
         </div>
 
         {c.carbonKg && (
           <div style={styles.statRow}>
-            <span style={styles.statRowLabel}>
-              Carbon Impact
-            </span>
-
-            <span
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 5,
-                fontWeight: 600,
-              }}
-            >
-              <TrendingDown
-                size={14}
-                color="#2563EB"
-              />
+            <span style={styles.statRowLabel}>Carbon Impact</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}>
+              <TrendingDown size={14} color="#2563EB" />
               {c.carbonKg} kg CO₂
             </span>
           </div>
         )}
 
         <div style={styles.statRow}>
-          <span style={styles.statRowLabel}>
-            Participants
-          </span>
-
-          <span
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              fontWeight: 600,
-            }}
-          >
+          <span style={styles.statRowLabel}>Participants</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}>
             <Users size={14} />
-            {c.participants.toLocaleString()}
+            {totalCardParticipants.toLocaleString()}
           </span>
         </div>
 
         <button
           type="button"
-          style={styles.viewChallengeBtn}
+          style={{
+            ...styles.viewChallengeBtn,
+            ...(isCompleted
+              ? styles.completedBtnStyle
+              : isJoined
+              ? styles.inProgressBtnStyle
+              : {}),
+          }}
           onClick={handleViewChallenge}
         >
-          View Challenge
+          {isCompleted ? "View Achievement" : isJoined ? "Continue Challenge" : "View Challenge"}
         </button>
       </div>
     </div>
   );
 }
 
-export default function ChallengesPage({ onNavigate, activeRoute = "/challenges" }) {
+export default function ChallengesPage({ onNavigate }) {
+  const { authUser, profile, loading } = useCurrentUser();
+
+  const [challengesList, setChallengesList] = useState(CHALLENGES);
   const [search, setSearch] = useState("");
+  const [stateFilter, setStateFilter] = useState("All");
+  const [themeFilter, setThemeFilter] = useState("All");
+  const [difficultyFilter, setDifficultyFilter] = useState("All");
+
+  // Fetch challenge list directly from Firestore database and merge with default CHALLENGES
+  useEffect(() => {
+    const fetchChallengesFromDatabase = async () => {
+      try {
+        let deletedIds = [];
+        try {
+          const saved = localStorage.getItem("greentrip_deleted_challenge_ids");
+          if (saved) deletedIds = JSON.parse(saved);
+        } catch (e) {}
+
+        const querySnapshot = await getDocs(collection(db, "challenges"));
+        const fetched = [];
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          fetched.push({
+            id: data.id || docSnap.id,
+            ...data,
+            imageUrl: data.imageUrl || DEFAULT_IMAGE_URL,
+            participants:
+              data.participants !== undefined && data.participants !== null
+                ? Number(data.participants) || 0
+                : 0,
+          });
+        });
+
+        // Merge Firestore challenges with default CHALLENGES (filtering out replaced or deleted IDs)
+        const firestoreIds = new Set(fetched.map((item) => String(item.id)));
+        const activeDummies = CHALLENGES.filter(
+          (dummy) =>
+            !firestoreIds.has(String(dummy.id)) &&
+            !deletedIds.includes(String(dummy.id))
+        );
+
+        setChallengesList([...fetched, ...activeDummies]);
+      } catch (err) {
+        console.error("Error fetching challenges list from Firestore:", err);
+      }
+    };
+
+    fetchChallengesFromDatabase();
+  }, []);
+
+  // Load user challenges directly from Firestore profile data
+  const userChallenges = profile?.user_challenges || profile?.userChallenges || {};
+
+  const completedChallenges = challengesList.filter(
+    (c) => userChallenges[c.id]?.progress >= 100
+  );
+
+  const joinedChallengesCount = Object.values(userChallenges).filter(
+    (state) => state?.joined
+  ).length;
+
+  const availableCount = challengesList.length - completedChallenges.length;
+
+  const baseParticipants = 13360;
+  const totalParticipants = baseParticipants + joinedChallengesCount;
+
+  const baseCarbonKg = 12450;
+  const addedCarbonKg = completedChallenges.reduce(
+    (acc, c) => acc + (c.carbonKg || 0),
+    0
+  );
+  const totalCarbonImpact = baseCarbonKg + addedCarbonKg;
+
+  // Single Source of Truth from Firestore Profile
+  const totalEcoScore = profile?.eco_score ?? profile?.ecoScore ?? 0;
+  const currentRankPosition = calculateRank(totalEcoScore);
+
+  const dynamicStats = [
+    {
+      icon: Award,
+      iconColor: "#f97316",
+      label: "Available Challenges",
+      value: availableCount.toString(),
+      sub: "Active nationwide",
+    },
+    {
+      icon: Calendar,
+      iconColor: "#7c3aed",
+      label: "Total Participants",
+      value: totalParticipants.toLocaleString(),
+      sub: "Active eco-warriors",
+    },
+    {
+      icon: TrendingUp,
+      iconColor: "#3b82f6",
+      label: "Collective Impact",
+      value: `${totalCarbonImpact.toLocaleString(undefined, { maximumFractionDigits: 1 })} kg`,
+      sub: "CO₂ saved this month",
+    },
+  ];
+
+  if (loading) {
+    return (
+      <div style={styles.loadingPage}>
+        <p style={styles.loadingText}>Loading...</p>
+      </div>
+    );
+  }
+
+  if (!authUser || !profile) {
+    return (
+      <div style={styles.loadingPage}>
+        <p style={styles.loadingText}>You're not logged in.</p>
+        <button
+          type="button"
+          onClick={() => onNavigate?.("/login")}
+          style={styles.loginRedirectBtn}
+        >
+          Go to Login
+        </button>
+      </div>
+    );
+  }
+
+  const user = {
+    ...profile,
+    name: profile.name,
+    eco_score: totalEcoScore,
+    ecoScore: totalEcoScore,
+  };
+
+  const filteredChallenges = challengesList.filter((c) => {
+    const isCompleted = userChallenges[c.id]?.progress >= 100;
+    if (isCompleted) return false;
+
+    const matchesSearch =
+      c.title.toLowerCase().includes(search.toLowerCase()) ||
+      c.description.toLowerCase().includes(search.toLowerCase());
+    const matchesState = stateFilter === "All" || c.location === stateFilter;
+    const matchesTheme = themeFilter === "All" || c.tag === themeFilter;
+    const matchesDifficulty = difficultyFilter === "All" || c.difficulty === difficultyFilter;
+
+    return matchesSearch && matchesState && matchesTheme && matchesDifficulty;
+  });
 
   return (
-    <div style={styles.app}>
-      {/* Sidebar */}
-      <aside style={styles.sidebar}>
-        <div style={styles.brand}>
-          <div style={styles.brandIcon}>
-            <Leaf size={20} color="#fff" />
-          </div>
-          <span style={styles.brandName}>GreenTrip Malaysia</span>
+    <Layout active="challenges" user={user} onNavigate={onNavigate}>
+      <div style={styles.content}>
+        <h1 style={styles.pageTitle}>Community Eco-Challenges</h1>
+        <p style={styles.pageSubtitle}>Join sustainable activities and earn rewards</p>
+
+        <div style={styles.statGrid}>
+          {dynamicStats.map((s) => (
+            <StatCard key={s.label} {...s} />
+          ))}
         </div>
 
-        <nav style={styles.nav}>
-          {NAV_ITEMS.map((item) => {
-            const isActive = item.route === activeRoute;
-            return (
-              <button
-                key={item.label}
-                type="button"
-                onClick={() => onNavigate?.(item.route)}
-                style={{ ...styles.navItem, ...(isActive ? styles.navItemActive : {}) }}
-              >
-                <item.icon size={18} color={isActive ? "#15803d" : "#374151"} />
-                <span style={{ color: isActive ? "#15803d" : "#374151", fontWeight: isActive ? 600 : 500 }}>
-                  {item.label}
-                </span>
-              </button>
-            );
-          })}
-        </nav>
-      </aside>
-
-      {/* Main content */}
-      <main style={styles.main}>
-        <header style={styles.topbar}>
-          <div />
-          <div style={styles.userBlock}>
-            <div style={{ textAlign: "right" }}>
-              <div style={styles.userName}>{USER.name}</div>
-              <div style={styles.userSub}>Eco Score: {USER.ecoScore.toLocaleString()}</div>
+        <div style={{ ...styles.card, marginTop: 20 }}>
+          <div style={styles.rowHeader}>
+            <span style={styles.cardTitle}>Global Leaderboard</span>
+            <div style={styles.viewMore} onClick={() => onNavigate?.("/challenges/leaderboard")}>
+              View All <ChevronRight size={16} />
             </div>
-            <div style={styles.avatar}>🐨</div>
           </div>
-        </header>
+          <p style={styles.leaderboardTagline}>🏆 Climb the ranks, inspire change.</p>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <span style={styles.rankNumber}>#{currentRankPosition}</span>
+            <span style={{ fontWeight: 700, fontSize: 14.5 }}>Your Rank</span>
+          </div>
+          <div style={styles.rankSub}>with {user.eco_score.toLocaleString()} Eco Points</div>
+        </div>
 
-        <div style={styles.content}>
-          <h1 style={styles.pageTitle}>Community Eco-Challenges</h1>
-          <p style={styles.pageSubtitle}>Join sustainable activities and earn rewards</p>
-
-          {/* Stat cards */}
-          <div style={styles.statGrid}>
-            {STATS.map((s) => (
-              <StatCard key={s.label} {...s} />
-            ))}
+        <div style={{ ...styles.card, marginTop: 20 }}>
+          <div style={styles.searchBox}>
+            <Search size={16} color="#9ca3af" />
+            <input
+              type="text"
+              placeholder="Search challenges..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={styles.searchInput}
+            />
           </div>
 
-          {/* Leaderboard */}
-          <div style={{ ...styles.card, marginTop: 20 }}>
-            <div style={styles.rowHeader}>
-              <span style={styles.cardTitle}>Global Leaderboard</span>
-              <div style={styles.viewMore} onClick={() => onNavigate?.("/challenges/leaderboard")}>
-                View All <ChevronRight size={16} />
+          <div style={styles.filterGrid}>
+            <div>
+              <div style={styles.filterLabel}>State</div>
+              <div style={styles.selectWrapper}>
+                <select
+                  style={styles.filterSelectNative}
+                  value={stateFilter}
+                  onChange={(e) => setStateFilter(e.target.value)}
+                >
+                  <option value="All">All States</option>
+                  <option value="Kuala Lumpur">Kuala Lumpur</option>
+                  <option value="National">National</option>
+                  <option value="Penang">Penang</option>
+                  <option value="Sabah">Sabah</option>
+                  <option value="Melaka">Melaka</option>
+                  <option value="Sarawak">Sarawak</option>
+                </select>
+                <ChevronDown size={16} color="#6b7280" style={styles.selectIcon} />
               </div>
             </div>
-            <p style={styles.leaderboardTagline}>🏆 Climb the ranks, inspire change.</p>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-              <span style={styles.rankNumber}>#{RANK.position}</span>
-              <span style={{ fontWeight: 700, fontSize: 14.5 }}>Your Rank</span>
-            </div>
-            <div style={styles.rankSub}>with {RANK.points.toLocaleString()} Eco Points</div>
-          </div>
 
-          {/* Search + filters */}
-          <div style={{ ...styles.card, marginTop: 20 }}>
-            <div style={styles.searchBox}>
-              <Search size={16} color="#9ca3af" />
-              <input
-                type="text"
-                placeholder="Search challenges..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                style={styles.searchInput}
-              />
+            <div>
+              <div style={styles.filterLabel}>Theme</div>
+              <div style={styles.selectWrapper}>
+                <select
+                  style={styles.filterSelectNative}
+                  value={themeFilter}
+                  onChange={(e) => setThemeFilter(e.target.value)}
+                >
+                  <option value="All">All Themes</option>
+                  <option value="Low-Carbon Transit">Low-Carbon Transit</option>
+                  <option value="Zero-Plastic">Zero-Plastic</option>
+                  <option value="Reforestation">Reforestation</option>
+                </select>
+                <ChevronDown size={16} color="#6b7280" style={styles.selectIcon} />
+              </div>
             </div>
 
-            <div style={styles.filterGrid}>
-              {["State", "Theme", "Difficulty"].map((label) => (
-                <div key={label}>
-                  <div style={styles.filterLabel}>{label}</div>
-                  <button type="button" style={styles.filterSelect}>
-                    <span>All {label === "State" ? "States" : label === "Theme" ? "Themes" : "Difficulty"}</span>
-                    <ChevronDown size={16} color="#6b7280" />
-                  </button>
-                </div>
-              ))}
+            <div>
+              <div style={styles.filterLabel}>Difficulty</div>
+              <div style={styles.selectWrapper}>
+                <select
+                  style={styles.filterSelectNative}
+                  value={difficultyFilter}
+                  onChange={(e) => setDifficultyFilter(e.target.value)}
+                >
+                  <option value="All">All Difficulty</option>
+                  <option value="Easy">Easy</option>
+                  <option value="Medium">Medium</option>
+                  <option value="Hard">Hard</option>
+                </select>
+                <ChevronDown size={16} color="#6b7280" style={styles.selectIcon} />
+              </div>
             </div>
-          </div>
-
-          {/* Challenge cards */}
-          <div style={styles.challengeGrid}>
-            {CHALLENGES.filter((c) =>
-              c.title.toLowerCase().includes(search.toLowerCase())
-            ).map((c) => (
-                 <ChallengeCard key={c.id} c={c} onNavigate={onNavigate}/>
-            ))}
           </div>
         </div>
-      </main>
-    </div>
+
+        <div style={styles.challengeGrid}>
+          {filteredChallenges.length > 0 ? (
+            filteredChallenges.map((c) => (
+              <ChallengeCard
+                key={c.id}
+                c={c}
+                onNavigate={onNavigate}
+                userChallengeState={userChallenges[c.id]}
+              />
+            ))
+          ) : (
+            <div style={styles.noResults}>
+              No available challenges found matching your filters.
+            </div>
+          )}
+        </div>
+      </div>
+    </Layout>
   );
 }
 
 const styles = {
-  app: {
-    display: "flex",
+  loadingPage: {
     minHeight: "100vh",
-    background: "#f2f3f5",
-    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-    color: "#111827",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#f9fafb",
   },
-  sidebar: { width: 240, background: "#fff", borderRight: "1px solid #e5e7eb", padding: "20px 16px", flexShrink: 0 },
-  brand: { display: "flex", alignItems: "center", gap: 10, padding: "0 8px 24px" },
-  brandIcon: { width: 34, height: 34, borderRadius: 8, background: "#22c55e", display: "flex", alignItems: "center", justifyContent: "center" },
-  brandName: { fontWeight: 700, fontSize: 15 },
-  nav: { display: "flex", flexDirection: "column", gap: 4 },
-  navItem: { display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, fontSize: 14.5, cursor: "pointer", border: "none", background: "transparent", textAlign: "left", width: "100%" },
-  navItemActive: { background: "#dcfce7" },
-  main: { flex: 1, display: "flex", flexDirection: "column", minWidth: 0 },
-  topbar: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 32px", background: "#fff", borderBottom: "1px solid #e5e7eb" },
-  userBlock: { display: "flex", alignItems: "center", gap: 12 },
-  userName: { fontWeight: 700, fontSize: 14.5 },
-  userSub: { fontSize: 12.5, color: "#6b7280" },
-  avatar: { width: 40, height: 40, borderRadius: "50%", background: "#e0f2fe", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 },
-  content: { padding: "28px 32px", maxWidth: 1180, width: "100%", margin: "0 auto" },
-  pageTitle: { fontSize: 26, fontWeight: 800, margin: 0 },
+  loadingText: { color: "#6b7280" },
+  loginRedirectBtn: {
+    marginTop: 10,
+    background: "#16a34a",
+    color: "#fff",
+    border: "none",
+    borderRadius: 10,
+    padding: "10px 20px",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  content: { padding: "28px 32px", maxWidth: 1180, width: "100%", margin: "0 auto", boxSizing: "border-box" },
+  pageTitle: { fontSize: 26, fontWeight: 800, margin: 0, color: "#111827" },
   pageSubtitle: { color: "#6b7280", marginTop: 6, marginBottom: 20, fontSize: 14.5 },
   statGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 },
   card: { background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 20 },
   cardTitle: { fontWeight: 700, fontSize: 15.5 },
   rowHeader: { display: "flex", justifyContent: "space-between", alignItems: "center" },
-  viewMore: { display: "flex", alignItems: "center", gap: 4, fontSize: 13.5, fontWeight: 600, cursor: "pointer", color: "#6b7280" },
+  viewMore: { display: "flex", alignItems: "center", gap: 4, fontSize: 13.5, fontWeight: 600, cursor: "pointer", color: "#374151" },
   leaderboardTagline: { color: "#6b7280", fontSize: 13.5, margin: "8px 0 16px" },
   rankNumber: { fontSize: 32, fontWeight: 800, color: "#15803d" },
   rankSub: { color: "#6b7280", fontSize: 13, marginTop: 2 },
@@ -345,22 +553,11 @@ const styles = {
   searchInput: { border: "none", outline: "none", background: "transparent", flex: 1, fontSize: 14 },
   filterGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginTop: 20 },
   filterLabel: { fontSize: 13.5, fontWeight: 600, marginBottom: 6 },
-  filterSelect: {
-    width: "100%",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "10px 14px",
-    borderRadius: 8,
-    border: "1px solid #d1d5db",
-    background: "#f9fafb",
-    fontSize: 13.5,
-    cursor: "pointer",
-  },
   challengeGrid: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 20, marginTop: 20, marginBottom: 32 },
-  challengeCard: { background: "#fff", border: "1px solid #e5e7eb", borderRadius: 16, overflow: "hidden" },
+  challengeCard: { background: "#fff", border: "1px solid #e5e7eb", borderRadius: 16, overflow: "hidden", position: "relative" },
+  joinedCardBorder: { borderColor: "#93c5fd" },
   challengeImage: { width: "100%", height: 180, objectFit: "cover", display: "block" },
-  challengeTitle: { fontWeight: 800, fontSize: 17, marginBottom: 6 },
+  challengeTitle: { fontWeight: 800, fontSize: 17 },
   challengeDesc: { color: "#6b7280", fontSize: 13.5, marginBottom: 14, lineHeight: 1.5 },
   pill: { fontSize: 12.5, fontWeight: 700, padding: "4px 12px", borderRadius: 999 },
   locationPill: {
@@ -373,6 +570,40 @@ const styles = {
     fontSize: 12.5,
     marginBottom: 16,
   },
+  inProgressBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    background: "#dbeafe",
+    color: "#1d4ed8",
+    fontSize: 12,
+    fontWeight: 700,
+    padding: "3px 10px",
+    borderRadius: 999,
+  },
+  completedBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    background: "#dcfce7",
+    color: "#15803d",
+    fontSize: 12,
+    fontWeight: 700,
+    padding: "3px 10px",
+    borderRadius: 999,
+  },
+  cardProgressSection: {
+    marginBottom: 14,
+    background: "#f8fafc",
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #f1f5f9",
+  },
+  cardProgressRow: { display: "flex", justifyContent: "space-between", fontSize: 12.5, fontWeight: 600, marginBottom: 6 },
+  cardProgressLabel: { color: "#475569" },
+  cardProgressVal: { color: "#0f172a" },
+  cardProgressTrack: { height: 6, background: "#e2e8f0", borderRadius: 999, overflow: "hidden" },
+  cardProgressFill: { height: "100%", borderRadius: 999, transition: "width 0.3s ease" },
   statRow: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, marginBottom: 8 },
   statRowLabel: { color: "#6b7280" },
   rewardValue: { color: "#15803d", fontWeight: 800, fontSize: 15 },
@@ -387,5 +618,32 @@ const styles = {
     fontWeight: 700,
     fontSize: 14,
     cursor: "pointer",
+    transition: "background 0.2s ease",
+  },
+  inProgressBtnStyle: { background: "#2563eb" },
+  completedBtnStyle: { background: "#16a34a" },
+  selectWrapper: { position: "relative", width: "100%" },
+  filterSelectNative: {
+    width: "100%",
+    padding: "10px 14px",
+    borderRadius: 8,
+    border: "1px solid #d1d5db",
+    background: "#f9fafb",
+    fontSize: 13.5,
+    cursor: "pointer",
+    appearance: "none",
+    WebkitAppearance: "none",
+    MozAppearance: "none",
+    color: "#111827",
+    fontFamily: "inherit",
+  },
+  selectIcon: { position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" },
+  noResults: {
+    gridColumn: "1 / -1",
+    textAlign: "center",
+    padding: "40px 0",
+    color: "#6b7280",
+    fontSize: 15,
+    fontWeight: 500,
   },
 };
