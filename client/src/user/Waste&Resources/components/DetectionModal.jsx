@@ -15,7 +15,7 @@ export default function DetectionModal({ log, onClose }) {
     <Modal title={`Scan · ${log.date}`} onClose={onClose} wide>
       <DetectionCanvas image={det.image} result={det} />
       <p className="mt-4 text-lg">
-        <span className="font-semibold">Leftover {det.dish} detected:</span>{" "}
+        <span className="font-semibold">Leftover food waste detected:</span>{" "}
         {corrected ? `~${log.original.foodWaste}g` : `~${log.foodWaste}g`}
       </p>
       {corrected && (

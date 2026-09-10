@@ -1,0 +1,2 @@
+cd "C:\Users\USER\Downloads\GreenTrip Malaysia\vision-service"
+  .\.venv\Scripts\python.exe train_segmentation.py --stage 1 --resume --workers 0

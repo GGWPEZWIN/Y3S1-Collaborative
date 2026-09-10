@@ -44,10 +44,14 @@ export default function RecentLogs({ logs, onOpenReports, onInspect, onEdit }) {
               </div>
 
               <dl className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-y-4 gap-x-4">
-                <Metric label="Food Waste" value={`${log.foodWaste}g`} />
-                <Metric label="Plastic" value={`${log.plastic} items`} />
-                <Metric label="Water" value={`${log.water}L`} />
-                <Metric label="Disposables" value={`${log.disposables} items`} />
+                <Metric label="Food Waste" value={`${log.foodWaste}g`} empty={!log.foodWaste} />
+                <Metric label="Plastic" value={`${log.plastic} items`} empty={!log.plastic} />
+                <Metric label="Water" value={`${log.water}L`} empty={!log.water} />
+                <Metric
+                  label="Disposables"
+                  value={`${log.disposables} items`}
+                  empty={!log.disposables}
+                />
               </dl>
 
               <div className="mt-4 pt-4 border-t border-slate-200 flex items-center gap-4">

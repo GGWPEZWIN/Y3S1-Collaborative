@@ -89,7 +89,7 @@ export const BASELINE_SOURCES = {
     scope: "national",
     source:
       "data.gov.my dataset `water_consumption` (SPAN operator returns), divided by DOSM population",
-    derivation: "annual domestic consumption / population / 365",
+    derivation: "daily domestic consumption (million litres/day) / population",
     limitation:
       "Resident domestic consumption, not tourist accommodation usage, which runs higher.",
     confidence: "high",

@@ -85,3 +85,25 @@ export function getCurrentPosition({ timeout = 8000 } = {}) {
     );
   });
 }
+
+/**
+ * Watches position for as long as the returned unsubscribe is unused.
+ *
+ * Unlike watchPosition(), a missing or denied geolocation is reported
+ * through onUnavailable asynchronously rather than throwing, so callers
+ * can fall back without a synchronous setState in an effect body.
+ *
+ * @returns {Function} unsubscribe
+ */
+export function watchPositionLoose(onPosition, onUnavailable) {
+  if (!isGeolocationSupported()) {
+    const t = setTimeout(onUnavailable, 0);
+    return () => clearTimeout(t);
+  }
+  const id = navigator.geolocation.watchPosition(
+    (pos) => onPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+    onUnavailable,
+    { enableHighAccuracy: false, maximumAge: 30000, timeout: 10000 }
+  );
+  return () => navigator.geolocation.clearWatch(id);
+}

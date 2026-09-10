@@ -39,6 +39,10 @@ export function buildMonthlySummaries(rows) {
       };
     });
 
+    // Emissions actually attributable to this month's logged consumption.
+    // Distinct from mcc.avoided, which measures the gap against the baseline.
+    const carbonKg = CATEGORY_KEYS.reduce((sum, k) => sum + totals[k] * CO2E[k], 0);
+
     return {
       key,
       label: monthName(key),
@@ -47,6 +51,7 @@ export function buildMonthlySummaries(rows) {
       score,
       grade: gradeFor(score),
       categories,
+      carbonKg,
     };
   });
 }

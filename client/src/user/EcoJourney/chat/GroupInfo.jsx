@@ -13,12 +13,17 @@ import {
   Crown,
   Shield,
   ShieldOff,
+  MessageCircle,
 } from "lucide-react";
 import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { db } from "../../../firebase/config";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
 import { listenToFriends } from "../../../firebase/friendService";
-import { leaveGroup, toggleMuteChat } from "../../../firebase/chatService";
+import {
+  createOrGetDirectChat,
+  leaveGroup,
+  toggleMuteChat,
+} from "../../../firebase/chatService";
 
 /**
  * GroupInfo
@@ -403,6 +408,40 @@ export default function GroupInfo({ chatId, onNavigate }) {
     }
   };
 
+  const handleOpenMemberChat = async (member) => {
+    if (!member?.uid || member.uid === authUser.uid) return;
+
+    setError("");
+    setBusy(`chat-${member.uid}`);
+
+    try {
+      const directChatId = await createOrGetDirectChat(
+        {
+          uid: authUser.uid,
+          displayName: profile?.name || authUser.displayName || "",
+          name: profile?.name || authUser.displayName || "",
+          profile_photo_url:
+            profile?.profile_photo_url || authUser.photoURL || "",
+          photoURL: authUser.photoURL || "",
+        },
+        {
+          uid: member.uid,
+          name: member.name || "Friend",
+          displayName: member.name || "Friend",
+          profile_photo_url: member.photo || "",
+          photoURL: member.photo || "",
+        }
+      );
+
+      onNavigate?.("/community/chat/room", directChatId);
+    } catch (err) {
+      console.error("Failed to open personal chat:", err);
+      setError(err?.message || "Failed to open personal chat.");
+    } finally {
+      setBusy("");
+    }
+  };
+
   const handleLeaveGroup = async () => {
     if (!window.confirm("Leave this group?")) return;
 
@@ -677,44 +716,59 @@ export default function GroupInfo({ chatId, onNavigate }) {
                   </div>
                 </div>
 
-                {isCreator && member.uid !== authUser.uid && (
-                  <button
-                    type="button"
-                    onClick={() => handleToggleAdmin(member.uid)}
-                    disabled={busy === `admin-${member.uid}`}
-                    style={
-                      member.isAdmin
-                        ? styles.adminActionBtnActive
-                        : styles.adminActionBtn
-                    }
-                    title={
-                      member.isAdmin
-                        ? "Remove admin role"
-                        : "Make group admin"
-                    }
-                  >
-                    {member.isAdmin ? (
-                      <ShieldOff size={15} />
-                    ) : (
-                      <Shield size={15} />
-                    )}
-                  </button>
-                )}
-
-                {isAdmin &&
-                  member.uid !== authUser.uid &&
-                  !member.isCreator &&
-                  !member.isAdmin && (
+                <div style={styles.memberActions}>
+                  {member.uid !== authUser.uid && (
                     <button
                       type="button"
-                      onClick={() => handleRemoveMember(member.uid)}
-                      disabled={busy === member.uid}
-                      style={styles.removeMemberBtn}
-                      title="Remove member"
+                      onClick={() => handleOpenMemberChat(member)}
+                      disabled={busy === `chat-${member.uid}`}
+                      style={styles.chatMemberBtn}
+                      title={`Message ${member.name || "member"}`}
+                      aria-label={`Message ${member.name || "member"}`}
                     >
-                      <UserMinus size={15} />
+                      <MessageCircle size={15} />
                     </button>
                   )}
+
+                  {isCreator && member.uid !== authUser.uid && (
+                    <button
+                      type="button"
+                      onClick={() => handleToggleAdmin(member.uid)}
+                      disabled={busy === `admin-${member.uid}`}
+                      style={
+                        member.isAdmin
+                          ? styles.adminActionBtnActive
+                          : styles.adminActionBtn
+                      }
+                      title={
+                        member.isAdmin
+                          ? "Remove admin role"
+                          : "Make group admin"
+                      }
+                    >
+                      {member.isAdmin ? (
+                        <ShieldOff size={15} />
+                      ) : (
+                        <Shield size={15} />
+                      )}
+                    </button>
+                  )}
+
+                  {isAdmin &&
+                    member.uid !== authUser.uid &&
+                    !member.isCreator &&
+                    !member.isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveMember(member.uid)}
+                        disabled={busy === member.uid}
+                        style={styles.removeMemberBtn}
+                        title="Remove member"
+                      >
+                        <UserMinus size={15} />
+                      </button>
+                    )}
+                </div>
               </div>
             ))}
           </div>
@@ -1144,6 +1198,27 @@ const styles = {
     fontSize: 11.5,
     color: "#9ca3af",
     fontWeight: 500,
+  },
+
+  memberActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 0,
+  },
+
+  chatMemberBtn: {
+    border: "none",
+    background: "#ecfdf5",
+    color: "#16a34a",
+    borderRadius: 8,
+    width: 31,
+    height: 31,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    flexShrink: 0,
   },
 
   adminActionBtn: {

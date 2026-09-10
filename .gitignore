@@ -5,6 +5,10 @@ server/node_modules/
 
 # Environment files
 .env
+**/.env
+/client/.env
+/server/.env
+vision-service/.env
 .env.local
 
 # VS Code
@@ -16,3 +20,27 @@ build/
 
 # Firebase config
 server/firebase-config.json
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Model weights and training output
+weights/
+runs/
+*.pt
+*.onnx
+
+# Converted dataset (rebuild with prepare_foodseg103.py)
+vision-service/data/
+
+# Collected plate photos (keep ground_truth.csv, not the images)
+plates/
+plates_holdout/
+
+# Local run logs
+vision-service/*.log
+
+# Keep env templates
+!*.example

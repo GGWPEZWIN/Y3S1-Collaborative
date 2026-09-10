@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import useAuthUser from "../hooks/useAuthUser";
 import useWasteLedger from "../hooks/useWasteLedger";
+import useLodging from "../hooks/useLodging";
 
 import TopBar from "../components/TopBar";
 import Sidebar from "../components/Sidebar";
@@ -13,9 +14,9 @@ import RecentLogs from "../components/RecentLogs";
 import ReminderSettings from "../components/ReminderSettings";
 import useGeofenceReminder from "../hooks/useGeofenceReminder";
 
-import ScannerModal from "../components/ScannerModal";
+import ScannerView from "../components/ScannerView";
 import ResourceLoggerView from "../components/ResourceLoggerView";
-import ReportsModal from "../components/ReportsModal";
+import EcoReportsView from "../components/EcoReportsView";
 import DetectionModal from "../components/DetectionModal";
 import EditLogView from "../components/EditLogView";
 
@@ -37,8 +38,7 @@ function Shell({ children }) {
 
 export default function WastePage({ onNavigate = () => {} }) {
   const [active, setActive] = useState("waste");
-  const [modal, setModal] = useState(null); // scan | reports
-  const [view, setView] = useState("dashboard"); // dashboard | logger | edit
+  const [view, setView] = useState("dashboard"); // dashboard | scan | logger | edit | reports
   const [inspecting, setInspecting] = useState(null);
   const [editing, setEditing] = useState(null);
   const [remindersOn, setRemindersOn] = useState(false);
@@ -49,17 +49,18 @@ export default function WastePage({ onNavigate = () => {} }) {
 
   const { logs, loading, error, addLog, editLog, hasLoggedToday, recent, nudges, monthlies, mcc } =
     useWasteLedger(uid);
+  const { lodging, save: saveLodging } = useLodging(uid);
 
   const handleGeofenceTrigger = useCallback(() => setReminderBanner(true), []);
   const geofence = useGeofenceReminder({
     enabled: remindersOn,
     hasLoggedToday,
     onTrigger: handleGeofenceTrigger,
+    lodging,
   });
 
   const commit = useCallback(
     async (entry) => {
-      setModal(null);
       setView("dashboard");
       setReminderBanner(false);
       await addLog(entry);
@@ -112,8 +113,17 @@ export default function WastePage({ onNavigate = () => {} }) {
       <div className="flex">
         <Sidebar active={active} onSelect={navigate} />
 
-        {view === "logger" ? (
+        {view === "scan" ? (
+          <ScannerView onBack={() => setView("dashboard")} onCommit={commit} />
+        ) : view === "logger" ? (
           <ResourceLoggerView onBack={() => setView("dashboard")} onCommit={commit} />
+        ) : view === "reports" ? (
+          <EcoReportsView
+            monthlies={monthlies}
+            mcc={mcc}
+            logs={logs}
+            onBack={() => setView("dashboard")}
+          />
         ) : view === "edit" && editing ? (
           <EditLogView
             log={editing}
@@ -146,7 +156,12 @@ export default function WastePage({ onNavigate = () => {} }) {
             </div>
           )}
 
-          {reminderBanner && <ReminderBanner onDismiss={() => setReminderBanner(false)} />}
+          {reminderBanner && (
+            <ReminderBanner
+              onDismiss={() => setReminderBanner(false)}
+              lodgingName={lodging ? lodging.name : "your lodging"}
+            />
+          )}
 
           {loading ? (
             <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -165,16 +180,16 @@ export default function WastePage({ onNavigate = () => {} }) {
             <WasteStats recent={recent} />
           )}
 
-          <EntryPoints onScan={() => setModal("scan")} onLog={() => setView("logger")} />
+          <EntryPoints onScan={() => setView("scan")} onLog={() => setView("logger")} />
 
           {nudges.map((n) => (
-            <EcoNudge key={n.id} nudge={n} />
+            <EcoNudge key={n.id} nudge={n} lodging={lodging} />
           ))}
 
           {!loading && (
             <RecentLogs
               logs={logs.slice(0, 3)}
-              onOpenReports={() => setModal("reports")}
+              onOpenReports={() => setView("reports")}
               onInspect={setInspecting}
               onEdit={(log) => {
                 setEditing(log);
@@ -188,16 +203,14 @@ export default function WastePage({ onNavigate = () => {} }) {
             onToggle={() => setRemindersOn((v) => !v)}
             status={geofence.status}
             distance={geofence.distance}
+            lodging={lodging}
+            onSaveLodging={saveLodging}
           />
         </main>
         )}
       </div>
 
-      {modal === "scan" && <ScannerModal onClose={() => setModal(null)} onCommit={commit} />}
 
-      {modal === "reports" && (
-        <ReportsModal monthlies={monthlies} mcc={mcc} onClose={() => setModal(null)} />
-      )}
 
       {inspecting && <DetectionModal log={inspecting} onClose={() => setInspecting(null)} />}
 

@@ -90,6 +90,18 @@ export const getRandomDefaultIcon = () => {
 // ============================================================
 // ADMIN ACHIEVEMENT LISTENER
 // ============================================================
+//
+// IMPORTANT:
+// The achievement catalogue is GLOBAL.
+//
+// ALL admins read the SAME top-level `achievements` collection.
+// Do NOT filter by createdBy.
+//
+// `createdBy` is only audit metadata.
+// It is NOT ownership.
+//
+// Firestore Security Rules decide who is allowed to read/write.
+// ============================================================
 
 export const listenToAchievements = (callback) => {
   const achievementRef = collection(
@@ -338,6 +350,9 @@ export const createAchievement = async ({
         ? "published"
         : "draft",
 
+    // IMPORTANT:
+    // This records who created it for audit purposes.
+    // It does NOT restrict other admins from seeing/editing it.
     createdBy:
       createdBy || null,
 
@@ -746,7 +761,7 @@ export const awardAchievement = async (
       achievement.id
     );
 
-  return runTransaction(
+  const awardResult = await runTransaction(
     db,
     async (transaction) => {
       const existing =
@@ -762,11 +777,6 @@ export const awardAchievement = async (
         };
       }
 
-      const points =
-        Number(
-          achievement.points
-        ) || 0;
-
       transaction.set(
         userAchievementRef,
         {
@@ -781,9 +791,6 @@ export const awardAchievement = async (
             achievement.category ||
             "",
 
-          pointsAwarded:
-            points,
-
           unlocked: true,
 
           unlockedAt:
@@ -791,16 +798,10 @@ export const awardAchievement = async (
         }
       );
 
-      // Update user's points and badge count.
+      // Keep only the user's achievement count.
       transaction.set(
         userRef,
         {
-          eco_points:
-            increment(points),
-
-          achievement_points:
-            increment(points),
-
           badges_earned:
             increment(1),
 
@@ -818,6 +819,60 @@ export const awardAchievement = async (
       };
     }
   );
+
+  // Notify the currently open GreenTrip app
+  // immediately after a NEW achievement is awarded.
+  if (
+    awardResult?.awarded === true &&
+    typeof window !== "undefined"
+  ) {
+    window.dispatchEvent(
+      new CustomEvent(
+        "greentrip:achievement-unlocked",
+        {
+          detail: {
+            achievement: {
+              id: achievement.id,
+
+              title:
+                achievement.title ||
+                "Achievement Unlocked",
+
+              description:
+                achievement.description ||
+                "You reached the achievement requirement.",
+
+              category:
+                achievement.category ||
+                "",
+
+              icon:
+                achievement.icon ||
+                "",
+
+              iconUrl:
+                achievement.iconUrl ||
+                "",
+
+              ruleType:
+                achievement.ruleType ||
+                "",
+
+              ruleTarget:
+                achievement.ruleTarget ||
+                1,
+
+              ruleUnit:
+                achievement.ruleUnit ||
+                "",
+            },
+          },
+        }
+      )
+    );
+  }
+
+  return awardResult;
 };
 
 // ============================================================
@@ -917,9 +972,7 @@ export const checkAndAwardAchievements =
 
     return {
       achievements: result,
-
       newlyAwarded,
-
       userProgress,
     };
   };

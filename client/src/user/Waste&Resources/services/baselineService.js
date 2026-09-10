@@ -20,12 +20,10 @@ const ENDPOINT = "https://api.data.gov.my/data-catalogue";
 const DATASET = "water_consumption";
 
 /**
- * The API returns annual domestic consumption as a bare number.
- * VERIFY THIS against the dataset metadata page before submission:
+ * Confirmed against the dataset metadata page:
  *   https://open.dosm.gov.my/data-catalogue/water_consumption
- * A 2003 value of 4394 divided by that year's population yields
- * ~175 L/person/day, which matches published Malaysian figures and
- * supports the million-litres-per-day reading.
+ * "value" is domestic consumption in millions of litres PER DAY (MLD),
+ * already a daily figure — not annual. Do not divide by 365.
  */
 const UNIT_TO_LITRES = 1_000_000;
 
@@ -65,7 +63,7 @@ export async function refreshBenchmarks({ signal } = {}) {
 
     const latest = national[0];
     const litresPerPersonPerDay =
-      (Number(latest.value) * UNIT_TO_LITRES) / MY_POPULATION.value / 365;
+      (Number(latest.value) * UNIT_TO_LITRES) / MY_POPULATION.value;
 
     // Guard against a schema change silently producing nonsense.
     if (litresPerPersonPerDay < 50 || litresPerPersonPerDay > 600) {

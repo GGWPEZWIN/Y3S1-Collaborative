@@ -1,3 +1,5 @@
+// src/firebase/chatService.js
+
 import {
   collection,
   doc,
@@ -6,10 +8,8 @@ import {
   getDocs,
   setDoc,
   updateDoc,
-  deleteDoc,
   query,
   where,
-  orderBy,
   onSnapshot,
   serverTimestamp,
   writeBatch,
@@ -20,76 +20,155 @@ import {
 import { db } from "./config";
 import { uploadToCloudinary } from "./cloudinaryService";
 
+/* =========================================================
+   DIRECT CHAT ID
+========================================================= */
+
 function directChatId(uidA, uidB) {
-  return [uidA, uidB].sort().join("_");
+  return [uidA, uidB]
+    .filter(Boolean)
+    .sort()
+    .join("_");
 }
 
-export async function createOrGetDirectChat(currentUser, friend) {
-  const chatId = directChatId(currentUser.uid, friend.uid);
-  const ref = doc(db, "chats", chatId);
-  const snap = await getDoc(ref);
+/* =========================================================
+   CREATE / GET DIRECT CHAT
+========================================================= */
+
+export async function createOrGetDirectChat(
+  currentUser,
+  friend
+) {
+  if (!currentUser?.uid) {
+    throw new Error("Current user is required.");
+  }
+
+  if (!friend?.uid) {
+    throw new Error("Friend is required.");
+  }
+
+  const chatId = directChatId(
+    currentUser.uid,
+    friend.uid
+  );
+
+  const chatRef = doc(
+    db,
+    "chats",
+    chatId
+  );
+
+  const snap = await getDoc(chatRef);
 
   if (!snap.exists()) {
-    await setDoc(ref, {
+    await setDoc(chatRef, {
       type: "direct",
-      members: [currentUser.uid, friend.uid],
+
+      members: [
+        currentUser.uid,
+        friend.uid,
+      ],
 
       memberNames: {
         [currentUser.uid]:
-          currentUser.displayName || currentUser.name || "",
+          currentUser.displayName ||
+          currentUser.name ||
+          "",
+
         [friend.uid]:
-          friend.name || friend.displayName || "",
+          friend.name ||
+          friend.displayName ||
+          "",
+      },
+
+      memberPhotos: {
+        [currentUser.uid]:
+          currentUser.profile_photo_url ||
+          currentUser.photoURL ||
+          "",
+
+        [friend.uid]:
+          friend.profile_photo_url ||
+          friend.photoURL ||
+          "",
       },
 
       name: null,
-      createdBy: currentUser.uid,
 
-      created_at: serverTimestamp(),
+      createdBy:
+        currentUser.uid,
+
+      created_at:
+        serverTimestamp(),
 
       lastMessage: "",
-      lastMessageAt: serverTimestamp(),
-      lastMessageHiddenFor: [],
+
+      lastMessageAt:
+        serverTimestamp(),
 
       mutedBy: [],
+
       pinnedBy: [],
 
       unreadCounts: {
         [currentUser.uid]: 0,
         [friend.uid]: 0,
       },
+
+      lastMessageHiddenFor: [],
     });
   }
 
   return chatId;
 }
 
-
-// =========================================================
-// CREATE GROUP CHAT
-// =========================================================
+/* =========================================================
+   CREATE GROUP CHAT
+========================================================= */
 
 export async function createGroupChat(
   currentUser,
   groupName,
   friends
 ) {
-  const name = groupName?.trim();
-
-  if (!name) {
-    throw new Error("Group name can't be empty.");
+  if (!currentUser?.uid) {
+    throw new Error(
+      "Current user is required."
+    );
   }
 
-  const safeFriends = Array.isArray(friends)
-    ? friends
-    : [];
+  const trimmedName =
+    groupName?.trim();
+
+  if (!trimmedName) {
+    throw new Error(
+      "Group name can't be empty."
+    );
+  }
+
+  const safeFriends =
+    Array.isArray(friends)
+      ? friends
+      : [];
+
+  /*
+   * Prevent duplicate member UIDs.
+   */
 
   const members = [
     currentUser.uid,
-    ...safeFriends.map((f) => f.uid),
+    ...safeFriends.map(
+      (friend) => friend?.uid
+    ),
   ].filter(
-    (uid, index, arr) =>
-      uid && arr.indexOf(uid) === index
+    (uid, index, array) =>
+      uid &&
+      array.indexOf(uid) === index
   );
+
+  /*
+   * Store display names.
+   */
 
   const memberNames = {
     [currentUser.uid]:
@@ -98,12 +177,42 @@ export async function createGroupChat(
       "",
   };
 
+  safeFriends.forEach(
+    (friend) => {
+      if (friend?.uid) {
+        memberNames[friend.uid] =
+          friend.name ||
+          friend.displayName ||
+          "";
+      }
+    }
+  );
+
+  /*
+   * Store profile photos.
+   */
+
   const memberPhotos = {
     [currentUser.uid]:
-      currentUser.photoURL ||
       currentUser.profile_photo_url ||
+      currentUser.photoURL ||
       "",
   };
+
+  safeFriends.forEach(
+    (friend) => {
+      if (friend?.uid) {
+        memberPhotos[friend.uid] =
+          friend.profile_photo_url ||
+          friend.photoURL ||
+          "";
+      }
+    }
+  );
+
+  /*
+   * Start unread count at 0.
+   */
 
   const unreadCounts = {};
 
@@ -111,21 +220,11 @@ export async function createGroupChat(
     unreadCounts[uid] = 0;
   });
 
-  safeFriends.forEach((friend) => {
-    if (!friend?.uid) return;
+  /*
+   * Create permanent group.
+   */
 
-    memberNames[friend.uid] =
-      friend.name ||
-      friend.displayName ||
-      "";
-
-    memberPhotos[friend.uid] =
-      friend.profile_photo_url ||
-      friend.photoURL ||
-      "";
-  });
-
-  const ref = await addDoc(
+  const docRef = await addDoc(
     collection(db, "chats"),
     {
       type: "group",
@@ -136,54 +235,69 @@ export async function createGroupChat(
 
       memberPhotos,
 
-      name,
+      name: trimmedName,
 
-      createdBy: currentUser.uid,
+      createdBy:
+        currentUser.uid,
 
-      admins: [currentUser.uid],
+      admins: [
+        currentUser.uid,
+      ],
 
-      created_at: serverTimestamp(),
+      created_at:
+        serverTimestamp(),
 
       lastMessage: "",
-      lastMessageAt: serverTimestamp(),
-      lastMessageHiddenFor: [],
+
+      lastMessageAt:
+        serverTimestamp(),
 
       mutedBy: [],
+
       pinnedBy: [],
 
       unreadCounts,
+
+      lastMessageHiddenFor: [],
     }
   );
 
-  return ref.id;
+  return docRef.id;
 }
 
-
-// =========================================================
-// GET CHAT
-// =========================================================
+/* =========================================================
+   GET SINGLE CHAT
+========================================================= */
 
 export async function getChat(chatId) {
   if (!chatId) {
-    throw new Error("Chat ID is required.");
+    throw new Error(
+      "Chat ID is required."
+    );
   }
 
-  const snap = await getDoc(
-    doc(db, "chats", chatId)
+  const chatRef = doc(
+    db,
+    "chats",
+    chatId
   );
 
-  return snap.exists()
-    ? {
-        id: snap.id,
-        ...snap.data(),
-      }
-    : null;
+  const snap =
+    await getDoc(chatRef);
+
+  if (!snap.exists()) {
+    return null;
+  }
+
+  return {
+    id: snap.id,
+    ...snap.data(),
+  };
 }
 
-
-// =========================================================
-// LISTEN TO USER CHATS
-// =========================================================
+/* =========================================================
+   LIVE USER CHATS
+========================================================= */
 
 export function listenToUserChats(
   uid,
@@ -195,28 +309,45 @@ export function listenToUserChats(
     return () => {};
   }
 
+  /*
+   * Only query chats where the user is a member.
+   *
+   * Sorting is done locally so Firestore does not
+   * require a composite index.
+   */
+
   const q = query(
     collection(db, "chats"),
-    where("members", "array-contains", uid)
+    where(
+      "members",
+      "array-contains",
+      uid
+    )
   );
 
   return onSnapshot(
     q,
     (snap) => {
       const chats = snap.docs
-        .map((d) => ({
-          id: d.id,
-          ...d.data(),
+        .map((item) => ({
+          id: item.id,
+          ...item.data(),
         }))
         .sort((a, b) => {
           const aTime =
-            a.lastMessageAt?.toMillis?.() ||
-            a.lastMessageAt?.seconds ||
+            a.lastMessageAt
+              ?.toMillis?.() ||
+            a.lastMessageAt
+              ?.seconds *
+              1000 ||
             0;
 
           const bTime =
-            b.lastMessageAt?.toMillis?.() ||
-            b.lastMessageAt?.seconds ||
+            b.lastMessageAt
+              ?.toMillis?.() ||
+            b.lastMessageAt
+              ?.seconds *
+              1000 ||
             0;
 
           return bTime - aTime;
@@ -226,7 +357,7 @@ export function listenToUserChats(
     },
     (error) => {
       console.error(
-        "listenToUserChats error:",
+        "listenToUserChats Firestore error:",
         error
       );
 
@@ -237,36 +368,61 @@ export function listenToUserChats(
   );
 }
 
+/* =========================================================
+   SEND TEXT MESSAGE
+========================================================= */
 
-// =========================================================
-// SEND MESSAGE DOCUMENT
-// =========================================================
-
-async function sendMessageDocument(
+export async function sendMessage(
   chatId,
   sender,
-  messageData,
-  preview
+  text
 ) {
+  const trimmed =
+    String(text || "").trim();
+
+  if (!trimmed) {
+    return;
+  }
+
+  if (!sender?.uid) {
+    throw new Error(
+      "Sender is required."
+    );
+  }
+
   const chatRef = doc(
     db,
     "chats",
     chatId
   );
 
-  const chatSnap = await getDoc(chatRef);
+  const chatSnap =
+    await getDoc(chatRef);
 
   if (!chatSnap.exists()) {
-    throw new Error("Chat does not exist.");
+    throw new Error(
+      "Chat does not exist."
+    );
   }
 
-  const chat = chatSnap.data();
+  const chat =
+    chatSnap.data();
 
-  const recipients = (
-    chat.members || []
-  ).filter(
-    (uid) => uid !== sender.uid
-  );
+  if (
+    !(chat.members || []).includes(
+      sender.uid
+    )
+  ) {
+    throw new Error(
+      "You are not a member of this chat."
+    );
+  }
+
+  const recipients =
+    (chat.members || []).filter(
+      (uid) =>
+        uid !== sender.uid
+    );
 
   const messageRef = doc(
     collection(
@@ -277,23 +433,41 @@ async function sendMessageDocument(
     )
   );
 
-  const batch = writeBatch(db);
+  const batch =
+    writeBatch(db);
 
-  batch.set(messageRef, {
-    senderId: sender.uid,
+  batch.set(
+    messageRef,
+    {
+      senderId:
+        sender.uid,
 
-    senderName:
-      sender.displayName ||
-      sender.name ||
-      "",
+      senderName:
+        sender.displayName ||
+        sender.name ||
+        "",
 
-    ...messageData,
+      type: "text",
 
-    created_at: serverTimestamp(),
-  });
+      text: trimmed,
+
+      created_at:
+        serverTimestamp(),
+
+      deletedFor: [],
+
+      deletedForEveryone:
+        false,
+
+      readBy: [
+        sender.uid,
+      ],
+    }
+  );
 
   const chatUpdate = {
-    lastMessage: preview,
+    lastMessage:
+      trimmed,
 
     lastMessageAt:
       serverTimestamp(),
@@ -301,11 +475,13 @@ async function sendMessageDocument(
     lastMessageHiddenFor: [],
   };
 
-  recipients.forEach((uid) => {
-    chatUpdate[
-      `unreadCounts.${uid}`
-    ] = increment(1);
-  });
+  recipients.forEach(
+    (uid) => {
+      chatUpdate[
+        `unreadCounts.${uid}`
+      ] = increment(1);
+    }
+  );
 
   batch.update(
     chatRef,
@@ -315,64 +491,108 @@ async function sendMessageDocument(
   await batch.commit();
 }
 
-
-// =========================================================
-// SEND TEXT MESSAGE
-// =========================================================
-
-export async function sendMessage(
-  chatId,
-  sender,
-  text
-) {
-  const trimmed = text?.trim();
-
-  if (!trimmed) return;
-
-  await sendMessageDocument(
-    chatId,
-    sender,
-    {
-      type: "text",
-      text: trimmed,
-    },
-    trimmed
-  );
-}
-
-
-// =========================================================
-// SEND CLOUDINARY MEDIA
-// =========================================================
+/* =========================================================
+   SEND CLOUDINARY MEDIA MESSAGE
+========================================================= */
 
 async function sendCloudinaryMediaMessage(
   chatId,
   sender,
   file,
-  type
+  expectedType
 ) {
   if (!file) {
     throw new Error(
-      `${type} file is required.`
+      `${expectedType} file is required.`
     );
   }
+
+  if (!sender?.uid) {
+    throw new Error(
+      "Sender is required."
+    );
+  }
+
+  /*
+   * Upload to Cloudinary.
+   *
+   * cloudinaryService.js now returns mediaType.
+   */
 
   const media =
     await uploadToCloudinary(
       file,
-      `greentrip/chat/${chatId}`
+      expectedType
     );
 
-  if (media.mediaType !== type) {
+  if (
+    media.mediaType !==
+    expectedType
+  ) {
     throw new Error(
-      `Expected a ${type} file.`
+      `Expected a ${expectedType} file.`
     );
   }
 
-  const messageData = {
-    type,
+  const chatRef = doc(
+    db,
+    "chats",
+    chatId
+  );
 
-    mediaUrl: media.url,
+  const chatSnap =
+    await getDoc(chatRef);
+
+  if (!chatSnap.exists()) {
+    throw new Error(
+      "Chat does not exist."
+    );
+  }
+
+  const chat =
+    chatSnap.data();
+
+  if (
+    !(chat.members || []).includes(
+      sender.uid
+    )
+  ) {
+    throw new Error(
+      "You are not a member of this chat."
+    );
+  }
+
+  const recipients =
+    (chat.members || []).filter(
+      (uid) =>
+        uid !== sender.uid
+    );
+
+  const messageRef = doc(
+    collection(
+      db,
+      "chats",
+      chatId,
+      "messages"
+    )
+  );
+
+  const batch =
+    writeBatch(db);
+
+  const messageData = {
+    senderId:
+      sender.uid,
+
+    senderName:
+      sender.displayName ||
+      sender.name ||
+      "",
+
+    type: expectedType,
+
+    mediaUrl:
+      media.url,
 
     cloudinaryPublicId:
       media.publicId || "",
@@ -384,43 +604,101 @@ async function sendCloudinaryMediaMessage(
       media.format || "",
 
     bytes:
-      media.bytes || file.size,
+      media.bytes ||
+      file.size ||
+      0,
+
+    created_at:
+      serverTimestamp(),
+
+    deletedFor: [],
+
+    deletedForEveryone:
+      false,
+
+    readBy: [
+      sender.uid,
+    ],
   };
 
-  if (type === "image") {
+  /*
+   * Store type-specific URLs.
+   */
+
+  if (expectedType === "image") {
     messageData.imageUrl =
       media.url;
   }
 
-  if (type === "video") {
+  if (expectedType === "video") {
     messageData.videoUrl =
       media.url;
   }
 
-  if (type === "audio") {
+  if (expectedType === "audio") {
+    /*
+     * IMPORTANT:
+     *
+     * media.url is the browser-friendly MP3
+     * URL returned by cloudinaryService.js.
+     */
+
     messageData.audioUrl =
       media.url;
+
+    messageData.audioOriginalUrl =
+      media.originalUrl ||
+      media.secure_url ||
+      media.url;
+
+    messageData.browserAudioUrl =
+      media.browserAudioUrl ||
+      media.url;
+
+    messageData.duration =
+      media.duration || 0;
   }
 
-  const preview =
-    type === "image"
-      ? "📷 Photo"
-      : type === "video"
-      ? "🎥 Video"
-      : "🎤 Voice message";
-
-  await sendMessageDocument(
-    chatId,
-    sender,
-    messageData,
-    preview
+  batch.set(
+    messageRef,
+    messageData
   );
+
+  const chatUpdate = {
+    lastMessageHiddenFor: [],
+
+    lastMessage:
+      expectedType === "image"
+        ? "📷 Photo"
+        : expectedType === "video"
+          ? "🎥 Video"
+          : "🎤 Voice message",
+
+    lastMessageAt:
+      serverTimestamp(),
+  };
+
+  recipients.forEach(
+    (uid) => {
+      chatUpdate[
+        `unreadCounts.${uid}`
+      ] = increment(1);
+    }
+  );
+
+  batch.update(
+    chatRef,
+    chatUpdate
+  );
+
+  await batch.commit();
+
+  return messageRef.id;
 }
 
-
-// =========================================================
-// MEDIA EXPORTS
-// =========================================================
+/* =========================================================
+   SEND IMAGE
+========================================================= */
 
 export function sendImageMessage(
   chatId,
@@ -435,6 +713,10 @@ export function sendImageMessage(
   );
 }
 
+/* =========================================================
+   SEND VIDEO
+========================================================= */
+
 export function sendVideoMessage(
   chatId,
   sender,
@@ -448,153 +730,51 @@ export function sendVideoMessage(
   );
 }
 
-export function sendVoiceMessage(
+/* =========================================================
+   SEND VOICE MESSAGE
+   STORES REAL DURATION
+========================================================= */
+
+export async function sendVoiceMessage(
   chatId,
   sender,
-  blob
+  blob,
+  duration = 0
 ) {
-  return sendCloudinaryMediaMessage(
-    chatId,
-    sender,
-    blob,
-    "audio"
-  );
-}
-
-
-// =========================================================
-// MESSAGE PREVIEW
-// =========================================================
-
-function messagePreview(message) {
-  if (!message) return "";
-
-  if (message.type === "image") {
-    return "📷 Photo";
-  }
-
-  if (message.type === "video") {
-    return "🎥 Video";
-  }
-
-  if (
-    message.type === "audio" ||
-    message.type === "voice"
-  ) {
-    return "🎤 Voice message";
-  }
-
-  return message.text || "";
-}
-
-
-// =========================================================
-// REFRESH CHAT PREVIEW
-// =========================================================
-
-async function refreshChatPreview(
-  chatId
-) {
-  const snap = await getDocs(
-    collection(
-      db,
-      "chats",
-      chatId,
-      "messages"
-    )
-  );
-
-  const messages = snap.docs
-    .map((d) => ({
-      id: d.id,
-      ...d.data(),
-    }))
-    .sort((a, b) => {
-      const aTime =
-        a.created_at?.toMillis?.() ||
-        a.created_at?.seconds ||
-        0;
-
-      const bTime =
-        b.created_at?.toMillis?.() ||
-        b.created_at?.seconds ||
-        0;
-
-      return bTime - aTime;
-    });
-
-  const latest =
-    messages[0] || null;
-
-  const preview =
-    latest?.deletedForEveryone
-      ? "This message was deleted for everyone"
-      : messagePreview(latest);
-
-  await setDoc(
-    doc(db, "chats", chatId),
-    {
-      lastMessage: preview,
-
-      lastMessageAt:
-        latest?.created_at ||
-        serverTimestamp(),
-
-      lastMessageHiddenFor: [],
-    },
-    {
-      merge: true,
-    }
-  );
-}
-
-
-// =========================================================
-// DELETE FOR ME
-// =========================================================
-
-export async function deleteMessageForMe(
-  chatId,
-  messageId,
-  uid
-) {
-  if (
-    !chatId ||
-    !messageId ||
-    !uid
-  ) {
+  if (!blob) {
     throw new Error(
-      "Message information is missing."
+      "Voice recording is required."
     );
   }
 
-  const messageRef = doc(
-    db,
-    "chats",
-    chatId,
-    "messages",
-    messageId
-  );
+  if (!sender?.uid) {
+    throw new Error(
+      "Sender is required."
+    );
+  }
 
-  const snap =
-    await getDoc(messageRef);
+  /*
+   * Upload specifically as voice.
+   *
+   * cloudinaryService.js detects the Blob MIME
+   * type and returns mediaType = "audio".
+   */
 
-  if (!snap.exists()) return;
+  const media =
+    await uploadToCloudinary(
+      blob,
+      "voice"
+    );
 
-  const message = snap.data();
+  if (
+    media.mediaType !==
+    "audio"
+  ) {
+    throw new Error(
+      "The recorded file is not recognised as audio."
+    );
+  }
 
-  // The original message stays in Firestore.
-  // Only this user's UID is added.
-  await updateDoc(
-    messageRef,
-    {
-      deletedFor:
-        arrayUnion(uid),
-    }
-  );
-
-  // Hide the chat-list preview for this user
-  // if this message is currently the latest preview.
   const chatRef = doc(
     db,
     "chats",
@@ -604,109 +784,65 @@ export async function deleteMessageForMe(
   const chatSnap =
     await getDoc(chatRef);
 
-  if (chatSnap.exists()) {
-    const chat = chatSnap.data();
-
-    const preview =
-      messagePreview(message);
-
-    if (
-      chat.lastMessage === preview
-    ) {
-      await updateDoc(
-        chatRef,
-        {
-          lastMessageHiddenFor:
-            arrayUnion(uid),
-        }
-      );
-    }
-  }
-}
-
-
-// =========================================================
-// DELETE FOR EVERYONE
-// =========================================================
-
-export async function deleteMessageForEveryone(
-  chatId,
-  messageId,
-  uid
-) {
-  if (
-    !chatId ||
-    !messageId ||
-    !uid
-  ) {
+  if (!chatSnap.exists()) {
     throw new Error(
-      "Message information is missing."
+      "Chat does not exist."
     );
   }
+
+  const chat =
+    chatSnap.data();
+
+  /*
+   * Make sure sender belongs
+   * to this chat.
+   */
+
+  if (
+    !(chat.members || []).includes(
+      sender.uid
+    )
+  ) {
+    throw new Error(
+      "You are not a member of this chat."
+    );
+  }
+
+  const recipients =
+    (chat.members || []).filter(
+      (uid) =>
+        uid !== sender.uid
+    );
+
+  /*
+   * Convert duration to a safe
+   * number of seconds.
+   */
+
+  let safeDuration =
+    Number(duration);
+
+  if (
+    !Number.isFinite(
+      safeDuration
+    ) ||
+    safeDuration < 0
+  ) {
+    safeDuration = 0;
+  }
+
+  /*
+   * Keep decimals internally if available,
+   * but do not allow absurd values.
+   */
+
+  safeDuration =
+    Math.min(
+      safeDuration,
+      24 * 60 * 60
+    );
 
   const messageRef = doc(
-    db,
-    "chats",
-    chatId,
-    "messages",
-    messageId
-  );
-
-  const snap =
-    await getDoc(messageRef);
-
-  if (!snap.exists()) return;
-
-  const message = snap.data();
-
-  if (
-    message.senderId !== uid
-  ) {
-    throw new Error(
-      "Only the sender can delete this message for everyone."
-    );
-  }
-
-  // Keep the Firestore document as a
-  // tombstone so EVERYONE can see the
-  // deleted message box.
-  await updateDoc(
-    messageRef,
-    {
-      deletedForEveryone: true,
-
-      type: "deleted",
-
-      text:
-        "This message was deleted for everyone",
-
-      imageUrl: null,
-
-      videoUrl: null,
-
-      audioUrl: null,
-
-      mediaUrl: null,
-    }
-  );
-
-  await refreshChatPreview(
-    chatId
-  );
-}
-
-
-// =========================================================
-// MARK MESSAGES AS READ / SEEN
-// =========================================================
-
-export async function markMessagesAsRead(
-  chatId,
-  uid
-) {
-  if (!chatId || !uid) return;
-
-  const snap = await getDocs(
     collection(
       db,
       "chats",
@@ -715,93 +851,200 @@ export async function markMessagesAsRead(
     )
   );
 
-  const unread = snap.docs.filter(
-    (d) => {
-      const data = d.data();
+  const browserAudioUrl =
+    media.browserAudioUrl ||
+    media.url ||
+    "";
 
-      return (
-        data.senderId !== uid &&
-        !data.deletedForEveryone &&
-        !data.readBy?.includes(uid)
-      );
+  const originalAudioUrl =
+    media.originalUrl ||
+    media.secure_url ||
+    media.url ||
+    "";
+
+  const messageData = {
+    senderId:
+      sender.uid,
+
+    senderName:
+      sender.displayName ||
+      sender.name ||
+      "",
+
+    type: "audio",
+
+    /*
+     * Browser-ready MP3 URL.
+     */
+    audioUrl:
+      browserAudioUrl,
+
+    /*
+     * Keep explicit browser URL too.
+     */
+    browserAudioUrl,
+
+    /*
+     * Keep original Cloudinary URL
+     * for debugging/future use.
+     */
+    audioOriginalUrl:
+      originalAudioUrl,
+
+    mediaUrl:
+      browserAudioUrl,
+
+    cloudinaryPublicId:
+      media.publicId || "",
+
+    cloudinaryResourceType:
+      media.resourceType ||
+      "video",
+
+    format:
+      media.format || "",
+
+    bytes:
+      media.bytes ||
+      blob.size ||
+      0,
+
+    /*
+     * Real recording duration.
+     */
+    duration:
+      safeDuration,
+
+    created_at:
+      serverTimestamp(),
+
+    deletedFor: [],
+
+    deletedForEveryone:
+      false,
+
+    readBy: [
+      sender.uid,
+    ],
+  };
+
+  const batch =
+    writeBatch(db);
+
+  batch.set(
+    messageRef,
+    messageData
+  );
+
+  const chatUpdate = {
+    lastMessage:
+      "🎤 Voice message",
+
+    lastMessageAt:
+      serverTimestamp(),
+
+    lastMessageHiddenFor: [],
+  };
+
+  recipients.forEach(
+    (uid) => {
+      chatUpdate[
+        `unreadCounts.${uid}`
+      ] = increment(1);
     }
   );
 
-  if (unread.length) {
-    const batch =
-      writeBatch(db);
-
-    unread.forEach((d) => {
-      batch.update(
-        d.ref,
-        {
-          readBy:
-            arrayUnion(uid),
-        }
-      );
-    });
-
-    await batch.commit();
-  }
-
-  await markChatAsRead(
-    chatId,
-    uid
+  batch.update(
+    chatRef,
+    chatUpdate
   );
+
+  await batch.commit();
+
+  return messageRef.id;
 }
 
-
-// =========================================================
-// RESET UNREAD COUNT
-// =========================================================
-
-export async function markChatAsRead(
-  chatId,
-  uid
-) {
-  await setDoc(
-    doc(db, "chats", chatId),
-    {
-      [`unreadCounts.${uid}`]: 0,
-    },
-    {
-      merge: true,
-    }
-  );
-}
-
-
-// =========================================================
-// LISTEN TO MESSAGES
-// =========================================================
+/* =========================================================
+   LISTEN TO MESSAGES
+========================================================= */
 
 export function listenToMessages(
   chatId,
   callback,
   onError
 ) {
-  const q = query(
+  if (!chatId) {
+    callback?.([]);
+    return () => {};
+  }
+
+  /*
+   * Do not use orderBy here.
+   *
+   * Local sorting prevents missing-index problems
+   * and works even when older messages use slightly
+   * different timestamp fields.
+   */
+
+  const messagesRef =
     collection(
       db,
       "chats",
       chatId,
       "messages"
-    ),
-    orderBy(
-      "created_at",
-      "asc"
-    )
-  );
+    );
 
   return onSnapshot(
-    q,
-    (snap) => {
-      callback?.(
-        snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        }))
-      );
+    messagesRef,
+    (snapshot) => {
+      const list =
+        snapshot.docs
+          .map((item) => ({
+            id: item.id,
+            ...item.data(),
+          }))
+          .sort((a, b) => {
+            const getTime = (
+              message
+            ) => {
+              const timestamp =
+                message.created_at ||
+                message.createdAt ||
+                message.timestamp ||
+                message.sentAt;
+
+              if (
+                timestamp?.toMillis
+              ) {
+                return timestamp.toMillis();
+              }
+
+              if (
+                timestamp?.seconds
+              ) {
+                return (
+                  timestamp.seconds *
+                  1000
+                );
+              }
+
+              if (
+                typeof timestamp ===
+                "number"
+              ) {
+                return timestamp;
+              }
+
+              return 0;
+            };
+
+            return (
+              getTime(a) -
+              getTime(b)
+            );
+          });
+
+      callback?.(list);
     },
     (error) => {
       console.error(
@@ -816,227 +1059,717 @@ export function listenToMessages(
   );
 }
 
+/* =========================================================
+   MARK MESSAGES AS READ / SEEN
+========================================================= */
 
-// =========================================================
-// MUTE CHAT
-// =========================================================
-
-export async function toggleMuteChat(
+export async function markMessagesAsRead(
   chatId,
-  uid,
-  currentlyMuted
+  uid
 ) {
-  const ref = doc(
-    db,
-    "chats",
-    chatId
-  );
-
-  const snap =
-    await getDoc(ref);
-
-  if (!snap.exists()) {
-    throw new Error(
-      "Chat does not exist."
-    );
+  if (!chatId || !uid) {
+    return;
   }
 
-  const mutedBy =
-    snap.data().mutedBy || [];
-
-  const next =
-    currentlyMuted
-      ? mutedBy.filter(
-          (id) => id !== uid
-        )
-      : mutedBy.includes(uid)
-      ? mutedBy
-      : [...mutedBy, uid];
-
-  await setDoc(
-    ref,
-    {
-      mutedBy: next,
-    },
-    {
-      merge: true,
-    }
-  );
-}
-
-
-// =========================================================
-// PIN CHAT
-// =========================================================
-
-export async function togglePinChat(
-  chatId,
-  uid,
-  currentlyPinned
-) {
-  const ref = doc(
-    db,
-    "chats",
-    chatId
-  );
-
-  const snap =
-    await getDoc(ref);
-
-  if (!snap.exists()) {
-    throw new Error(
-      "Chat does not exist."
-    );
-  }
-
-  const pinnedBy =
-    snap.data().pinnedBy || [];
-
-  const next =
-    currentlyPinned
-      ? pinnedBy.filter(
-          (id) => id !== uid
-        )
-      : pinnedBy.includes(uid)
-      ? pinnedBy
-      : [...pinnedBy, uid];
-
-  await setDoc(
-    ref,
-    {
-      pinnedBy: next,
-    },
-    {
-      merge: true,
-    }
-  );
-}
-
-
-// =========================================================
-// DELETE CONVERSATION
-// =========================================================
-
-export async function deleteConversation(
-  chatId
-) {
-  const snap = await getDocs(
+  const messagesRef =
     collection(
       db,
       "chats",
       chatId,
       "messages"
-    )
-  );
+    );
+
+  const snapshot =
+    await getDocs(
+      messagesRef
+    );
+
+  if (snapshot.empty) {
+    return;
+  }
 
   const batch =
     writeBatch(db);
 
-  snap.docs.forEach((d) => {
-    batch.delete(d.ref);
-  });
+  let changed = false;
 
-  batch.set(
-    doc(db, "chats", chatId),
-    {
-      lastMessage: "",
+  snapshot.forEach(
+    (messageDoc) => {
+      const data =
+        messageDoc.data();
 
-      lastMessageAt:
-        serverTimestamp(),
+      /*
+       * Do not need to mark your own
+       * messages as newly read.
+       */
 
-      lastMessageHiddenFor: [],
-    },
-    {
-      merge: true,
+      if (
+        data.senderId === uid
+      ) {
+        return;
+      }
+
+      const readBy =
+        Array.isArray(
+          data.readBy
+        )
+          ? data.readBy
+          : [];
+
+      if (
+        !readBy.includes(uid)
+      ) {
+        batch.update(
+          messageDoc.ref,
+          {
+            readBy:
+              arrayUnion(uid),
+          }
+        );
+
+        changed = true;
+      }
     }
   );
 
-  await batch.commit();
+  if (changed) {
+    await batch.commit();
+  }
+
+  /*
+   * Reset this user's unread count.
+   */
+
+  try {
+    await updateDoc(
+      doc(
+        db,
+        "chats",
+        chatId
+      ),
+      {
+        [`unreadCounts.${uid}`]: 0,
+      }
+    );
+  } catch (error) {
+    console.warn(
+      "Unable to reset unread count:",
+      error
+    );
+  }
 }
 
+/* =========================================================
+   DELETE MESSAGE FOR ME
+========================================================= */
 
-// =========================================================
-// RENAME GROUP
-// =========================================================
+export async function deleteMessageForMe(
+  chatId,
+  messageId,
+  uid
+) {
+  if (
+    !chatId ||
+    !messageId ||
+    !uid
+  ) {
+    throw new Error(
+      "Chat ID, message ID and user ID are required."
+    );
+  }
+
+  const messageRef = doc(
+    db,
+    "chats",
+    chatId,
+    "messages",
+    messageId
+  );
+
+  const messageSnap =
+    await getDoc(
+      messageRef
+    );
+
+  if (!messageSnap.exists()) {
+    throw new Error(
+      "Message does not exist."
+    );
+  }
+
+  const message =
+    messageSnap.data();
+
+  const deletedFor =
+    Array.isArray(
+      message.deletedFor
+    )
+      ? message.deletedFor
+      : [];
+
+  if (
+    !deletedFor.includes(uid)
+  ) {
+    await updateDoc(
+      messageRef,
+      {
+        deletedFor:
+          arrayUnion(uid),
+      }
+    );
+  }
+
+  /*
+   * Hide the latest message preview for this user
+   * if this message is currently the chat preview.
+   */
+
+  try {
+    const chatRef = doc(
+      db,
+      "chats",
+      chatId
+    );
+
+    const chatSnap =
+      await getDoc(chatRef);
+
+    if (chatSnap.exists()) {
+      const chat =
+        chatSnap.data();
+
+      const hiddenFor =
+        Array.isArray(
+          chat.lastMessageHiddenFor
+        )
+          ? chat.lastMessageHiddenFor
+          : [];
+
+      if (
+        chat.lastMessage ===
+          message.text ||
+        (
+          message.type ===
+            "audio" &&
+          chat.lastMessage ===
+            "🎤 Voice message"
+        ) ||
+        (
+          message.type ===
+            "image" &&
+          chat.lastMessage ===
+            "📷 Photo"
+        ) ||
+        (
+          message.type ===
+            "video" &&
+          chat.lastMessage ===
+            "🎥 Video"
+        )
+      ) {
+        if (
+          !hiddenFor.includes(uid)
+        ) {
+          await updateDoc(
+            chatRef,
+            {
+              lastMessageHiddenFor:
+                arrayUnion(uid),
+            }
+          );
+        }
+      }
+    }
+  } catch (error) {
+    console.warn(
+      "Unable to update chat preview:",
+      error
+    );
+  }
+}
+
+/* =========================================================
+   DELETE MESSAGE FOR EVERYONE
+========================================================= */
+
+export async function deleteMessageForEveryone(
+  chatId,
+  messageId,
+  uid
+) {
+  if (
+    !chatId ||
+    !messageId ||
+    !uid
+  ) {
+    throw new Error(
+      "Chat ID, message ID and user ID are required."
+    );
+  }
+
+  const messageRef = doc(
+    db,
+    "chats",
+    chatId,
+    "messages",
+    messageId
+  );
+
+  const messageSnap =
+    await getDoc(
+      messageRef
+    );
+
+  if (!messageSnap.exists()) {
+    throw new Error(
+      "Message does not exist."
+    );
+  }
+
+  const message =
+    messageSnap.data();
+
+  /*
+   * Only the original sender can delete
+   * the message for everyone.
+   */
+
+  if (
+    message.senderId !== uid
+  ) {
+    throw new Error(
+      "You can only delete your own message for everyone."
+    );
+  }
+
+  /*
+   * Tombstone instead of physically deleting
+   * the Firestore document.
+   *
+   * This allows everyone in the chat to see
+   * that a message was deleted.
+   */
+
+  await updateDoc(
+    messageRef,
+    {
+      deletedForEveryone:
+        true,
+
+      type: "deleted",
+
+      text:
+        "This message was deleted for everyone",
+
+      imageUrl: null,
+
+      videoUrl: null,
+
+      audioUrl: null,
+
+      browserAudioUrl: null,
+
+      audioOriginalUrl: null,
+
+      mediaUrl: null,
+
+      duration: 0,
+    }
+  );
+
+  /*
+   * Update latest chat preview if necessary.
+   */
+
+  try {
+    const chatRef = doc(
+      db,
+      "chats",
+      chatId
+    );
+
+    const chatSnap =
+      await getDoc(
+        chatRef
+      );
+
+    if (
+      chatSnap.exists()
+    ) {
+      const chat =
+        chatSnap.data();
+
+      if (
+        chat.lastMessage ===
+          message.text ||
+        (
+          message.type ===
+            "audio" &&
+          chat.lastMessage ===
+            "🎤 Voice message"
+        ) ||
+        (
+          message.type ===
+            "image" &&
+          chat.lastMessage ===
+            "📷 Photo"
+        ) ||
+        (
+          message.type ===
+            "video" &&
+          chat.lastMessage ===
+            "🎥 Video"
+        )
+      ) {
+        await updateDoc(
+          chatRef,
+          {
+            lastMessage:
+              "This message was deleted for everyone",
+
+            lastMessageAt:
+              serverTimestamp(),
+
+            lastMessageHiddenFor:
+              [],
+          }
+        );
+      }
+    }
+  } catch (error) {
+    console.warn(
+      "Unable to update deleted message preview:",
+      error
+    );
+  }
+}
+
+/* =========================================================
+   TOGGLE MUTE CHAT
+========================================================= */
+
+export async function toggleMuteChat(
+  chatId,
+  uid,
+  muted
+) {
+  if (
+    !chatId ||
+    !uid
+  ) {
+    return;
+  }
+
+  const chatRef = doc(
+    db,
+    "chats",
+    chatId
+  );
+
+  if (muted) {
+    await updateDoc(
+      chatRef,
+      {
+        mutedBy:
+          arrayUnion(uid),
+      }
+    );
+
+    return;
+  }
+
+  const chatSnap =
+    await getDoc(
+      chatRef
+    );
+
+  if (!chatSnap.exists()) {
+    return;
+  }
+
+  const chat =
+    chatSnap.data();
+
+  const mutedBy =
+    Array.isArray(
+      chat.mutedBy
+    )
+      ? chat.mutedBy
+      : [];
+
+  await updateDoc(
+    chatRef,
+    {
+      mutedBy:
+        mutedBy.filter(
+          (id) =>
+            id !== uid
+        ),
+    }
+  );
+}
+
+/* =========================================================
+   PIN / UNPIN CHAT
+========================================================= */
+
+export async function togglePinChat(
+  chatId,
+  uid,
+  pinned
+) {
+  if (
+    !chatId ||
+    !uid
+  ) {
+    return;
+  }
+
+  const chatRef = doc(
+    db,
+    "chats",
+    chatId
+  );
+
+  if (pinned) {
+    await updateDoc(
+      chatRef,
+      {
+        pinnedBy:
+          arrayUnion(uid),
+      }
+    );
+
+    return;
+  }
+
+  const snap =
+    await getDoc(chatRef);
+
+  if (!snap.exists()) {
+    return;
+  }
+
+  const chat =
+    snap.data();
+
+  const pinnedBy =
+    Array.isArray(
+      chat.pinnedBy
+    )
+      ? chat.pinnedBy
+      : [];
+
+  await updateDoc(
+    chatRef,
+    {
+      pinnedBy:
+        pinnedBy.filter(
+          (id) =>
+            id !== uid
+        ),
+    }
+  );
+}
+
+/* =========================================================
+   DELETE CONVERSATION FOR USER
+========================================================= */
+
+export async function deleteConversation(
+  chatId,
+  uid
+) {
+  if (
+    !chatId ||
+    !uid
+  ) {
+    return;
+  }
+
+  const chatRef = doc(
+    db,
+    "chats",
+    chatId
+  );
+
+  const chatSnap =
+    await getDoc(
+      chatRef
+    );
+
+  if (!chatSnap.exists()) {
+    return;
+  }
+
+  const chat =
+    chatSnap.data();
+
+  /*
+   * We do not delete the entire chat document.
+   *
+   * The conversation should remain available to
+   * other participants.
+   *
+   * Instead, hide the latest preview for this user.
+   */
+
+  const hiddenFor =
+    Array.isArray(
+      chat.lastMessageHiddenFor
+    )
+      ? chat.lastMessageHiddenFor
+      : [];
+
+  if (
+    !hiddenFor.includes(uid)
+  ) {
+    await updateDoc(
+      chatRef,
+      {
+        lastMessageHiddenFor:
+          arrayUnion(uid),
+      }
+    );
+  }
+}
+
+/* =========================================================
+   RENAME GROUP
+========================================================= */
 
 export async function renameGroup(
   chatId,
-  newName
+  newName,
+  uid
 ) {
-  const name = newName?.trim();
+  const trimmedName =
+    newName?.trim();
 
-  if (!name) {
+  if (!trimmedName) {
     throw new Error(
       "Group name can't be empty."
     );
   }
 
-  await setDoc(
-    doc(db, "chats", chatId),
+  const chatRef = doc(
+    db,
+    "chats",
+    chatId
+  );
+
+  const snap =
+    await getDoc(chatRef);
+
+  if (!snap.exists()) {
+    throw new Error(
+      "Group does not exist."
+    );
+  }
+
+  const chat =
+    snap.data();
+
+  if (
+    chat.type !== "group"
+  ) {
+    throw new Error(
+      "This chat is not a group."
+    );
+  }
+
+  const isAdmin =
+    (chat.admins || []).includes(
+      uid
+    );
+
+  if (!isAdmin) {
+    throw new Error(
+      "Only group admins can rename the group."
+    );
+  }
+
+  await updateDoc(
+    chatRef,
     {
-      name,
-    },
-    {
-      merge: true,
+      name: trimmedName,
     }
   );
 }
 
+/* =========================================================
+   ADD MEMBER TO GROUP
+========================================================= */
 
-// =========================================================
-// ADD GROUP MEMBERS
-// =========================================================
-
-export async function addMembersToGroup(
+export async function addMemberToGroup(
   chatId,
   chat,
-  friends
+  member,
+  uid
 ) {
+  if (
+    !chatId ||
+    !member?.uid ||
+    !uid
+  ) {
+    throw new Error(
+      "Group and member information are required."
+    );
+  }
+
+  const isAdmin =
+    (chat?.admins || []).includes(
+      uid
+    );
+
+  if (!isAdmin) {
+    throw new Error(
+      "Only group admins can add members."
+    );
+  }
+
+  if (
+    (chat.members || []).includes(
+      member.uid
+    )
+  ) {
+    throw new Error(
+      "This user is already in the group."
+    );
+  }
+
   const members = [
     ...(chat.members || []),
+    member.uid,
   ];
 
   const memberNames = {
     ...(chat.memberNames || {}),
+    [member.uid]:
+      member.name ||
+      member.displayName ||
+      "",
   };
 
   const memberPhotos = {
     ...(chat.memberPhotos || {}),
+    [member.uid]:
+      member.profile_photo_url ||
+      member.photoURL ||
+      "",
   };
 
   const unreadCounts = {
     ...(chat.unreadCounts || {}),
+    [member.uid]: 0,
   };
 
-  (
-    Array.isArray(friends)
-      ? friends
-      : []
-  ).forEach((friend) => {
-    if (
-      !friend?.uid ||
-      members.includes(friend.uid)
-    ) {
-      return;
-    }
-
-    members.push(friend.uid);
-
-    memberNames[friend.uid] =
-      friend.name ||
-      friend.displayName ||
-      "";
-
-    memberPhotos[friend.uid] =
-      friend.profile_photo_url ||
-      friend.photoURL ||
-      "";
-
-    unreadCounts[friend.uid] = 0;
-  });
-
-  await setDoc(
-    doc(db, "chats", chatId),
+  await updateDoc(
+    doc(
+      db,
+      "chats",
+      chatId
+    ),
     {
       members,
 
@@ -1045,26 +1778,54 @@ export async function addMembersToGroup(
       memberPhotos,
 
       unreadCounts,
-    },
-    {
-      merge: true,
     }
   );
 }
 
-
-// =========================================================
-// REMOVE GROUP MEMBER
-// =========================================================
+/* =========================================================
+   REMOVE MEMBER FROM GROUP
+========================================================= */
 
 export async function removeMemberFromGroup(
   chatId,
   chat,
-  memberUid
+  memberUid,
+  currentUid
 ) {
+  if (
+    !chatId ||
+    !memberUid ||
+    !currentUid
+  ) {
+    throw new Error(
+      "Group and member information are required."
+    );
+  }
+
+  const isAdmin =
+    (chat?.admins || []).includes(
+      currentUid
+    );
+
+  if (!isAdmin) {
+    throw new Error(
+      "Only group admins can remove members."
+    );
+  }
+
+  if (
+    memberUid ===
+    chat.createdBy
+  ) {
+    throw new Error(
+      "The group creator cannot be removed."
+    );
+  }
+
   const members =
     (chat.members || []).filter(
-      (uid) => uid !== memberUid
+      (uid) =>
+        uid !== memberUid
     );
 
   const memberNames = {
@@ -1078,16 +1839,6 @@ export async function removeMemberFromGroup(
   const unreadCounts = {
     ...(chat.unreadCounts || {}),
   };
-
-  const admins =
-    (chat.admins || []).filter(
-      (uid) => uid !== memberUid
-    );
-
-  const pinnedBy =
-    (chat.pinnedBy || []).filter(
-      (uid) => uid !== memberUid
-    );
 
   delete memberNames[
     memberUid
@@ -1101,8 +1852,18 @@ export async function removeMemberFromGroup(
     memberUid
   ];
 
-  await setDoc(
-    doc(db, "chats", chatId),
+  const admins =
+    (chat.admins || []).filter(
+      (uid) =>
+        uid !== memberUid
+    );
+
+  await updateDoc(
+    doc(
+      db,
+      "chats",
+      chatId
+    ),
     {
       members,
 
@@ -1113,19 +1874,131 @@ export async function removeMemberFromGroup(
       unreadCounts,
 
       admins,
-
-      pinnedBy,
-    },
-    {
-      merge: true,
     }
   );
 }
 
+/* =========================================================
+   PROMOTE MEMBER TO ADMIN
+========================================================= */
 
-// =========================================================
-// LEAVE GROUP
-// =========================================================
+export async function promoteGroupAdmin(
+  chatId,
+  chat,
+  memberUid,
+  currentUid
+) {
+  if (
+    !chatId ||
+    !memberUid ||
+    !currentUid
+  ) {
+    throw new Error(
+      "Group and member information are required."
+    );
+  }
+
+  if (
+    !(chat.admins || []).includes(
+      currentUid
+    )
+  ) {
+    throw new Error(
+      "Only group admins can promote members."
+    );
+  }
+
+  if (
+    !(chat.members || []).includes(
+      memberUid
+    )
+  ) {
+    throw new Error(
+      "User is not a member of this group."
+    );
+  }
+
+  if (
+    (chat.admins || []).includes(
+      memberUid
+    )
+  ) {
+    return;
+  }
+
+  await updateDoc(
+    doc(
+      db,
+      "chats",
+      chatId
+    ),
+    {
+      admins:
+        arrayUnion(memberUid),
+    }
+  );
+}
+
+/* =========================================================
+   DEMOTE ADMIN
+========================================================= */
+
+export async function demoteGroupAdmin(
+  chatId,
+  chat,
+  memberUid,
+  currentUid
+) {
+  if (
+    !chatId ||
+    !memberUid ||
+    !currentUid
+  ) {
+    throw new Error(
+      "Group and member information are required."
+    );
+  }
+
+  if (
+    !(chat.admins || []).includes(
+      currentUid
+    )
+  ) {
+    throw new Error(
+      "Only group admins can demote admins."
+    );
+  }
+
+  if (
+    memberUid ===
+    chat.createdBy
+  ) {
+    throw new Error(
+      "The group creator cannot be demoted."
+    );
+  }
+
+  const admins =
+    (chat.admins || []).filter(
+      (uid) =>
+        uid !== memberUid
+    );
+
+  await updateDoc(
+    doc(
+      db,
+      "chats",
+      chatId
+    ),
+    {
+      admins,
+    }
+  );
+}
+
+/* =========================================================
+   LEAVE GROUP
+========================================================= */
 
 export async function leaveGroup(
   chatId,
@@ -1133,132 +2006,264 @@ export async function leaveGroup(
   myUid
 ) {
   if (
-    chat?.createdBy === myUid
+    !chatId ||
+    !myUid
   ) {
     throw new Error(
-      "The group creator cannot leave the group. Transfer ownership first."
+      "Group and user information are required."
     );
   }
+
+  if (
+    chat?.type !== "group"
+  ) {
+    throw new Error(
+      "This chat is not a group."
+    );
+  }
+
+  const members =
+    Array.isArray(chat.members)
+      ? chat.members
+      : [];
+
+  if (
+    !members.includes(myUid)
+  ) {
+    throw new Error(
+      "You are not a member of this group."
+    );
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * CREATOR LEAVING
+   * ----------------------------------------------------------
+   *
+   * If the creator is the last member, clean up the group
+   * instead of physically deleting the Firestore document.
+   *
+   * If other members remain, ownership transfers to:
+   *
+   * 1. an existing admin, or
+   * 2. the first remaining member.
+   */
+
+  if (
+    chat.createdBy === myUid
+  ) {
+    const remainingMembers =
+      members.filter(
+        (uid) =>
+          uid !== myUid
+      );
+
+    /*
+     * Creator is the last member.
+     */
+
+    if (
+      remainingMembers.length ===
+      0
+    ) {
+      await updateDoc(
+        doc(
+          db,
+          "chats",
+          chatId
+        ),
+        {
+          members: [],
+
+          memberNames: {},
+
+          memberPhotos: {},
+
+          unreadCounts: {},
+
+          admins: [],
+
+          pinnedBy: [],
+
+          createdBy: null,
+
+          lastMessage:
+            "Group closed",
+        }
+      );
+
+      return {
+        deleted: true,
+      };
+    }
+
+    /*
+     * Select new owner.
+     */
+
+    const remainingAdmins =
+      (chat.admins || [])
+        .filter(
+          (uid) =>
+            uid !== myUid &&
+            remainingMembers.includes(
+              uid
+            )
+        );
+
+    const newOwner =
+      remainingAdmins[0] ||
+      remainingMembers[0];
+
+    /*
+     * Keep other admins and guarantee
+     * the new owner is an admin.
+     */
+
+    const nextAdmins = Array.from(
+      new Set([
+        ...remainingAdmins,
+        newOwner,
+      ])
+    );
+
+    const memberNames = {
+      ...(chat.memberNames || {}),
+    };
+
+    const memberPhotos = {
+      ...(chat.memberPhotos || {}),
+    };
+
+    const unreadCounts = {
+      ...(chat.unreadCounts || {}),
+    };
+
+    delete memberNames[
+      myUid
+    ];
+
+    delete memberPhotos[
+      myUid
+    ];
+
+    delete unreadCounts[
+      myUid
+    ];
+
+    await updateDoc(
+      doc(
+        db,
+        "chats",
+        chatId
+      ),
+      {
+        members:
+          remainingMembers,
+
+        memberNames,
+
+        memberPhotos,
+
+        unreadCounts,
+
+        admins:
+          nextAdmins,
+
+        createdBy:
+          newOwner,
+      }
+    );
+
+    return {
+      transferredTo:
+        newOwner,
+    };
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * NORMAL MEMBER LEAVING
+   * ----------------------------------------------------------
+   */
 
   await removeMemberFromGroup(
     chatId,
     chat,
+    myUid,
     myUid
   );
+
+  return {
+    left: true,
+  };
 }
 
-
-// =========================================================
-// PROMOTE GROUP ADMIN
-// =========================================================
-
-export async function promoteGroupAdmin(
-  chatId,
-  chat,
-  memberUid
-) {
-  if (!memberUid) {
-    throw new Error(
-      "Member UID is required."
-    );
-  }
-
-  const admins = [
-    ...(chat.admins || []),
-  ];
-
-  if (
-    !admins.includes(memberUid)
-  ) {
-    admins.push(memberUid);
-  }
-
-  await setDoc(
-    doc(db, "chats", chatId),
-    {
-      admins,
-    },
-    {
-      merge: true,
-    }
-  );
-}
-
-
-// =========================================================
-// REMOVE GROUP ADMIN
-// =========================================================
-
-export async function removeGroupAdmin(
-  chatId,
-  chat,
-  memberUid
-) {
-  const admins =
-    (chat.admins || []).filter(
-      (uid) => uid !== memberUid
-    );
-
-  await setDoc(
-    doc(db, "chats", chatId),
-    {
-      admins,
-    },
-    {
-      merge: true,
-    }
-  );
-}
-
-
-// =========================================================
-// CHECK GROUP ADMIN
-// =========================================================
-
-export function isGroupAdmin(
-  chat,
-  uid
-) {
-  return (
-    !!chat &&
-    !!uid &&
-    (
-      chat.createdBy === uid ||
-      (chat.admins || []).includes(uid)
-    )
-  );
-}
-
-
-// =========================================================
-// GET GROUP MEMBERS
-// =========================================================
+/* =========================================================
+   GET GROUP MEMBERS
+========================================================= */
 
 export function getGroupMembers(
   chat
 ) {
-  if (!chat) return [];
+  if (!chat) {
+    return [];
+  }
 
-  const names =
-    chat.memberNames || {};
+  const members =
+    Array.isArray(chat.members)
+      ? chat.members
+      : [];
 
-  const admins =
-    chat.admins || [];
+  return members.map(
+    (uid) => ({
+      uid,
 
-  return (
-    chat.members || []
-  ).map((uid) => ({
-    uid,
+      name:
+        chat.memberNames?.[uid] ||
+        "User",
 
-    name:
-      names[uid] ||
-      "Unknown User",
+      photo:
+        chat.memberPhotos?.[uid] ||
+        "",
 
-    isAdmin:
-      chat.createdBy === uid ||
-      admins.includes(uid),
+      isAdmin:
+        (chat.admins || []).includes(
+          uid
+        ),
 
-    isCreator:
-      chat.createdBy === uid,
-  }));
+      isCreator:
+        chat.createdBy ===
+        uid,
+    })
+  );
 }
+
+/* =========================================================
+   EXPORT DEFAULT
+========================================================= */
+
+export default {
+  createOrGetDirectChat,
+  createGroupChat,
+  getChat,
+  listenToUserChats,
+  sendMessage,
+  sendImageMessage,
+  sendVideoMessage,
+  sendVoiceMessage,
+  listenToMessages,
+  markMessagesAsRead,
+  deleteMessageForMe,
+  deleteMessageForEveryone,
+  toggleMuteChat,
+  togglePinChat,
+  deleteConversation,
+  renameGroup,
+  addMemberToGroup,
+  removeMemberFromGroup,
+  promoteGroupAdmin,
+  demoteGroupAdmin,
+  leaveGroup,
+  getGroupMembers,
+};

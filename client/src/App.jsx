@@ -24,6 +24,12 @@ import ChallengeLeaderboard from "./user/Challenges/pages/ChallengeLeaderboard";
 import Waste from "./user/Waste&Resources/pages/WastePage";
 import GreenRecommendationPage from "./user/AIRecommendation/pages/GreenRecommendationPage";
 
+// Hotel Management / Green Certification Module
+import HotelDashBoard from "./HotelManagement/HotelDashBoard";
+import CertificationApply from "./HotelManagement/CertificationApply";
+import HotelPartnerDashboard from "./HotelManagement/HotelPartnerDashboard";
+import HotelProfile from "./HotelManagement/HotelProfile";
+
 import EcoReportCard from "./user/EcoJourney/pages/EcoReportCard";
 import AchievementsPage from "./user/EcoJourney/pages/AchievementsPage";
 
@@ -36,12 +42,18 @@ import ItineraryDetails from "./user/Itinerary/pages/ItineraryDetails";
 import AdminDashboard from "./admin/AdminDashboard";
 import RequireAdmin from "./admin/RequireAdmin";
 
-// Routes accessible without login
-const PUBLIC_ROUTES = ["/login", "/register"];
+/* Routes reachable without a signed-in user. */
+const PUBLIC_ROUTES = [
+  "/login",
+  "/register",
+  "/admin-login",
+  "/hotel-dashboard",
+  "/certification",
+  "/certification/apply",
+  "/hotel/partner-dashboard",
+  "/hotel/profile",
+];
 
-// ============================================================
-// READ HASH ROUTE
-// ============================================================
 function parseHash() {
   const raw = window.location.hash.slice(1) || "/login";
   const normalized = raw.startsWith("/") ? raw : `/${raw}`;
@@ -55,116 +67,61 @@ function parseHash() {
   };
 }
 
-// ============================================================
-// COMING SOON
-// ============================================================
 function ComingSoon({
   label,
   onNavigate,
   backTo = "/dashboard",
 }) {
   return (
-    <div
-      style={{
-        padding: 48,
-        textAlign: "center",
-      }}
-    >
+    <div style={{ padding: 48, textAlign: "center" }}>
       <h2>{label} is coming soon</h2>
-
-      <button
-        type="button"
-        onClick={() => onNavigate(backTo)}
-      >
+      <button type="button" onClick={() => onNavigate(backTo)}>
         Back
       </button>
     </div>
   );
 }
 
-// ============================================================
-// APP
-// ============================================================
 export default function App() {
   const [location, setLocation] = useState(parseHash);
   const { status } = useAuthUser();
 
-  const {
-    path: route,
-    id: selectedId,
-  } = location;
+  const { path: route, id: selectedId } = location;
 
-  // ==========================================================
-  // LISTEN TO HASH CHANGES
-  // ==========================================================
   useEffect(() => {
     const onHashChange = () => {
       setLocation(parseHash());
     };
 
     window.addEventListener("hashchange", onHashChange);
-
     return () => {
       window.removeEventListener("hashchange", onHashChange);
     };
   }, []);
 
-  // ==========================================================
-  // NAVIGATION
-  // ==========================================================
   const navigate = useCallback((path, id) => {
     const cleanPath = String(path || "/login").split("?")[0];
-
     const next =
       id !== undefined && id !== null && id !== ""
         ? `${cleanPath}?id=${encodeURIComponent(id)}`
         : cleanPath;
 
     const nextHash = `#${next}`;
-
     if (window.location.hash !== nextHash) {
       window.location.hash = next;
     }
-
-    // Update immediately as well as through hashchange.
-    // This prevents a momentary blank/default route when
-    // navigating between chat screens.
     setLocation(parseHash());
   }, []);
 
-  // ==========================================================
-  // WAIT FOR FIREBASE AUTH
-  // ==========================================================
   if (status === "loading") {
-    return (
-      <div
-        style={{
-          padding: 48,
-          textAlign: "center",
-        }}
-      >
-        Loading…
-      </div>
-    );
+    return <div style={{ padding: 48, textAlign: "center" }}>Loading…</div>;
   }
 
-  // ==========================================================
-  // SIGNED OUT
-  // ==========================================================
-  if (
-    status === "signedOut" &&
-    !PUBLIC_ROUTES.includes(route)
-  ) {
+  if (status === "signedOut" && !PUBLIC_ROUTES.includes(route)) {
     return <Login onNavigate={navigate} />;
   }
 
-  // ==========================================================
-  // ROUTES
-  // ==========================================================
   switch (route) {
-    // --------------------------------------------------------
-    // AUTH
-    // --------------------------------------------------------
     case "/login":
       return <Login onNavigate={navigate} />;
 
@@ -174,9 +131,12 @@ export default function App() {
     case "/profile":
       return <Profile onNavigate={navigate} />;
 
-    // --------------------------------------------------------
-    // ADMIN
-    // --------------------------------------------------------
+    case "/hotel/profile":
+      return <HotelProfile onNavigate={navigate} />;
+
+    case "/admin-login":
+      return <Login onNavigate={navigate} />;
+
     case "/admin":
       return (
         <RequireAdmin onNavigate={navigate}>
@@ -184,15 +144,19 @@ export default function App() {
         </RequireAdmin>
       );
 
-    // --------------------------------------------------------
-    // DASHBOARD
-    // --------------------------------------------------------
+    case "/hotel-dashboard":
+    case "/certification":
+      return <HotelDashBoard onNavigate={navigate} />;
+
+    case "/certification/apply":
+      return <CertificationApply onNavigate={navigate} />;
+
+    case "/hotel/partner-dashboard":
+      return <HotelPartnerDashboard onNavigate={navigate} />;
+
     case "/dashboard":
       return <MainDashboard onNavigate={navigate} />;
 
-    // --------------------------------------------------------
-    // COMMUNITY
-    // --------------------------------------------------------
     case "/community":
       return <CommunityPage onNavigate={navigate} />;
 
@@ -221,9 +185,6 @@ export default function App() {
     case "/community/chat":
       return <ChatList onNavigate={navigate} />;
 
-    // --------------------------------------------------------
-    // CHAT ROOM
-    // --------------------------------------------------------
     case "/community/chat/room":
       if (!selectedId) {
         return (
@@ -234,17 +195,8 @@ export default function App() {
           />
         );
       }
+      return <ChatRoom chatId={selectedId} onNavigate={navigate} />;
 
-      return (
-        <ChatRoom
-          chatId={selectedId}
-          onNavigate={navigate}
-        />
-      );
-
-    // --------------------------------------------------------
-    // GROUP INFO
-    // --------------------------------------------------------
     case "/community/chat/info":
       if (!selectedId) {
         return (
@@ -255,17 +207,8 @@ export default function App() {
           />
         );
       }
+      return <GroupInfo chatId={selectedId} onNavigate={navigate} />;
 
-      return (
-        <GroupInfo
-          chatId={selectedId}
-          onNavigate={navigate}
-        />
-      );
-
-    // --------------------------------------------------------
-    // ECO REPORT
-    // --------------------------------------------------------
     case "/community/reports":
       return (
         <EcoReportCard
@@ -275,22 +218,11 @@ export default function App() {
       );
 
     case "/community/report":
-      return (
-        <EcoReportCard
-          onNavigate={navigate}
-          tripId={selectedId}
-        />
-      );
+      return <EcoReportCard onNavigate={navigate} tripId={selectedId} />;
 
-    // --------------------------------------------------------
-    // COMMUNITY CHALLENGES
-    // --------------------------------------------------------
     case "/community/challenges":
       return <ChallengeTeam onNavigate={navigate} />;
 
-    // --------------------------------------------------------
-    // CHALLENGES
-    // --------------------------------------------------------
     case "/challenges":
       return <ChallengesPage onNavigate={navigate} />;
 
@@ -303,28 +235,13 @@ export default function App() {
       );
 
     case "/challenges/leaderboard":
-      return (
-        <ChallengeLeaderboard
-          onNavigate={navigate}
-        />
-      );
+      return <ChallengeLeaderboard onNavigate={navigate} />;
 
-    // --------------------------------------------------------
-    // ITINERARY (MODULE 1)
-    // --------------------------------------------------------
     case "/itinerary":
-      return (
-        <ItineraryPage
-          onNavigate={navigate}
-        />
-      );
+      return <ItineraryPage onNavigate={navigate} />;
 
     case "/itinerary/create":
-      return (
-        <CreateItinerary
-          onNavigate={navigate}
-        />
-      );
+      return <CreateItinerary onNavigate={navigate} />;
 
     case "/itinerary/edit":
       return (
@@ -342,9 +259,6 @@ export default function App() {
         />
       );
 
-    // --------------------------------------------------------
-    // RECOMMENDATIONS (MODULE 2)
-    // --------------------------------------------------------
     case "/recommendations":
       return (
         <GreenRecommendationPage
@@ -353,20 +267,9 @@ export default function App() {
         />
       );
 
-    case "/certification":
-      return (
-        <ComingSoon
-          label="Certification"
-          onNavigate={navigate}
-        />
-      );
-
     case "/waste":
       return <Waste onNavigate={navigate} />;
 
-    // --------------------------------------------------------
-    // DEFAULT
-    // --------------------------------------------------------
     default:
       return <Login onNavigate={navigate} />;
   }

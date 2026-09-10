@@ -12,13 +12,9 @@ import {
    source attribution, and are read through services/baselineService.js
    so the water figure can come from the data.gov.my Open API. */
 
-/* Carbon equivalence used by the MCC calculation (kg CO2e per unit). */
-export const CO2E = {
-  foodWaste: 0.0025, // per g  (2.5 kg CO2e per kg food waste)
-  plastic: 0.08, // per item
-  water: 0.00034, // per L
-  disposables: 0.05, // per item
-};
+/* Carbon equivalence now lives in constants/carbonFactors.js with the
+   methodological basis and source for each factor documented. */
+export { CO2E } from "./carbonFactors";
 
 /* Weighting of each category in the composite sustainability grade. */
 export const GRADE_WEIGHTS = {
@@ -68,13 +64,8 @@ export const FOOD_PROFILE = {
   bone: { label: "Tulang (non-edible)", density: 1.3, shape: 0.7, colour: "#78716C" },
 };
 
-/* F4 — Registered lodging used as the geofence centre. */
-export const LODGING = {
-  name: "Hotel Seri Malaysia, Butterworth",
-  lat: 5.3991,
-  lng: 100.3639,
-  radiusM: 120,
-};
+/* F4 — Lodging is now per-user, set via ReminderSettings and stored on the
+   user's Firestore profile. See services/lodgingService.js. */
 
 /* F6 — Nearby points of interest are now fetched live from OpenStreetMap;
    see services/poiService.js. The former hardcoded list is gone. */
