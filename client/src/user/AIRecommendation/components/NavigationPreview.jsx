@@ -65,6 +65,9 @@ export default function NavigationPreview({
   onLoadLiveRoute,
   progressControlsEnabled = false,
   progressDisabledReason = null,
+  allowNextDestination = false,
+  backLabel = "Back to Route Overview",
+  useSessionProgressLabels = false,
 }) {
   const lastIndex = stops.length - 1;
   const current = stops[currentIndex];
@@ -179,7 +182,12 @@ export default function NavigationPreview({
             type="button"
             className="m2-btn"
             onClick={onNext}
-            disabled={!progressControlsEnabled || paused || completed}
+            disabled={
+              !progressControlsEnabled ||
+              !allowNextDestination ||
+              paused ||
+              completed
+            }
           >
             Next Destination
           </button>
@@ -188,7 +196,7 @@ export default function NavigationPreview({
             className="m2-btn m2-btn--secondary"
             onClick={onBack}
           >
-            Back to Recommendation
+            {backLabel}
           </button>
         </div>
       </article>
@@ -197,17 +205,26 @@ export default function NavigationPreview({
         <h4>Ordered destination progress</h4>
         <ol className="m2-order">
           {stops.map((stop, index) => {
-            const done = index < currentIndex || completed;
-            const here = index === currentIndex && !completed;
+            const sessionKind = useSessionProgressLabels
+              ? index === currentIndex
+                ? "CURRENT"
+                : index === currentIndex + 1
+                  ? "NEXT DESTINATION"
+                  : "UPCOMING"
+              : null;
+            const done = !useSessionProgressLabels && (index < currentIndex || completed);
+            const here = !useSessionProgressLabels && index === currentIndex && !completed;
             return (
               <li
                 key={stop.stopId}
                 className={
-                  done
-                    ? "m2-order-item m2-order-item--done"
-                    : here
-                      ? "m2-order-item m2-order-item--start"
-                      : "m2-order-item"
+                  sessionKind === "CURRENT" || here
+                    ? "m2-order-item m2-order-item--start"
+                    : sessionKind === "NEXT DESTINATION"
+                      ? "m2-order-item m2-order-item--next"
+                      : done
+                        ? "m2-order-item m2-order-item--done"
+                        : "m2-order-item"
                 }
               >
                 <span className="m2-order-index" aria-hidden="true">
@@ -216,13 +233,15 @@ export default function NavigationPreview({
                 <div>
                   <div>{stop.name}</div>
                   <div className="m2-chip">
-                    {done
-                      ? "Completed"
-                      : here
-                        ? "Current"
-                        : stop.kind === "start"
-                          ? "Starting point"
-                          : "Upcoming"}
+                    {sessionKind
+                      ? sessionKind
+                      : done
+                        ? "Completed"
+                        : here
+                          ? "Current"
+                          : stop.kind === "start"
+                            ? "Starting point"
+                            : "Upcoming"}
                   </div>
                 </div>
               </li>

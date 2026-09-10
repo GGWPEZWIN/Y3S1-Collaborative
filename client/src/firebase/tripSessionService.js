@@ -193,6 +193,33 @@ export function subscribeActiveTripLock(onNext) {
   };
 }
 
+/**
+ * Live session listener for progress fields such as currentSegmentIndex.
+ * Missing or unreadable documents are treated as no session. Firebase error
+ * objects are not forwarded to the UI.
+ */
+export function subscribeTripSession(sessionId, onNext) {
+  const id = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (!id) {
+    onNext(null);
+    return () => {};
+  }
+
+  return onSnapshot(
+    doc(db, TRIP_SESSIONS, id),
+    (snap) => {
+      if (!snap.exists()) {
+        onNext(null);
+        return;
+      }
+      onNext(asSession(snap.id, snap.data()));
+    },
+    () => {
+      onNext(null);
+    }
+  );
+}
+
 export async function getTripSession(sessionId) {
   if (!sessionId) return null;
   const user = await getLoggedInUser();

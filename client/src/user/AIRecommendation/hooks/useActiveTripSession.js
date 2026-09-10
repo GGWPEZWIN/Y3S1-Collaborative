@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { subscribeActiveTripLock } from "../../../firebase/tripSessionService";
+import {
+  subscribeActiveTripLock,
+  subscribeTripSession,
+} from "../../../firebase/tripSessionService";
 
 export const ACTIVE_TRIP_STATUS = {
   LOADING: "loading",
@@ -18,9 +21,18 @@ function classify(lock, currentItineraryId) {
   return ACTIVE_TRIP_STATUS.ACTIVE_DIFFERENT;
 }
 
+function readSegmentIndex(session) {
+  const value = session?.currentSegmentIndex;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return Math.floor(value);
+  }
+  return 0;
+}
+
 export default function useActiveTripSession(currentItineraryId = null) {
   const [lock, setLock] = useState(undefined);
   const [warning, setWarning] = useState(null);
+  const [session, setSession] = useState(null);
 
   useEffect(() => {
     const unsubscribe = subscribeActiveTripLock((nextLock, nextWarning) => {
@@ -30,17 +42,32 @@ export default function useActiveTripSession(currentItineraryId = null) {
     return unsubscribe;
   }, []);
 
+  const sessionId = lock?.sessionId || null;
+
+  useEffect(() => {
+    if (!sessionId) return undefined;
+    return subscribeTripSession(sessionId, (nextSession) => {
+      setSession(nextSession);
+    });
+  }, [sessionId]);
+
   if (lock === undefined) {
     return {
       status: ACTIVE_TRIP_STATUS.LOADING,
       lock: null,
+      session: null,
+      currentSegmentIndex: 0,
       warning: null,
     };
   }
 
+  const visibleSession = sessionId ? session : null;
+
   return {
     status: classify(lock, currentItineraryId),
     lock,
+    session: visibleSession,
+    currentSegmentIndex: readSegmentIndex(visibleSession),
     warning,
   };
 }

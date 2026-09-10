@@ -9,27 +9,25 @@ import useActiveTripSession, {
   ACTIVE_TRIP_STATUS,
 } from "../hooks/useActiveTripSession";
 import useCurrentLocation from "../hooks/useCurrentLocation";
-import useLiveSelectedRoute from "../hooks/useLiveSelectedRoute";
 import useLiveTransportComparison from "../hooks/useLiveTransportComparison";
 import useResolvedItinerary from "../hooks/useResolvedItinerary";
 import { isRouteableCoordinate } from "../services/itinerary/normalizeItinerary.js";
 import { firstRouteableSegment } from "../services/itinerary/buildRouteSegments.js";
 import { ITINERARY_LOAD_STATUS } from "../services/itinerary/resolveItinerary.js";
-import CurrentLocationCard from "../components/CurrentLocationCard";
-import ItinerarySummary from "../components/ItinerarySummary";
-import TripActivationPanel from "../components/TripActivationPanel";
-import TransportationComparison from "../components/TransportationComparison";
-import RouteInformationPanel from "../components/RouteInformationPanel";
+import {
+  formatMetersAsKilometres,
+  formatSecondsAsMinutes,
+} from "../services/formatMeasurement.js";
+import { TRIP_FLOW } from "../tripFlow.js";
+import ActiveTripOverview from "../components/ActiveTripOverview";
+import ComparisonLoadingScreen from "../components/ComparisonLoadingScreen";
 import NavigationPreview from "../components/NavigationPreview";
+import NoActiveTrip from "../components/NoActiveTrip";
+import SavedItineraryPreview from "../components/SavedItineraryPreview";
+import TransportationComparison from "../components/TransportationComparison";
+import TripActivationPanel from "../components/TripActivationPanel";
+import TripFlowStepper from "../components/TripFlowStepper";
 import "../styles/aiRecommendation.css";
-
-const TABS = [
-  { id: "recommendation", label: "Trip Recommendation" },
-  { id: "compare", label: "Compare Transport" },
-  { id: "navigation", label: "Navigation Preview" },
-];
-
-const RECOMMENDED_MODE = "public_transit";
 
 const OPTION_TO_TRAVEL_MODE = {
   walking: "WALK",
@@ -37,73 +35,12 @@ const OPTION_TO_TRAVEL_MODE = {
   driving: "DRIVE",
 };
 
-function resolveNavigationLiveRoute({
-  selectedTravelMode,
-  comparisonEntry,
-  comparisonStatus,
-  directStatus,
-  directRoute,
-  directError,
-}) {
-  const comparisonSuccess =
-    comparisonEntry?.status === "success" &&
-    comparisonEntry.route?.travelMode === selectedTravelMode
-      ? comparisonEntry.route
-      : null;
-  const comparisonFailed = comparisonEntry?.status === "error";
-  const directSuccess =
-    directStatus === "success" &&
-    directRoute?.travelMode === selectedTravelMode
-      ? directRoute
-      : null;
-
-  if (comparisonSuccess) {
-    return {
-      status: "success",
-      route: comparisonSuccess,
-      errorCode: null,
-      sourceKind: "comparison",
-    };
-  }
-  if (directSuccess) {
-    return {
-      status: "success",
-      route: directSuccess,
-      errorCode: null,
-      sourceKind: "direct",
-    };
-  }
-  if (directStatus === "loading") {
-    return {
-      status: "loading",
-      route: null,
-      errorCode: null,
-      sourceKind: null,
-    };
-  }
-  if (directStatus === "error") {
-    return {
-      status: "error",
-      route: null,
-      errorCode: directError,
-      sourceKind: null,
-    };
-  }
-  if (comparisonFailed) {
-    return {
-      status: "error",
-      route: null,
-      errorCode: comparisonEntry.code || "UNAVAILABLE",
-      sourceKind: null,
-    };
-  }
-  return {
-    status: comparisonStatus === "loading" ? "comparison-loading" : "idle",
-    route: null,
-    errorCode: null,
-    sourceKind: null,
-  };
-}
+const CANCEL_MESSAGES = {
+  AUTH_REQUIRED: "Please sign in again to cancel the active trip.",
+  UNAUTHORIZED: "You do not have access to cancel this trip.",
+  SESSION_MISMATCH: "The active trip could not be cancelled. Please try again.",
+  UNAVAILABLE: "The trip could not be cancelled. Please try again.",
+};
 
 function mapDestinationsForMap(itinerary) {
   if (!itinerary?.destinations) return [];
@@ -127,14 +64,23 @@ function mapStartForMap(itinerary) {
   };
 }
 
-function firstLiveDestinationFromSegments(segments) {
-  const firstSegment = firstRouteableSegment(segments);
-  if (!firstSegment) return null;
+function liveDestinationFromSegment(segments, segmentIndex) {
+  const segment = Array.isArray(segments) ? segments[segmentIndex] : null;
+  if (segment?.routeable) {
+    return {
+      destinationId: segment.destination.id,
+      name: segment.destination.name,
+      latitude: segment.destination.latitude,
+      longitude: segment.destination.longitude,
+    };
+  }
+  const first = firstRouteableSegment(segments);
+  if (!first) return null;
   return {
-    destinationId: firstSegment.destination.id,
-    name: firstSegment.destination.name,
-    latitude: firstSegment.destination.latitude,
-    longitude: firstSegment.destination.longitude,
+    destinationId: first.destination.id,
+    name: first.destination.name,
+    latitude: first.destination.latitude,
+    longitude: first.destination.longitude,
   };
 }
 
@@ -163,23 +109,21 @@ export default function GreenRecommendationPage({
   itineraryId = null,
   itinerary = null,
 }) {
-  const [view, setView] = useState("recommendation");
-  const [selectedMode, setSelectedMode] = useState(RECOMMENDED_MODE);
-  const [navIndex, setNavIndex] = useState(0);
+  const [flowScreen, setFlowScreen] = useState(TRIP_FLOW.OVERVIEW);
+  const [selectedMode, setSelectedMode] = useState(null);
   const [paused, setPaused] = useState(false);
   const [activeItineraryId, setActiveItineraryId] = useState(itineraryId);
-
   const [tripAction, setTripAction] = useState({
     status: "idle",
     error: null,
   });
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [originStamp, setOriginStamp] = useState(null);
 
   if (activeItineraryId !== itineraryId) {
     setActiveItineraryId(itineraryId);
-    setView("recommendation");
-    setSelectedMode(RECOMMENDED_MODE);
-    setNavIndex(0);
+    setFlowScreen(TRIP_FLOW.OVERVIEW);
+    setSelectedMode(null);
     setPaused(false);
     setTripAction({ status: "idle", error: null });
     setConfirmingCancel(false);
@@ -194,13 +138,17 @@ export default function GreenRecommendationPage({
     tripSession.status === ACTIVE_TRIP_STATUS.ACTIVE_CURRENT;
   const otherTripActive =
     tripSession.status === ACTIVE_TRIP_STATUS.ACTIVE_DIFFERENT;
+  const noTrip =
+    tripSession.status === ACTIVE_TRIP_STATUS.NONE && !requestedId;
   const contextKey =
     context.status === ITINERARY_LOAD_STATUS.LOADING
       ? `loading:${requestedId}`
       : context.itinerary?.itineraryId || requestedId || context.source;
   const routingContextKey = `${contextKey}:${thisTripActive ? "active" : "inactive"}`;
-  const firstLiveDestination = firstLiveDestinationFromSegments(
-    context.segments
+  const currentSegmentIndex = tripSession.currentSegmentIndex || 0;
+  const firstLiveDestination = liveDestinationFromSegment(
+    context.segments,
+    currentSegmentIndex
   );
 
   const {
@@ -213,31 +161,32 @@ export default function GreenRecommendationPage({
     itineraryKey: contextKey,
   });
 
-  const selectedTravelMode =
-    OPTION_TO_TRAVEL_MODE[selectedMode] || OPTION_TO_TRAVEL_MODE[RECOMMENDED_MODE];
+  const originKey = `${location.latitude},${location.longitude},${location.source}`;
+  if (originStamp !== originKey) {
+    const hadOrigin = originStamp !== null;
+    setOriginStamp(originKey);
+    if (hadOrigin) {
+      setSelectedMode(null);
+      if (flowScreen !== TRIP_FLOW.OVERVIEW) {
+        setFlowScreen(TRIP_FLOW.OVERVIEW);
+      }
+    }
+  }
+
+  const selectedTravelMode = selectedMode
+    ? OPTION_TO_TRAVEL_MODE[selectedMode] || null
+    : null;
   const originHasCoords = isRouteableCoordinate(
     location.latitude,
     location.longitude
   );
   const canRequestFirstSegment =
-    (isDemo || thisTripActive) &&
-    (context.status === ITINERARY_LOAD_STATUS.SUCCESS ||
-      context.status === ITINERARY_LOAD_STATUS.DEMO) &&
+    thisTripActive &&
+    !isDemo &&
+    context.status === ITINERARY_LOAD_STATUS.SUCCESS &&
     Boolean(firstLiveDestination) &&
     originHasCoords &&
     !otherTripActive;
-
-  const {
-    status: directRouteStatus,
-    route: directRoute,
-    errorCode: directRouteError,
-    loadRoute: loadSelectedLiveRoute,
-  } = useLiveSelectedRoute({
-    origin: location,
-    destination: firstLiveDestination,
-    travelMode: selectedTravelMode,
-    contextKey: routingContextKey,
-  });
 
   const {
     status: liveComparisonStatus,
@@ -250,95 +199,114 @@ export default function GreenRecommendationPage({
     contextKey: routingContextKey,
   });
 
-  const navigationLive = useMemo(
-    () =>
-      resolveNavigationLiveRoute({
-        selectedTravelMode,
-        comparisonEntry: liveComparisonResults?.[selectedTravelMode] ?? null,
-        comparisonStatus: liveComparisonStatus,
-        directStatus: directRouteStatus,
-        directRoute,
-        directError: directRouteError,
-      }),
-    [
-      selectedTravelMode,
-      liveComparisonResults,
-      liveComparisonStatus,
-      directRouteStatus,
-      directRoute,
-      directRouteError,
-    ]
-  );
+  const selectedEntry = selectedTravelMode
+    ? liveComparisonResults?.[selectedTravelMode]
+    : null;
+  const hasSuccessfulSelection =
+    thisTripActive && selectedEntry?.status === "success" && selectedEntry.route;
+  const visibleComparisonResults = thisTripActive
+    ? liveComparisonResults
+    : null;
+  const navigationLive = useMemo(() => {
+    if (!hasSuccessfulSelection) {
+      return { status: "idle", route: null, errorCode: null, sourceKind: null };
+    }
+    return {
+      status: "success",
+      route: selectedEntry.route,
+      errorCode: null,
+      sourceKind: "comparison",
+    };
+  }, [hasSuccessfulSelection, selectedEntry]);
+
+  if (thisTripActive && flowScreen === TRIP_FLOW.NAV && !hasSuccessfulSelection) {
+    setFlowScreen(
+      liveComparisonStatus === "success" || liveComparisonStatus === "error"
+        ? TRIP_FLOW.COMPARE
+        : TRIP_FLOW.OVERVIEW
+    );
+  } else if (!thisTripActive && flowScreen !== TRIP_FLOW.OVERVIEW) {
+    setFlowScreen(TRIP_FLOW.OVERVIEW);
+  }
 
   const startLocationName =
     location.source === "device"
       ? location.label
       : context.itinerary?.startLocation?.name || location.label;
-
   const stops = mapStops(context.itinerary);
-  const lastIndex = Math.max(stops.length - 1, 0);
-  const isReady =
-    context.status === ITINERARY_LOAD_STATUS.SUCCESS || isDemo;
-  const isLoadError = !isReady && context.status !== ITINERARY_LOAD_STATUS.LOADING;
-  const mapStartLocation = mapStartForMap(context.itinerary) || location;
-  const visibleComparisonStatus = thisTripActive || isDemo
-    ? liveComparisonStatus
-    : "idle";
-  const visibleComparisonResults = thisTripActive || isDemo
-    ? liveComparisonResults
-    : null;
-  const visibleComparisonError = thisTripActive || isDemo
-    ? liveComparisonError
-    : null;
-  const hasSuccessfulSelectedRoute =
-    visibleComparisonResults?.[selectedTravelMode]?.status === "success";
-  const canOpenCompare = isDemo || thisTripActive;
-  const canOpenNavigation = isDemo
-    ? true
-    : thisTripActive && hasSuccessfulSelectedRoute;
-  const visibleNavigation = thisTripActive || isDemo
-    ? navigationLive
+  const isReady = context.status === ITINERARY_LOAD_STATUS.SUCCESS;
+  const isLoadError =
+    Boolean(requestedId) &&
+    !isReady &&
+    context.status !== ITINERARY_LOAD_STATUS.LOADING;
+  const mapStartLocation = mapStartForMap(context.itinerary);
+  const totalSegments =
+    tripSession.session?.totalSegments ||
+    context.segments.length ||
+    1;
+  const selectedRoute = hasSuccessfulSelection ? selectedEntry.route : null;
+  const firstSegmentDistance = selectedRoute
+    ? {
+        label: "Selected first-segment distance",
+        value: formatMetersAsKilometres(selectedRoute.distanceMeters),
+      }
     : {
-        status: "idle",
-        route: null,
-        errorCode: null,
-        sourceKind: null,
+        label: "First-segment distance",
+        value: "Not calculated yet",
+      };
+  const firstSegmentEta = selectedRoute
+    ? {
+        label: "Selected first-segment ETA",
+        value: formatSecondsAsMinutes(selectedRoute.durationSeconds),
+      }
+    : {
+        label: "First-segment ETA",
+        value: "Not calculated yet",
       };
 
-  if (!isDemo && !canOpenCompare && view !== "recommendation") {
-    setView("recommendation");
-  } else if (
-    !isDemo &&
-    canOpenCompare &&
-    !canOpenNavigation &&
-    view === "navigation"
-  ) {
-    setView("compare");
+  function goDisabledReason() {
+    if (!originHasCoords) return "This segment needs a usable origin before GO.";
+    if (!firstLiveDestination) {
+      return "This itinerary does not yet have a routeable next destination.";
+    }
+    return null;
   }
 
-  function showRecommendation() {
-    setView("recommendation");
+  async function handleGo() {
+    if (!canRequestFirstSegment) return;
+    if (liveComparisonStatus === "loading") return;
+    if (
+      liveComparisonStatus === "success" ||
+      liveComparisonStatus === "error"
+    ) {
+      setFlowScreen(TRIP_FLOW.COMPARE);
+      return;
+    }
+    setFlowScreen(TRIP_FLOW.LOADING);
+    await loadLiveTransportComparison();
+    setFlowScreen((screen) =>
+      screen === TRIP_FLOW.LOADING ? TRIP_FLOW.COMPARE : screen
+    );
   }
 
-  function showCompare() {
-    if (!canOpenCompare) return;
-    setView("compare");
+  async function handleRefreshComparison() {
+    if (!canRequestFirstSegment) return;
+    if (liveComparisonStatus === "loading") return;
+    setSelectedMode(null);
+    setFlowScreen(TRIP_FLOW.LOADING);
+    await loadLiveTransportComparison();
+    setFlowScreen((screen) =>
+      screen === TRIP_FLOW.LOADING ? TRIP_FLOW.COMPARE : screen
+    );
   }
 
-  function showNavigation() {
-    if (!canOpenNavigation) return;
-    setView("navigation");
+  function handleBackToOverview() {
+    setFlowScreen(TRIP_FLOW.OVERVIEW);
   }
 
-  function requestView(next) {
-    if (next === "recommendation") showRecommendation();
-    else if (next === "compare") showCompare();
-    else if (next === "navigation") showNavigation();
-  }
-
-  function handleNextDestination() {
-    if (!thisTripActive || paused || navIndex >= lastIndex) return;
-    setNavIndex((index) => Math.min(index + 1, lastIndex));
+  function handleStartNavigation() {
+    if (!hasSuccessfulSelection) return;
+    setFlowScreen(TRIP_FLOW.NAV);
   }
 
   async function handleStartTrip() {
@@ -347,7 +315,7 @@ export default function GreenRecommendationPage({
     try {
       await startTripSession(requestedId);
       setTripAction({ status: "idle", error: null });
-      setView("recommendation");
+      setFlowScreen(TRIP_FLOW.OVERVIEW);
       setConfirmingCancel(false);
     } catch (error) {
       setTripAction({
@@ -363,9 +331,8 @@ export default function GreenRecommendationPage({
       await cancelActiveTripSession();
       setConfirmingCancel(false);
       setTripAction({ status: "idle", error: null });
-      setView("recommendation");
-      setSelectedMode(RECOMMENDED_MODE);
-      setNavIndex(0);
+      setFlowScreen(TRIP_FLOW.OVERVIEW);
+      setSelectedMode(null);
       setPaused(false);
     } catch (error) {
       setTripAction({
@@ -381,33 +348,18 @@ export default function GreenRecommendationPage({
     }
   }
 
+  const tripChecking = tripSession.status === ACTIVE_TRIP_STATUS.LOADING;
+  const itineraryLoading =
+    Boolean(requestedId) && context.status === ITINERARY_LOAD_STATUS.LOADING;
+
   return (
     <Layout active="recommendations" onNavigate={onNavigate}>
       <div className="m2-page">
-        <header className="m2-header">
-          <div className="m2-title-row">
-            <h1 className="m2-title">AI Green Recommendation</h1>
-            <span
-              className={
-                isDemo
-                  ? "m2-badge m2-badge--demo"
-                  : isReady
-                    ? "m2-badge"
-                    : "m2-badge m2-badge--demo"
-              }
-            >
-              {isDemo
-                ? "Demonstration itinerary"
-                : isReady
-                  ? "Module 1 itinerary"
-                  : "Saved itinerary"}
-            </span>
-          </div>
-        </header>
-
-        {context.status === ITINERARY_LOAD_STATUS.LOADING ? (
+        {itineraryLoading || tripChecking ? (
           <p className="m2-status m2-status--loading" role="status">
-            {context.message}
+            {itineraryLoading
+              ? context.message
+              : "Checking for an active trip…"}
           </p>
         ) : null}
 
@@ -415,199 +367,154 @@ export default function GreenRecommendationPage({
           <article className="m2-card" role="alert">
             <h3>Itinerary unavailable</h3>
             <p className="m2-status m2-status--error">{context.message}</p>
-            <p className="m2-muted" style={{ marginTop: 12 }}>
-              Demonstration destinations were not added.
-            </p>
           </article>
         ) : null}
 
-        {isReady ? (
+        {!itineraryLoading && !tripChecking && noTrip ? (
+          <NoActiveTrip onBrowseItineraries={() => onNavigate?.("/itinerary")} />
+        ) : null}
+
+        {!itineraryLoading &&
+        !tripChecking &&
+        !isLoadError &&
+        (otherTripActive || (isDemo && tripSession.status === ACTIVE_TRIP_STATUS.ACTIVE_DIFFERENT)) ? (
+          <TripActivationPanel
+            isDemo={false}
+            tripStatus={ACTIVE_TRIP_STATUS.ACTIVE_DIFFERENT}
+            lock={tripSession.lock}
+            lockWarning={tripSession.warning}
+            actionStatus={tripAction.status}
+            actionError={tripAction.error}
+            onResumeActiveTrip={handleResumeActiveTrip}
+          />
+        ) : null}
+
+        {!itineraryLoading &&
+        !tripChecking &&
+        isReady &&
+        !thisTripActive &&
+        !otherTripActive ? (
           <>
-            <p className="m2-notice" role="note">
-              {isDemo
-                ? "Demonstration itinerary is shown because no Module 1 itinerary is selected."
-                : "This itinerary was loaded from Module 1. Destinations stay in the saved order and are not mixed with demonstration stops."}
-            </p>
+            <TripActivationPanel
+              isDemo={false}
+              tripStatus={tripSession.status}
+              lock={tripSession.lock}
+              lockWarning={tripSession.warning}
+              actionStatus={tripAction.status}
+              actionError={tripAction.error}
+              confirmingCancel={confirmingCancel}
+              onStart={handleStartTrip}
+              onResumeActiveTrip={handleResumeActiveTrip}
+              onRequestCancel={() => setConfirmingCancel(true)}
+              onConfirmCancel={handleConfirmCancel}
+              onKeepTrip={() => setConfirmingCancel(false)}
+            />
+            <SavedItineraryPreview itinerary={context.itinerary} />
+          </>
+        ) : null}
 
-            <div className="m2-tabs" role="tablist" aria-label="Module 2 views">
-              {TABS.map((tab) => {
-                const tabEnabled =
-                  tab.id === "recommendation" ||
-                  (tab.id === "compare" && canOpenCompare) ||
-                  (tab.id === "navigation" && canOpenNavigation);
-                const tabHint =
-                  tab.id === "recommendation" || tabEnabled
-                    ? null
-                    : otherTripActive
-                      ? "Another trip is currently active"
-                      : !isDemo && !thisTripActive
-                        ? "Start this trip first"
-                        : tab.id === "navigation"
-                          ? "Select a transport option first"
-                          : "Start this trip first";
-                return (
-                  <div key={tab.id} className="m2-tab-item">
-                    <button
-                      type="button"
-                      role="tab"
-                      id={`m2-tab-${tab.id}`}
-                      aria-selected={view === tab.id}
-                      aria-controls={`m2-panel-${tab.id}`}
-                      aria-disabled={!tabEnabled}
-                      className="m2-tab"
-                      disabled={!tabEnabled}
-                      onClick={() => requestView(tab.id)}
-                    >
-                      {tab.label}
-                    </button>
-                    {tabHint ? (
-                      <span className="m2-tab-hint">{tabHint}</span>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
+        {thisTripActive && isReady ? (
+          <>
+            <TripFlowStepper screen={flowScreen} />
 
-            <div
-              id={`m2-panel-${view}`}
-              role="tabpanel"
-              aria-labelledby={`m2-tab-${view}`}
-            >
-              {view === "recommendation" ? (
-                <>
-                  <TripActivationPanel
-                    isDemo={isDemo}
-                    tripStatus={tripSession.status}
-                    lock={tripSession.lock}
-                    lockWarning={tripSession.warning}
-                    actionStatus={tripAction.status}
-                    actionError={tripAction.error}
-                    confirmingCancel={confirmingCancel}
-                    onStart={handleStartTrip}
-                    onResumeNavigation={showCompare}
-                    onResumeActiveTrip={handleResumeActiveTrip}
-                    onRequestCancel={() => setConfirmingCancel(true)}
-                    onConfirmCancel={handleConfirmCancel}
-                    onKeepTrip={() => setConfirmingCancel(false)}
-                  />
-                  <CurrentLocationCard
-                    location={location}
-                    status={locationStatus}
-                    onRequestLocation={requestCurrentLocation}
-                    onUseDemoLocation={useDemoLocation}
-                    resetLabel={isDemo ? "Use Demo Location" : "Use Saved Start"}
-                  />
-                  <ItinerarySummary
-                    itinerary={context.itinerary}
-                    recommendation={mockGreenRecommendation}
-                    startLocationName={startLocationName}
-                    source={context.source}
-                    issues={context.issues}
-                    routeableSegmentCount={context.routeableSegmentCount}
-                    compareEnabled={canOpenCompare}
-                    previewEnabled={canOpenNavigation}
-                    flowBlockedReason={
-                      !isDemo && !thisTripActive
-                        ? "Start this trip first"
-                        : !isDemo && thisTripActive && !canOpenNavigation
-                          ? "Select a transport option first"
-                          : null
-                    }
-                    onCompare={showCompare}
-                    onPreview={showNavigation}
-                  />
-                  <div style={{ marginTop: 16 }}>
-                    <RouteInformationPanel
-                      segments={
-                        isDemo
-                          ? mockGreenRecommendation.routeSegments
-                          : context.segments
+            {flowScreen === TRIP_FLOW.OVERVIEW ? (
+              <ActiveTripOverview
+                itinerary={context.itinerary}
+                originName={startLocationName}
+                originIsDevice={location.source === "device"}
+                nextDestinationName={
+                  firstLiveDestination?.name || "Next destination unavailable"
+                }
+                segmentNumber={currentSegmentIndex + 1}
+                totalSegments={totalSegments}
+                currentStopIndex={currentSegmentIndex}
+                firstSegmentDistance={firstSegmentDistance}
+                firstSegmentEta={firstSegmentEta}
+                locationStatus={locationStatus}
+                onUseCurrentLocation={requestCurrentLocation}
+                onUseSavedStart={useDemoLocation}
+                locationLoading={locationStatus === "loading"}
+                startLocation={mapStartLocation}
+                destinations={mapDestinationsForMap(context.itinerary)}
+                confirmingCancel={confirmingCancel}
+                cancelError={CANCEL_MESSAGES[tripAction.error] || null}
+                isCancelling={tripAction.status === "cancelling"}
+                onGo={handleGo}
+                goDisabled={!canRequestFirstSegment}
+                goDisabledReason={goDisabledReason()}
+                onRequestCancel={() => setConfirmingCancel(true)}
+                onConfirmCancel={handleConfirmCancel}
+                onKeepTrip={() => setConfirmingCancel(false)}
+              />
+            ) : null}
+
+            {flowScreen === TRIP_FLOW.LOADING ? (
+              <ComparisonLoadingScreen
+                originName={startLocationName}
+                destinationName={
+                  firstLiveDestination?.name || "Next destination"
+                }
+              />
+            ) : null}
+
+            {flowScreen === TRIP_FLOW.COMPARE ? (
+              <TransportationComparison
+                options={mockGreenRecommendation.transportationOptions}
+                selectedMode={selectedMode}
+                onSelect={setSelectedMode}
+                onBack={handleBackToOverview}
+                onStartNavigation={handleStartNavigation}
+                liveOriginName={startLocationName}
+                liveDestinationName={
+                  firstLiveDestination?.name || "Next destination"
+                }
+                liveComparisonStatus={liveComparisonStatus}
+                liveComparisonError={liveComparisonError}
+                liveComparisonResults={visibleComparisonResults}
+                onLoadComparison={
+                  canRequestFirstSegment ? handleRefreshComparison : undefined
+                }
+                canStartNavigation={hasSuccessfulSelection}
+              />
+            ) : null}
+
+            {flowScreen === TRIP_FLOW.NAV ? (
+              <NavigationPreview
+                stops={stops}
+                segments={context.segments}
+                startLocation={
+                  location.source === "device"
+                    ? {
+                        latitude: location.latitude,
+                        longitude: location.longitude,
+                        label: location.label,
                       }
-                      structural={!isDemo}
-                    />
-                  </div>
-                </>
-              ) : null}
-
-              {view === "compare" ? (
-                <TransportationComparison
-                  options={mockGreenRecommendation.transportationOptions}
-                  selectedMode={selectedMode}
-                  onSelect={setSelectedMode}
-                  onUseRecommended={(mode) =>
-                    setSelectedMode(mode || RECOMMENDED_MODE)
-                  }
-                  onBack={showRecommendation}
-                  liveOriginName={startLocationName}
-                  liveDestinationName={
-                    firstLiveDestination?.name || "First destination"
-                  }
-                  liveComparisonStatus={visibleComparisonStatus}
-                  liveComparisonError={visibleComparisonError}
-                  liveComparisonResults={visibleComparisonResults}
-                  blockedMessage={
-                    otherTripActive
-                      ? "Live comparison is unavailable while another itinerary has an active trip."
-                      : !thisTripActive && !isDemo
-                        ? "Start this trip first"
-                        : null
-                  }
-                  onLoadComparison={
-                    canRequestFirstSegment
-                      ? loadLiveTransportComparison
-                      : undefined
-                  }
-                />
-              ) : null}
-
-              {view === "navigation" ? (
-                <NavigationPreview
-                  stops={stops}
-                  segments={
-                    isDemo
-                      ? mockGreenRecommendation.routeSegments
-                      : context.segments
-                  }
-                  startLocation={mapStartLocation}
-                  destinations={mapDestinationsForMap(context.itinerary)}
-                  currentIndex={navIndex}
-                  paused={paused}
-                  onPause={() => {
-                    if (thisTripActive) setPaused(true);
-                  }}
-                  onResume={() => {
-                    if (thisTripActive) setPaused(false);
-                  }}
-                  onNext={handleNextDestination}
-                  onBack={showRecommendation}
-                  liveOriginName={startLocationName}
-                  liveDestinationName={
-                    firstLiveDestination?.name || "First destination"
-                  }
-                  selectedTravelMode={selectedTravelMode}
-                  liveRouteStatus={visibleNavigation.status}
-                  liveRoute={visibleNavigation.route}
-                  liveRouteError={visibleNavigation.errorCode}
-                  liveRouteSource={visibleNavigation.sourceKind}
-                  markerSource={isDemo ? "demo" : "saved"}
-                  progressControlsEnabled={thisTripActive}
-                  progressDisabledReason={
-                    thisTripActive
-                      ? null
-                      : otherTripActive
-                        ? "Navigation controls stay on the active itinerary. Resume that trip or cancel it first."
-                        : "Start this trip to use pause, resume, and next-destination controls."
-                  }
-                  onLoadLiveRoute={
-                    !canRequestFirstSegment ||
-                    visibleNavigation.sourceKind === "comparison" ||
-                    visibleComparisonStatus === "loading"
-                      ? undefined
-                      : loadSelectedLiveRoute
-                  }
-                />
-              ) : null}
-            </div>
+                    : mapStartLocation || location
+                }
+                destinations={mapDestinationsForMap(context.itinerary)}
+                currentIndex={currentSegmentIndex}
+                paused={paused}
+                onPause={() => setPaused(true)}
+                onResume={() => setPaused(false)}
+                onNext={() => {}}
+                onBack={() => setFlowScreen(TRIP_FLOW.COMPARE)}
+                liveOriginName={startLocationName}
+                liveDestinationName={
+                  firstLiveDestination?.name || "Next destination"
+                }
+                selectedTravelMode={selectedTravelMode || "TRANSIT"}
+                liveRouteStatus={navigationLive.status}
+                liveRoute={navigationLive.route}
+                liveRouteError={navigationLive.errorCode}
+                liveRouteSource={navigationLive.sourceKind}
+                markerSource="saved"
+                progressControlsEnabled
+                progressDisabledReason="Segment completion is not available yet."
+                allowNextDestination={false}
+                backLabel="Back to transport options"
+                useSessionProgressLabels
+              />
+            ) : null}
           </>
         ) : null}
       </div>
