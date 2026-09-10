@@ -16,7 +16,35 @@ import {
   writeBatch,
 } from "firebase/firestore";
 
-import { db } from "./config";
+import { db, auth } from "./config";
+
+
+function getLoggedInUser() {
+  return new Promise((resolve, reject) => {
+    if (auth.currentUser) {
+      resolve(auth.currentUser);
+      return;
+    }
+
+    let unsubscribe;
+
+    unsubscribe = auth.onAuthStateChanged(
+      (user) => {
+        unsubscribe?.();
+
+        if (user) {
+          resolve(user);
+        } else {
+          reject(new Error("No user is currently logged in."));
+        }
+      },
+      (error) => {
+        unsubscribe?.();
+        reject(error);
+      }
+    );
+  });
+}
 
 function requestId(
   fromUid,
@@ -29,8 +57,13 @@ export async function searchUserByEmail(
   email,
   currentUid
 ) {
+  const user = await getLoggedInUser();
+  const effectiveUid = currentUid || user.uid;
+
   const normalized =
     email.trim().toLowerCase();
+
+  if (!normalized) return null;
 
   const q = query(
     collection(db, "users"),
@@ -42,30 +75,46 @@ export async function searchUserByEmail(
     limit(1)
   );
 
-  const snap =
-    await getDocs(q);
+  try {
+    const snap = await getDocs(q);
 
-  if (snap.empty) return null;
+    if (snap.empty) return null;
 
-  const found =
-    snap.docs[0];
+    const found = snap.docs[0];
 
-  if (found.id === currentUid) {
+    if (found.id === effectiveUid) {
+      return {
+        self: true,
+      };
+    }
+
     return {
-      self: true,
+      uid: found.id,
+      ...found.data(),
     };
-  }
+  } catch (error) {
+    console.error(
+      "Friend email search failed:",
+      error
+    );
 
-  return {
-    uid: found.id,
-    ...found.data(),
-  };
+    if (error?.code === "permission-denied") {
+      throw new Error(
+        "Firestore denied the user search. Make sure you are signed in and the latest Firestore rules are published to the same Firebase project used by this app."
+      );
+    }
+
+    throw error;
+  }
 }
 
 export async function searchUsers(
   queryText,
   currentUid
 ) {
+  const user = await getLoggedInUser();
+  const effectiveUid = currentUid || user.uid;
+
   const trimmed =
     queryText.trim();
 
@@ -78,7 +127,7 @@ export async function searchUsers(
     const emailMatch =
       await searchUserByEmail(
         trimmed,
-        currentUid
+        effectiveUid
       );
 
     if (
@@ -113,7 +162,7 @@ export async function searchUsers(
     await getDocs(q);
 
   snap.docs.forEach((d) => {
-    if (d.id === currentUid)
+    if (d.id === effectiveUid)
       return;
 
     results.set(
@@ -137,7 +186,7 @@ export async function searchUsers(
     fallbackSnap.docs.forEach(
       (d) => {
         if (
-          d.id === currentUid
+          d.id === effectiveUid
         ) {
           return;
         }

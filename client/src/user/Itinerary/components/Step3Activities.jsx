@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from "react";
-import { ArrowRight, Check, Clock } from "lucide-react";
+import { ArrowRight, Check, Clock, Sparkles } from "lucide-react";
 import {
   ACTIVITY_CATEGORIES,
   getActivitiesForMany,
 } from "../constants/itineraryData";
+import { recommendFirstActivity } from "../services/recommendationService";
 import EcoScoreBadge from "./EcoScoreBadge";
 import useMediaQuery, { BREAKPOINTS } from "../hooks/useMediaQuery";
 import * as w from "./wizardStyles";
@@ -14,9 +15,16 @@ import * as w from "./wizardStyles";
  * Multi-select list of eco-friendly things to do at the chosen destination,
  * filtered by category chips. At least one activity is required to continue.
  *
- * Props: draft, onChange(patch), onNext, onBack
+ * Props: draft, onChange(patch), onNext, onBack, orderedDestinations, dayAssignments
  */
-export default function Step3Activities({ draft, onChange, onNext, onBack }) {
+export default function Step3Activities({
+  draft,
+  onChange,
+  onNext,
+  onBack,
+  orderedDestinations = [],
+  dayAssignments = [],
+}) {
   const [category, setCategory] = useState("All");
   const isPhone = useMediaQuery(BREAKPOINTS.phone);
 
@@ -28,6 +36,37 @@ export default function Step3Activities({ draft, onChange, onNext, onBack }) {
     () => getActivitiesForMany(destinationIds),
     [destinationIds]
   );
+
+  // The activities the traveller has actually selected, in their current order.
+  const selectedActivities = useMemo(
+    () => draft.activityIds.map((id) => all.find((a) => a.id === id)).filter(Boolean),
+    [draft.activityIds, all]
+  );
+
+  // Module 1 suggestion: which of the SELECTED activities to do first. Purely a
+  // hint — the traveller still selects and orders activities by hand.
+  const firstActivityRec = useMemo(
+    () =>
+      recommendFirstActivity({
+        selectedActivities,
+        orderedDestinations,
+        dayAssignments,
+      }),
+    [selectedActivities, orderedDestinations, dayAssignments]
+  );
+
+  const recIsAlreadyFirst =
+    firstActivityRec && draft.activityIds[0] === firstActivityRec.activityId;
+
+  const makeRecommendedFirst = () => {
+    if (!firstActivityRec) return;
+    onChange({
+      activityIds: [
+        firstActivityRec.activityId,
+        ...draft.activityIds.filter((id) => id !== firstActivityRec.activityId),
+      ],
+    });
+  };
 
   const visible = useMemo(
     () => (category === "All" ? all : all.filter((a) => a.category === category)),
@@ -54,6 +93,46 @@ export default function Step3Activities({ draft, onChange, onNext, onBack }) {
           </p>
         </div>
       </div>
+
+      {selectedActivities.length >= 1 && (
+        <div style={styles.recCard}>
+          <div style={styles.recHead}>
+            <Sparkles size={15} color="#15803d" />
+            <span>Activity Recommendation</span>
+          </div>
+          <p style={styles.recSub}>
+            Suggested: which selected activity to do first
+          </p>
+
+          {firstActivityRec ? (
+            <>
+              <p style={styles.recBody}>
+                Do this first:{" "}
+                <strong>{firstActivityRec.recommendation}</strong>
+              </p>
+              <p style={styles.recReason}>{firstActivityRec.reason}</p>
+              {!recIsAlreadyFirst && (
+                <button
+                  type="button"
+                  onClick={makeRecommendedFirst}
+                  style={styles.recBtn}
+                >
+                  Move to first
+                </button>
+              )}
+              {recIsAlreadyFirst && (
+                <p style={styles.recDone}>
+                  This is already first in your list. You can reorder any time.
+                </p>
+              )}
+            </>
+          ) : (
+            <p style={styles.recBody}>
+              Recommendation unavailable. You can continue manually.
+            </p>
+          )}
+        </div>
+      )}
 
       <div style={{ ...w.card, ...(isPhone ? w.cardPhone : null) }}>
         <div style={{ ...styles.chipRow, ...(isPhone ? styles.chipRowPhone : null) }}>
@@ -231,4 +310,35 @@ const styles = {
   metaItem: { display: "inline-flex", alignItems: "center", gap: 4 },
   metaDot: { color: "#d1d5db" },
   countLine: { fontSize: 13, color: "#6b7280", margin: "16px 0 0" },
+
+  recCard: {
+    background: "#f0fdf4",
+    border: "1px solid #bbf7d0",
+    borderRadius: 14,
+    padding: "16px 18px",
+    marginBottom: 16,
+  },
+  recHead: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    fontSize: 14,
+    fontWeight: 800,
+    color: "#15803d",
+  },
+  recSub: { fontSize: 12.5, color: "#6b7280", margin: "4px 0 0" },
+  recBody: { fontSize: 14, color: "#111827", margin: "12px 0 0" },
+  recReason: { fontSize: 12.5, color: "#4b5563", margin: "6px 0 0", lineHeight: 1.5 },
+  recBtn: {
+    marginTop: 12,
+    background: "#fff",
+    border: "1px solid #86efac",
+    color: "#15803d",
+    borderRadius: 999,
+    padding: "7px 16px",
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  recDone: { fontSize: 12, color: "#6b7280", margin: "10px 0 0", fontStyle: "italic" },
 };

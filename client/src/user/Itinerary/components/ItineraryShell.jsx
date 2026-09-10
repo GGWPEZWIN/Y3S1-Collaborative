@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import useMediaQuery, { BREAKPOINTS } from "../hooks/useMediaQuery";
 
-const USER = { name: "Keshi", ecoScore: 8750 };
+const USER = { name: "Nadia Rumesh", ecoScore: 8750 };
 
 // Same order and routes as the Challenges page sidebar, so the two modules
 // look and navigate identically.
