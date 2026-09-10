@@ -16,6 +16,9 @@ import ChatList from "./user/EcoJourney/chat/ChatList";
 import ChatRoom from "./user/EcoJourney/chat/ChatRoom";
 import GroupInfo from "./user/EcoJourney/chat/GroupInfo";
 
+// FIXED: FriendProfile is inside the friends folder
+import FriendProfile from "./user/EcoJourney/friends/FriendProfile";
+
 import ChallengeTeam from "./user/EcoJourney/pages/ChallengeTeam";
 import ChallengesPage from "./user/Challenges/pages/ChallengesPage";
 import ChallengeDetails from "./user/Challenges/pages/ChallengeDetails";
@@ -42,7 +45,9 @@ import ItineraryDetails from "./user/Itinerary/pages/ItineraryDetails";
 import AdminDashboard from "./admin/AdminDashboard";
 import RequireAdmin from "./admin/RequireAdmin";
 
-/* Routes reachable without a signed-in user. */
+/*
+ * Routes reachable without a signed-in user.
+ */
 const PUBLIC_ROUTES = [
   "/login",
   "/register",
@@ -56,9 +61,11 @@ const PUBLIC_ROUTES = [
 
 function parseHash() {
   const raw = window.location.hash.slice(1) || "/login";
+
   const normalized = raw.startsWith("/") ? raw : `/${raw}`;
 
   const [path, queryString = ""] = normalized.split("?");
+
   const params = new URLSearchParams(queryString);
 
   return {
@@ -73,9 +80,18 @@ function ComingSoon({
   backTo = "/dashboard",
 }) {
   return (
-    <div style={{ padding: 48, textAlign: "center" }}>
+    <div
+      style={{
+        padding: 48,
+        textAlign: "center",
+      }}
+    >
       <h2>{label} is coming soon</h2>
-      <button type="button" onClick={() => onNavigate(backTo)}>
+
+      <button
+        type="button"
+        onClick={() => onNavigate(backTo)}
+      >
         Back
       </button>
     </div>
@@ -84,44 +100,89 @@ function ComingSoon({
 
 export default function App() {
   const [location, setLocation] = useState(parseHash);
+
   const { status } = useAuthUser();
 
-  const { path: route, id: selectedId } = location;
+  const {
+    path: route,
+    id: selectedId,
+  } = location;
 
+  /*
+   * Listen for browser/hash navigation.
+   */
   useEffect(() => {
     const onHashChange = () => {
       setLocation(parseHash());
     };
 
     window.addEventListener("hashchange", onHashChange);
+
     return () => {
       window.removeEventListener("hashchange", onHashChange);
     };
   }, []);
 
+  /*
+   * Application navigation helper.
+   *
+   * Examples:
+   *
+   * navigate("/community");
+   * navigate("/community/chat/room", chatId);
+   * navigate("/community/chat/friend-profile", friendUid);
+   */
   const navigate = useCallback((path, id) => {
     const cleanPath = String(path || "/login").split("?")[0];
+
     const next =
       id !== undefined && id !== null && id !== ""
         ? `${cleanPath}?id=${encodeURIComponent(id)}`
         : cleanPath;
 
     const nextHash = `#${next}`;
+
     if (window.location.hash !== nextHash) {
       window.location.hash = next;
     }
+
     setLocation(parseHash());
   }, []);
 
+  /*
+   * Authentication loading
+   */
   if (status === "loading") {
-    return <div style={{ padding: 48, textAlign: "center" }}>Loading…</div>;
+    return (
+      <div
+        style={{
+          padding: 48,
+          textAlign: "center",
+        }}
+      >
+        Loading…
+      </div>
+    );
   }
 
-  if (status === "signedOut" && !PUBLIC_ROUTES.includes(route)) {
+  /*
+   * Redirect signed-out users away from protected routes.
+   */
+  if (
+    status === "signedOut" &&
+    !PUBLIC_ROUTES.includes(route)
+  ) {
     return <Login onNavigate={navigate} />;
   }
 
+  /*
+   * Application routes
+   */
   switch (route) {
+    // ==================================================
+    // AUTH
+    // ==================================================
+
     case "/login":
       return <Login onNavigate={navigate} />;
 
@@ -131,8 +192,30 @@ export default function App() {
     case "/profile":
       return <Profile onNavigate={navigate} />;
 
+    // ==================================================
+    // HOTEL
+    // ==================================================
+
     case "/hotel/profile":
       return <HotelProfile onNavigate={navigate} />;
+
+    case "/hotel-dashboard":
+    case "/certification":
+      return <HotelDashBoard onNavigate={navigate} />;
+
+    case "/certification/apply":
+      return <CertificationApply onNavigate={navigate} />;
+
+    case "/hotel/partner-dashboard":
+      return (
+        <HotelPartnerDashboard
+          onNavigate={navigate}
+        />
+      );
+
+    // ==================================================
+    // ADMIN
+    // ==================================================
 
     case "/admin-login":
       return <Login onNavigate={navigate} />;
@@ -144,21 +227,23 @@ export default function App() {
         </RequireAdmin>
       );
 
-    case "/hotel-dashboard":
-    case "/certification":
-      return <HotelDashBoard onNavigate={navigate} />;
-
-    case "/certification/apply":
-      return <CertificationApply onNavigate={navigate} />;
-
-    case "/hotel/partner-dashboard":
-      return <HotelPartnerDashboard onNavigate={navigate} />;
+    // ==================================================
+    // MAIN DASHBOARD
+    // ==================================================
 
     case "/dashboard":
       return <MainDashboard onNavigate={navigate} />;
 
+    // ==================================================
+    // COMMUNITY
+    // ==================================================
+
     case "/community":
-      return <CommunityPage onNavigate={navigate} />;
+      return (
+        <CommunityPage
+          onNavigate={navigate}
+        />
+      );
 
     case "/community/history":
       return (
@@ -177,13 +262,37 @@ export default function App() {
       );
 
     case "/community/achievements":
-      return <AchievementsPage onNavigate={navigate} />;
+      return (
+        <AchievementsPage
+          onNavigate={navigate}
+        />
+      );
+
+    // ==================================================
+    // FRIENDS
+    // ==================================================
 
     case "/community/friends":
-      return <Friends onNavigate={navigate} />;
+      return (
+        <Friends
+          onNavigate={navigate}
+        />
+      );
+
+    // ==================================================
+    // CHAT LIST
+    // ==================================================
 
     case "/community/chat":
-      return <ChatList onNavigate={navigate} />;
+      return (
+        <ChatList
+          onNavigate={navigate}
+        />
+      );
+
+    // ==================================================
+    // CHAT ROOM
+    // ==================================================
 
     case "/community/chat/room":
       if (!selectedId) {
@@ -195,7 +304,39 @@ export default function App() {
           />
         );
       }
-      return <ChatRoom chatId={selectedId} onNavigate={navigate} />;
+
+      return (
+        <ChatRoom
+          chatId={selectedId}
+          onNavigate={navigate}
+        />
+      );
+
+    // ==================================================
+    // FRIEND PROFILE FROM CHAT
+    // ==================================================
+
+    case "/community/chat/friend-profile":
+      if (!selectedId) {
+        return (
+          <ComingSoon
+            label="Friend Profile"
+            onNavigate={navigate}
+            backTo="/community/chat"
+          />
+        );
+      }
+
+      return (
+        <FriendProfile
+          friendUid={selectedId}
+          onNavigate={navigate}
+        />
+      );
+
+    // ==================================================
+    // GROUP INFO
+    // ==================================================
 
     case "/community/chat/info":
       if (!selectedId) {
@@ -207,7 +348,17 @@ export default function App() {
           />
         );
       }
-      return <GroupInfo chatId={selectedId} onNavigate={navigate} />;
+
+      return (
+        <GroupInfo
+          chatId={selectedId}
+          onNavigate={navigate}
+        />
+      );
+
+    // ==================================================
+    // REPORTS
+    // ==================================================
 
     case "/community/reports":
       return (
@@ -218,13 +369,34 @@ export default function App() {
       );
 
     case "/community/report":
-      return <EcoReportCard onNavigate={navigate} tripId={selectedId} />;
+      return (
+        <EcoReportCard
+          onNavigate={navigate}
+          tripId={selectedId}
+        />
+      );
+
+    // ==================================================
+    // CHALLENGE TEAM
+    // ==================================================
 
     case "/community/challenges":
-      return <ChallengeTeam onNavigate={navigate} />;
+      return (
+        <ChallengeTeam
+          onNavigate={navigate}
+        />
+      );
+
+    // ==================================================
+    // CHALLENGES
+    // ==================================================
 
     case "/challenges":
-      return <ChallengesPage onNavigate={navigate} />;
+      return (
+        <ChallengesPage
+          onNavigate={navigate}
+        />
+      );
 
     case "/challenges/details":
       return (
@@ -235,13 +407,29 @@ export default function App() {
       );
 
     case "/challenges/leaderboard":
-      return <ChallengeLeaderboard onNavigate={navigate} />;
+      return (
+        <ChallengeLeaderboard
+          onNavigate={navigate}
+        />
+      );
+
+    // ==================================================
+    // ITINERARY
+    // ==================================================
 
     case "/itinerary":
-      return <ItineraryPage onNavigate={navigate} />;
+      return (
+        <ItineraryPage
+          onNavigate={navigate}
+        />
+      );
 
     case "/itinerary/create":
-      return <CreateItinerary onNavigate={navigate} />;
+      return (
+        <CreateItinerary
+          onNavigate={navigate}
+        />
+      );
 
     case "/itinerary/edit":
       return (
@@ -259,6 +447,10 @@ export default function App() {
         />
       );
 
+    // ==================================================
+    // RECOMMENDATIONS
+    // ==================================================
+
     case "/recommendations":
       return (
         <ComingSoon
@@ -267,8 +459,20 @@ export default function App() {
         />
       );
 
+    // ==================================================
+    // WASTE
+    // ==================================================
+
     case "/waste":
-      return <Waste onNavigate={navigate} />;
+      return (
+        <Waste
+          onNavigate={navigate}
+        />
+      );
+
+    // ==================================================
+    // DEFAULT
+    // ==================================================
 
     default:
       return <Login onNavigate={navigate} />;

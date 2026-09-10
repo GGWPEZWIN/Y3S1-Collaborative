@@ -56,6 +56,7 @@ function formatDateSeparator(value) {
 export default function ChatRoom({ chatId, onNavigate }) {
   const { authUser, profile, loading } = useCurrentUser();
   const [chat, setChat] = useState(null);
+  const [otherProfile, setOtherProfile] = useState(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -162,6 +163,55 @@ export default function ChatRoom({ chatId, onNavigate }) {
       unsubscribe();
     };
   }, [chatId]);
+
+
+  /* =========================================================
+     LIVE DIRECT-CHAT FRIEND PROFILE
+
+     chat.memberNames/memberPhotos are cached values. Always use
+     users/{uid} as the source of truth for a direct chat so a
+     renamed friend or changed profile picture appears immediately.
+  ========================================================= */
+
+  useEffect(() => {
+    if (!chat || chat.type === "group" || !authUser?.uid) {
+      setOtherProfile(null);
+      return undefined;
+    }
+
+    const members = Array.isArray(chat.members) ? chat.members : [];
+    const otherUid = members.find((uid) => uid !== authUser.uid);
+
+    if (!otherUid) {
+      setOtherProfile(null);
+      return undefined;
+    }
+
+    const userRef = doc(db, "users", otherUid);
+
+    const unsubscribe = onSnapshot(
+      userRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          setOtherProfile(null);
+          return;
+        }
+
+        setOtherProfile({
+          uid: otherUid,
+          ...snapshot.data(),
+        });
+      },
+      (error) => {
+        console.error(
+          "ChatRoom: failed to load live friend profile:",
+          error
+        );
+      }
+    );
+
+    return () => unsubscribe?.();
+  }, [chat, authUser?.uid]);
 
 
   /* =========================================================
@@ -602,7 +652,18 @@ export default function ChatRoom({ chatId, onNavigate }) {
 
   const title = isGroup
     ? chat.name || "Group Chat"
-    : chat.memberNames?.[otherUid] || "Chat";
+    : otherProfile?.name ||
+      otherProfile?.displayName ||
+      chat.memberNames?.[otherUid] ||
+      "Chat";
+
+  const otherProfilePhoto = isGroup
+    ? ""
+    : otherProfile?.profile_photo_url ||
+      otherProfile?.profilePhotoUrl ||
+      otherProfile?.photoURL ||
+      chat.memberPhotos?.[otherUid] ||
+      "";
 
   return (
     <div style={styles.page}>
@@ -643,9 +704,24 @@ export default function ChatRoom({ chatId, onNavigate }) {
                   : "Open friend profile"
               }
             >
-              <div style={isGroup ? styles.avatarGroup : styles.avatarFallback}>
-                {isGroup ? <Users size={16} /> : (title || "?").charAt(0).toUpperCase()}
-              </div>
+              {isGroup ? (
+                <div style={styles.avatarGroup}>
+                  <Users size={16} />
+                </div>
+              ) : otherProfilePhoto ? (
+                <img
+                  src={otherProfilePhoto}
+                  alt={title || "Friend"}
+                  style={styles.headerAvatarImage}
+                  onError={(event) => {
+                    event.currentTarget.style.display = "none";
+                  }}
+                />
+              ) : (
+                <div style={styles.avatarFallback}>
+                  {(title || "?").charAt(0).toUpperCase()}
+                </div>
+              )}
               <div>
                 <div style={styles.headerTitle}>
                   {title || "Unnamed Group"}
@@ -1153,6 +1229,14 @@ const styles = {
     display: "flex",
     color: "#374151",
     padding: 0,
+  },
+  headerAvatarImage: {
+    width: 38,
+    height: 38,
+    borderRadius: "50%",
+    objectFit: "cover",
+    flexShrink: 0,
+    display: "block",
   },
   avatarFallback: {
     width: 38,

@@ -246,7 +246,7 @@ export default function FriendProfile({ friendUid, onNavigate }) {
     if (!authUser?.uid || !friend?.uid) return;
 
     const confirmed = window.confirm(
-      `Delete ${displayName} from your friends? Your GreenTrip account will not be deleted.`
+      `You sure delete ${displayName} from your friends?`
     );
 
     if (!confirmed) return;

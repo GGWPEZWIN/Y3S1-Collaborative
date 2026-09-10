@@ -1618,14 +1618,20 @@ export default function ChallengeTeam({
         {invites.length > 0 && (
           <div style={styles.inviteBox}>
             <div style={styles.inviteHeader}>
-              <div>
-                <div style={styles.sectionTitle}>
-                  Challenge Invitations
+              <div style={styles.inviteHeaderLeft}>
+                <div style={styles.inviteHeaderIcon}>
+                  <Users size={19} />
                 </div>
 
-                <div style={styles.sectionSubtitle}>
-                  Invitations from friends expire
-                  after 12 hours.
+                <div style={{ minWidth: 0 }}>
+                  <div style={styles.sectionTitle}>
+                    Challenge Invitations
+                  </div>
+
+                  <div style={styles.sectionSubtitle}>
+                    You have {invites.length} pending invitation
+                    {invites.length !== 1 ? "s" : ""} to join a challenge team.
+                  </div>
                 </div>
               </div>
 
@@ -1634,55 +1640,159 @@ export default function ChallengeTeam({
               </span>
             </div>
 
-            {invites.map((invite) => (
-              <div
-                key={invite.id}
-                style={styles.inviteRow}
-              >
-                <div style={styles.inviteInfo}>
-                  <div style={styles.inviteTeam}>
-                    {invite.teamName}
-                  </div>
+            <div style={styles.inviteList}>
+              {invites.map((invite) => {
+                const inviterName =
+                  invite.fromName || "A friend";
 
+                const initials =
+                  inviterName
+                    .trim()
+                    .split(/\s+/)
+                    .map((part) => part.charAt(0))
+                    .join("")
+                    .slice(0, 2)
+                    .toUpperCase() || "FR";
+
+                const isPartner =
+                  invite.challengeMode ===
+                  CHALLENGE_MODE.PARTNER;
+
+                return (
                   <div
-                    style={
-                      styles.inviteChallenge
-                    }
+                    key={invite.id}
+                    style={styles.inviteCard}
                   >
-                    {invite.fromName ||
-                      "A friend"}{" "}
-                    invited you to{" "}
-                    {invite.challengeTitle}
+                    <div style={styles.inviteCardTop}>
+                      <div style={styles.inviteIdentity}>
+                        <div style={styles.inviteAvatar}>
+                          {initials}
+                        </div>
+
+                        <div style={styles.inviteMain}>
+                          <div style={styles.inviteBadge}>
+                            {isPartner ? (
+                              <UserPlus size={12} />
+                            ) : (
+                              <Users size={12} />
+                            )}
+
+                            {isPartner
+                              ? "Challenge Partner"
+                              : "Challenge Team"}
+                          </div>
+
+                          <div style={styles.inviteTeam}>
+                            {invite.teamName ||
+                              "Challenge Team"}
+                          </div>
+
+                          <div style={styles.inviteChallenge}>
+                            <strong
+                              style={styles.inviteFrom}
+                            >
+                              {inviterName}
+                            </strong>{" "}
+                            invited you to join this challenge.
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      style={
+                        styles.inviteChallengePanel
+                      }
+                    >
+                      <div
+                        style={
+                          styles.inviteChallengeIcon
+                        }
+                      >
+                        <Trophy size={17} />
+                      </div>
+
+                      <div
+                        style={
+                          styles.inviteChallengeInfo
+                        }
+                      >
+                        <span
+                          style={
+                            styles.inviteChallengeLabel
+                          }
+                        >
+                          Challenge
+                        </span>
+
+                        <strong
+                          style={
+                            styles.inviteChallengeTitle
+                          }
+                        >
+                          {invite.challengeTitle ||
+                            "Available Challenge"}
+                        </strong>
+                      </div>
+
+                      <div
+                        style={styles.inviteExpiry}
+                      >
+                        <Clock3 size={14} />
+                        <span>
+                          Expires in 12 hours
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      style={styles.inviteCardFooter}
+                    >
+                      <span
+                        style={styles.inviteHint}
+                      >
+                        {isPartner
+                          ? "Accept to become this user's challenge partner."
+                          : "Accept to become an accepted team member."}
+                      </span>
+
+                      <div
+                        style={styles.inviteActions}
+                      >
+                        <button
+                          type="button"
+                          style={
+                            styles.btnOutlineSmall
+                          }
+                          onClick={() =>
+                            handleDeclineInvite(
+                              invite
+                            )
+                          }
+                        >
+                          Decline
+                        </button>
+
+                        <button
+                          type="button"
+                          style={
+                            styles.btnFilledSmall
+                          }
+                          onClick={() =>
+                            handleAcceptInvite(
+                              invite
+                            )
+                          }
+                        >
+                          <CheckCircle2 size={15} />
+                          Accept & Join
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-
-                <div style={styles.inviteActions}>
-                  <button
-                    type="button"
-                    style={styles.btnFilledSmall}
-                    onClick={() =>
-                      handleAcceptInvite(
-                        invite
-                      )
-                    }
-                  >
-                    Accept
-                  </button>
-
-                  <button
-                    type="button"
-                    style={styles.btnOutlineSmall}
-                    onClick={() =>
-                      handleDeclineInvite(
-                        invite
-                      )
-                    }
-                  >
-                    Decline
-                  </button>
-                </div>
-              </div>
-            ))}
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -2899,59 +3009,218 @@ const styles = {
   },
 
   inviteBox: {
-    background: "#fff",
-    border: "1px solid #dbeafe",
-    borderRadius: 16,
+    background: "linear-gradient(180deg, #f8fbff 0%, #ffffff 100%)",
+    border: "1px solid #dbe4ee",
+    borderRadius: 18,
     padding: 20,
-    marginBottom: 22,
+    marginBottom: 24,
+    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
   },
 
   inviteHeader: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 14,
+    alignItems: "center",
+    gap: 14,
+    marginBottom: 16,
+  },
+
+  inviteHeaderLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    minWidth: 0,
+  },
+
+  inviteHeaderIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    background: "#eaf7ee",
+    color: "#15803d",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
 
   inviteCount: {
-    minWidth: 28,
-    height: 28,
+    minWidth: 30,
+    height: 30,
+    padding: "0 9px",
     borderRadius: 999,
-    background: "#dbeafe",
-    color: "#1d4ed8",
+    background: "#dcfce7",
+    color: "#15803d",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     fontWeight: 800,
+    fontSize: 13,
+    flexShrink: 0,
   },
 
-  inviteRow: {
+  inviteList: {
     display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 16,
-    padding: "14px 0",
-    borderTop: "1px solid #f3f4f6",
+    flexDirection: "column",
+    gap: 12,
   },
 
-  inviteInfo: {
+  inviteCard: {
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 16,
+    padding: 16,
+    boxShadow: "0 2px 8px rgba(15, 23, 42, 0.04)",
+  },
+
+  inviteCardTop: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+
+  inviteIdentity: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    minWidth: 0,
+    width: "100%",
+  },
+
+  inviteAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: "50%",
+    background: "#dcfce7",
+    color: "#15803d",
+    border: "3px solid #f0fdf4",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 14,
+    fontWeight: 800,
+    flexShrink: 0,
+  },
+
+  inviteMain: {
     minWidth: 0,
     flex: 1,
   },
 
-  inviteTeam: {
+  inviteBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    background: "#f0fdf4",
+    border: "1px solid #bbf7d0",
+    color: "#15803d",
+    borderRadius: 999,
+    padding: "4px 9px",
+    fontSize: 11.5,
     fontWeight: 700,
+    marginBottom: 7,
+  },
+
+  inviteTeam: {
+    fontWeight: 800,
     color: "#111827",
+    fontSize: 16,
+    lineHeight: 1.3,
   },
 
   inviteChallenge: {
-    fontSize: 13.5,
+    fontSize: "13px",
     color: "#6b7280",
-    marginTop: 4,
+    marginTop: 5,
+    lineHeight: 1.45,
+  },
+
+  inviteFrom: {
+    color: "#374151",
+  },
+
+  inviteChallengePanel: {
+    display: "flex",
+    alignItems: "center",
+    gap: 11,
+    background: "#f8fafc",
+    border: "1px solid #eef2f7",
+    borderRadius: 12,
+    padding: "11px 12px",
+    marginTop: 14,
+  },
+
+  inviteChallengeIcon: {
+    width: 35,
+    height: 35,
+    borderRadius: 10,
+    background: "#fff7ed",
+    color: "#ea580c",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+
+  inviteChallengeInfo: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+    minWidth: 0,
+    flex: 1,
+  },
+
+  inviteChallengeLabel: {
+    fontSize: 10.5,
+    color: "#9ca3af",
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+  },
+
+  inviteChallengeTitle: {
+    fontSize: 13.5,
+    color: "#111827",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
+  inviteExpiry: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    color: "#92400e",
+    background: "#fffbeb",
+    border: "1px solid #fde68a",
+    borderRadius: 999,
+    padding: "5px 8px",
+    fontSize: 11,
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+  },
+
+  inviteCardFooter: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 14,
+    marginTop: 14,
+    paddingTop: 12,
+    borderTop: "1px solid #f3f4f6",
+  },
+
+  inviteHint: {
+    color: "#9ca3af",
+    fontSize: 11.5,
+    lineHeight: 1.4,
+    flex: 1,
   },
 
   inviteActions: {
     display: "flex",
+    alignItems: "center",
     gap: 8,
     flexShrink: 0,
   },
@@ -2966,19 +3235,27 @@ const styles = {
     borderRadius: 999,
     background: "#16a34a",
     color: "#fff",
-    padding: "8px 14px",
+    padding: "9px 14px",
     fontWeight: 700,
     cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    boxShadow: "0 2px 6px rgba(22, 163, 74, 0.18)",
   },
 
   btnOutlineSmall: {
-    border: "1px solid #e5e7eb",
+    border: "1px solid #d1d5db",
     borderRadius: 999,
     background: "#fff",
     color: "#374151",
-    padding: "8px 14px",
+    padding: "9px 14px",
     fontWeight: 600,
     cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   summaryGrid: {
