@@ -220,31 +220,15 @@ export default function ActiveTripOverview({
       </div>
 
       <article className="m2-card" aria-labelledby="m2-carbon-tracked-title">
-        <h3 id="m2-carbon-tracked-title">Carbon tracked so far</h3>
-        <dl className="m2-stat-row">
-          <div className="m2-stat">
-            <dt>Transportation</dt>
-            <dd>{formatCarbonKg(transportCarbonKg)}</dd>
-            <p className="m2-muted">
-              {transportCarbonEmpty
-                ? "No completed transport segments yet"
-                : "Sum of confirmed completed segments only."}
-            </p>
-          </div>
-          <div className="m2-stat" data-status="pending">
-            <dt>Food waste</dt>
-            <dd>0 kg CO₂e</dd>
-            <p className="m2-muted">Awaiting Waste Module data</p>
-          </div>
-          <div className="m2-stat">
-            <dt>Total tracked</dt>
-            <dd>{formatCarbonKg(transportCarbonKg)}</dd>
-            <p className="m2-muted">
-              Provisional sum of confirmed values only. Food-waste data is
-              pending and is not included.
-            </p>
-          </div>
-        </dl>
+        <h3 id="m2-carbon-tracked-title">Confirmed transportation carbon</h3>
+        {transportCarbonEmpty ? (
+          <p className="m2-muted">No completed transportation segments yet</p>
+        ) : (
+          <>
+            <p className="m2-metric-value">{formatCarbonKg(transportCarbonKg)}</p>
+            <p className="m2-muted">Sum of confirmed completed segments only.</p>
+          </>
+        )}
       </article>
 
       <article className="m2-card m2-map" aria-label="Trip map">

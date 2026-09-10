@@ -94,11 +94,11 @@ export async function submitHotelApplication(formData, elecFiles = {}, waterFile
       reason: fraudReason,
     },
     certificationTier: null,
-    
+
     // Store individual URLs so AdminReview can render all 6 files explicitly
     electricityBillUrl: elecM1Url || null,
     waterBillUrl: waterM1Url || null,
-    
+
     electricityBillM1Url: elecM1Url || null,
     electricityBillM2Url: elecM2Url || null,
     electricityBillM3Url: elecM3Url || null,

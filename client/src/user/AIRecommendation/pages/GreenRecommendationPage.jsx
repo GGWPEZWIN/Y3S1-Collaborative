@@ -3,8 +3,10 @@ import Layout from "../../../shared/components/Layout";
 import {
   cancelActiveTripSession,
   completeCurrentSegment,
+  finishTripSession,
   startTripSession,
 } from "../../../firebase/tripSessionService";
+import { publishEcoReport } from "../../../firebase/ecoReportService";
 import { mockGreenRecommendation } from "../data/mockModule2Data";
 import useActiveTripSession, {
   ACTIVE_TRIP_STATUS,
@@ -13,6 +15,7 @@ import useCurrentLocation from "../hooks/useCurrentLocation";
 import useLiveTransportComparison from "../hooks/useLiveTransportComparison";
 import useNavigationGpsWatch from "../hooks/useNavigationGpsWatch";
 import useRecalculateSelectedRoute from "../hooks/useRecalculateSelectedRoute";
+import useEcoReport, { ECO_REPORT_LOAD } from "../hooks/useEcoReport";
 import useResolvedItinerary from "../hooks/useResolvedItinerary";
 import { ITINERARY_LOAD_STATUS } from "../services/itinerary/resolveItinerary.js";
 import { isRouteableCoordinate } from "../services/itinerary/normalizeItinerary.js";
@@ -33,11 +36,27 @@ import {
   savedOriginForSegment,
 } from "../services/navigation/segmentOrigin.js";
 import { rankGreenRoutes } from "../services/sustainability/greenRouteRanker";
+import {
+  buildCompletedReportView,
+  isModule2Report,
+} from "../services/report/completedReportView.js";
+import { buildCompletionSummary } from "../services/report/completionSummaryView.js";
+import {
+  canBeginFinish,
+  mapFinishError,
+  nextFinishStatus,
+  PUBLISH_ERROR_MESSAGE,
+  RECOMMENDATION_SURFACE,
+  REPORT_LOAD_ERROR_MESSAGE,
+  resolveRecommendationSurface,
+} from "../services/report/finishFlowState.js";
 import { TRIP_FLOW } from "../tripFlow.js";
 import ActiveTripOverview from "../components/ActiveTripOverview";
-import AllDestinationsReached from "../components/AllDestinationsReached";
 import ComparisonLoadingScreen from "../components/ComparisonLoadingScreen";
+import CompletedEcoReport from "../components/CompletedEcoReport";
+import CompletionSummary from "../components/CompletionSummary";
 import DestinationReached from "../components/DestinationReached";
+import FinishingTrip from "../components/FinishingTrip";
 import NavigationPreview from "../components/NavigationPreview";
 import NoActiveTrip from "../components/NoActiveTrip";
 import SavedItineraryPreview from "../components/SavedItineraryPreview";
@@ -142,7 +161,14 @@ export default function GreenRecommendationPage({
   const [selectedRankingScore, setSelectedRankingScore] = useState(null);
   const [completeError, setCompleteError] = useState(null);
   const [completing, setCompleting] = useState(false);
+  const [finishStatus, setFinishStatus] = useState("idle");
+  const [finishError, setFinishError] = useState(null);
+  const [localReport, setLocalReport] = useState(null);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState(null);
   const completingRef = useRef(false);
+  const finishingRef = useRef(false);
+  const publishingRef = useRef(false);
   const streaksRef = useRef(emptyNavigationStreaks());
   const navigationGuardRef = useRef({
     sessionId: "",
@@ -164,19 +190,30 @@ export default function GreenRecommendationPage({
     setIsDeviated(false);
     setSelectedRankingScore(null);
     setCompleteError(null);
+    setFinishStatus("idle");
+    setFinishError(null);
+    setLocalReport(null);
+    setPublishing(false);
+    setPublishError(null);
   }
 
   const context = useResolvedItinerary({ itineraryId, itinerary });
   const requestedId =
     typeof itineraryId === "string" ? itineraryId.trim() : "";
   const tripSession = useActiveTripSession(requestedId || null);
+  const ecoReport = useEcoReport(requestedId || null);
+  useEffect(() => {
+    finishingRef.current = false;
+    publishingRef.current = false;
+  }, [requestedId]);
+  const finishing = finishStatus === "finishing";
+  const mergedReport = localReport || ecoReport.report;
+  const completedReportView = buildCompletedReportView(mergedReport, requestedId);
   const isDemo = context.status === ITINERARY_LOAD_STATUS.DEMO;
   const thisTripActive =
     tripSession.status === ACTIVE_TRIP_STATUS.ACTIVE_CURRENT;
   const otherTripActive =
     tripSession.status === ACTIVE_TRIP_STATUS.ACTIVE_DIFFERENT;
-  const noTrip =
-    tripSession.status === ACTIVE_TRIP_STATUS.NONE && !requestedId;
   const contextKey =
     context.status === ITINERARY_LOAD_STATUS.LOADING
       ? `loading:${requestedId}`
@@ -216,6 +253,7 @@ export default function GreenRecommendationPage({
   const gpsWatchEnabled =
     thisTripActive &&
     !allDestinationsReached &&
+    !finishing &&
     (flowScreen === TRIP_FLOW.NAV ||
       flowScreen === TRIP_FLOW.DESTINATION_REACHED);
   const {
@@ -237,8 +275,9 @@ export default function GreenRecommendationPage({
       setIsDeviated(false);
       setSelectedRankingScore(null);
       if (
+        !allDestinationsReached &&
+        !finishing &&
         flowScreen !== TRIP_FLOW.OVERVIEW &&
-        flowScreen !== TRIP_FLOW.ALL_REACHED &&
         flowScreen !== TRIP_FLOW.DESTINATION_REACHED
       ) {
         setFlowScreen(TRIP_FLOW.OVERVIEW);
@@ -333,10 +372,9 @@ export default function GreenRecommendationPage({
     allDestinationsReached,
   ]);
 
-  if (thisTripActive && allDestinationsReached && flowScreen !== TRIP_FLOW.ALL_REACHED) {
-    setFlowScreen(TRIP_FLOW.ALL_REACHED);
-  } else if (
+  if (
     thisTripActive &&
+    !allDestinationsReached &&
     flowScreen === TRIP_FLOW.NAV &&
     !hasSuccessfulSelection &&
     !navRoute
@@ -346,8 +384,6 @@ export default function GreenRecommendationPage({
         ? TRIP_FLOW.COMPARE
         : TRIP_FLOW.OVERVIEW
     );
-  } else if (!thisTripActive && flowScreen !== TRIP_FLOW.OVERVIEW) {
-    setFlowScreen(TRIP_FLOW.OVERVIEW);
   }
 
   const startLocationName = effectiveOrigin.label || "Current origin";
@@ -398,6 +434,7 @@ export default function GreenRecommendationPage({
   }
 
   async function handleGo() {
+    if (finishing || allDestinationsReached) return;
     if (!canRequestCurrentSegment) return;
     if (liveComparisonStatus === "loading") return;
     if (
@@ -415,6 +452,7 @@ export default function GreenRecommendationPage({
   }
 
   async function handleRefreshComparison() {
+    if (finishing || allDestinationsReached) return;
     if (!canRequestCurrentSegment) return;
     if (liveComparisonStatus === "loading") return;
     setSelectedMode(null);
@@ -427,6 +465,7 @@ export default function GreenRecommendationPage({
   }
 
   function handleBackToOverview() {
+    if (finishing || allDestinationsReached) return;
     const result = leaveNavigationPreview({
       currentSegmentIndex,
       destination: firstLiveDestination,
@@ -442,6 +481,7 @@ export default function GreenRecommendationPage({
   }
 
   function handleStartNavigation() {
+    if (finishing || allDestinationsReached) return;
     if (!hasSuccessfulSelection) return;
     setNavRoute(selectedEntry.route);
     setIsDeviated(false);
@@ -454,6 +494,7 @@ export default function GreenRecommendationPage({
   }
 
   async function handleRecalculate() {
+    if (finishing || allDestinationsReached) return;
     if (!isValidGpsFix(gpsLastFix) || !firstLiveDestination || !selectedTravelMode) {
       return;
     }
@@ -490,6 +531,7 @@ export default function GreenRecommendationPage({
   }
 
   async function handleCompleteDestination() {
+    if (finishing || allDestinationsReached) return;
     if (completingRef.current || completing) return;
     if (!navRoute || !firstLiveDestination) return;
     completingRef.current = true;
@@ -510,7 +552,9 @@ export default function GreenRecommendationPage({
       setSelectedMode(null);
       resetNavigationState();
       setFlowScreen(
-        result.allDestinationsReached ? TRIP_FLOW.ALL_REACHED : TRIP_FLOW.OVERVIEW
+        result.allDestinationsReached
+          ? TRIP_FLOW.COMPLETION_SUMMARY
+          : TRIP_FLOW.OVERVIEW
       );
     } catch {
       setCompleteError(COMPLETE_ERROR);
@@ -536,6 +580,7 @@ export default function GreenRecommendationPage({
   }
 
   async function handleConfirmCancel() {
+    if (finishing) return;
     setTripAction({ status: "cancelling", error: null });
     try {
       await cancelActiveTripSession();
@@ -560,9 +605,82 @@ export default function GreenRecommendationPage({
     }
   }
 
+  const completionSummary = buildCompletionSummary({
+    itinerary: context.itinerary,
+    session: tripSession.session,
+    lock: tripSession.lock,
+    completions: tripSession.completedSegments,
+    finishing,
+  });
+
   const tripChecking = tripSession.status === ACTIVE_TRIP_STATUS.LOADING;
+  const sessionPending = thisTripActive && !tripSession.session;
   const itineraryLoading =
     Boolean(requestedId) && context.status === ITINERARY_LOAD_STATUS.LOADING;
+  const reportLoading =
+    Boolean(requestedId) && ecoReport.status === ECO_REPORT_LOAD.LOADING;
+  const surface = resolveRecommendationSurface({
+    finishing,
+    hasCompletedReport: Boolean(completedReportView),
+    tripStatus: tripSession.status,
+    allDestinationsReached,
+    hasItineraryId: Boolean(requestedId),
+    itineraryReady: isReady,
+    itineraryUnavailable: isLoadError,
+    tripLoading: tripChecking || sessionPending,
+    reportLoading,
+    reportUnauthorized: ecoReport.status === ECO_REPORT_LOAD.UNAUTHORIZED,
+    reportFailed: ecoReport.status === ECO_REPORT_LOAD.ERROR,
+  });
+
+  async function handleFinishTrip() {
+    if (!canBeginFinish(finishStatus) || finishingRef.current) return;
+    if (!completionSummary.canFinish || !sessionId) return;
+    finishingRef.current = true;
+    setFinishStatus(nextFinishStatus(finishStatus, "start"));
+    setFinishError(null);
+    setConfirmingCancel(false);
+    try {
+      const result = await finishTripSession(sessionId);
+      if (!isModule2Report(result?.report)) {
+        setFinishError(mapFinishError("REPORT_INCONSISTENT"));
+        setFinishStatus(nextFinishStatus("finishing", "fail"));
+        finishingRef.current = false;
+        return;
+      }
+      setLocalReport(result.report);
+      setFinishStatus(nextFinishStatus("finishing", "success"));
+      setSelectedMode(null);
+      resetNavigationState();
+      setFlowScreen(TRIP_FLOW.COMPLETED_REPORT);
+    } catch (error) {
+      setFinishError(mapFinishError(error?.code));
+      setFinishStatus(nextFinishStatus("finishing", "fail"));
+      finishingRef.current = false;
+    }
+  }
+
+  async function handlePublishReport() {
+    if (publishingRef.current || !requestedId) return;
+    if (completedReportView?.isPublic) return;
+    publishingRef.current = true;
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const updated = await publishEcoReport(requestedId);
+      setLocalReport((current) => ({
+        ...(current || mergedReport),
+        ...updated,
+        visibility: "public",
+      }));
+    } catch {
+      setPublishError(PUBLISH_ERROR_MESSAGE);
+    } finally {
+      publishingRef.current = false;
+      setPublishing(false);
+    }
+  }
+
   const gpsCurrentLocation =
     gpsLastFix &&
     (flowScreen === TRIP_FLOW.NAV || flowScreen === TRIP_FLOW.DESTINATION_REACHED)
@@ -571,33 +689,79 @@ export default function GreenRecommendationPage({
           longitude: gpsLastFix.longitude,
         }
       : null;
+  const showActiveTrip = surface === RECOMMENDATION_SURFACE.ACTIVE_TRIP && isReady;
 
   return (
     <Layout active="recommendations" onNavigate={onNavigate}>
       <div className="m2-page">
-        {itineraryLoading || tripChecking ? (
+        {surface === RECOMMENDATION_SURFACE.LOADING ? (
           <p className="m2-status m2-status--loading" role="status">
             {itineraryLoading
               ? context.message
-              : "Checking for an active trip…"}
+              : reportLoading
+                ? "Loading your Eco Report…"
+                : "Checking for an active trip…"}
           </p>
         ) : null}
 
-        {isLoadError ? (
+        {surface === RECOMMENDATION_SURFACE.ITINERARY_UNAVAILABLE ? (
           <article className="m2-card" role="alert">
             <h3>Itinerary unavailable</h3>
             <p className="m2-status m2-status--error">{context.message}</p>
           </article>
         ) : null}
 
-        {!itineraryLoading && !tripChecking && noTrip ? (
+        {surface === RECOMMENDATION_SURFACE.FINISHING ? (
+          <FinishingTrip />
+        ) : null}
+
+        {surface === RECOMMENDATION_SURFACE.COMPLETED_REPORT ? (
+          <CompletedEcoReport
+            reportView={completedReportView}
+            publishing={publishing}
+            publishError={publishError}
+            onPublish={handlePublishReport}
+          />
+        ) : null}
+
+        {surface === RECOMMENDATION_SURFACE.REPORT_UNAUTHORIZED ? (
+          <article className="m2-card" role="alert">
+            <h3>Eco Report unavailable</h3>
+            <p className="m2-status m2-status--error">
+              {REPORT_LOAD_ERROR_MESSAGE.UNAUTHORIZED}
+            </p>
+          </article>
+        ) : null}
+
+        {surface === RECOMMENDATION_SURFACE.REPORT_ERROR ? (
+          <article className="m2-card" role="alert">
+            <h3>Eco Report unavailable</h3>
+            <p className="m2-status m2-status--error">
+              {REPORT_LOAD_ERROR_MESSAGE.ERROR}
+            </p>
+          </article>
+        ) : null}
+
+        {surface === RECOMMENDATION_SURFACE.COMPLETION_SUMMARY ? (
+          <CompletionSummary
+            summary={completionSummary}
+            confirmingCancel={confirmingCancel}
+            cancelError={CANCEL_MESSAGES[tripAction.error] || null}
+            isCancelling={tripAction.status === "cancelling"}
+            finishDisabled={!completionSummary.canFinish || finishing}
+            finishError={finishError}
+            onFinish={handleFinishTrip}
+            onRequestCancel={() => setConfirmingCancel(true)}
+            onConfirmCancel={handleConfirmCancel}
+            onKeepTrip={() => setConfirmingCancel(false)}
+          />
+        ) : null}
+
+        {surface === RECOMMENDATION_SURFACE.NO_ACTIVE_TRIP ? (
           <NoActiveTrip onBrowseItineraries={() => onNavigate?.("/itinerary")} />
         ) : null}
 
-        {!itineraryLoading &&
-        !tripChecking &&
-        !isLoadError &&
-        (otherTripActive || (isDemo && tripSession.status === ACTIVE_TRIP_STATUS.ACTIVE_DIFFERENT)) ? (
+        {surface === RECOMMENDATION_SURFACE.OTHER_TRIP ? (
           <TripActivationPanel
             isDemo={false}
             tripStatus={ACTIVE_TRIP_STATUS.ACTIVE_DIFFERENT}
@@ -609,11 +773,7 @@ export default function GreenRecommendationPage({
           />
         ) : null}
 
-        {!itineraryLoading &&
-        !tripChecking &&
-        isReady &&
-        !thisTripActive &&
-        !otherTripActive ? (
+        {surface === RECOMMENDATION_SURFACE.START_ITINERARY ? (
           <>
             <TripActivationPanel
               isDemo={false}
@@ -633,27 +793,11 @@ export default function GreenRecommendationPage({
           </>
         ) : null}
 
-        {thisTripActive && isReady ? (
+        {showActiveTrip ? (
           <>
-            {flowScreen !== TRIP_FLOW.ALL_REACHED ? (
-              <TripFlowStepper screen={flowScreen} />
-            ) : null}
+            <TripFlowStepper screen={flowScreen} />
 
-            {flowScreen === TRIP_FLOW.ALL_REACHED ? (
-              <AllDestinationsReached
-                itinerary={context.itinerary}
-                transportCarbonKg={carbonSummary.kg}
-                transportCarbonEmpty={carbonSummary.empty}
-                confirmingCancel={confirmingCancel}
-                cancelError={CANCEL_MESSAGES[tripAction.error] || null}
-                isCancelling={tripAction.status === "cancelling"}
-                onRequestCancel={() => setConfirmingCancel(true)}
-                onConfirmCancel={handleConfirmCancel}
-                onKeepTrip={() => setConfirmingCancel(false)}
-              />
-            ) : null}
-
-            {flowScreen === TRIP_FLOW.OVERVIEW && !allDestinationsReached ? (
+            {flowScreen === TRIP_FLOW.OVERVIEW ? (
               <ActiveTripOverview
                 itinerary={context.itinerary}
                 originName={startLocationName}

@@ -815,14 +815,26 @@ export default function HotelPartnerDashboard({ onNavigate }) {
               </div>
 
               <div>
-                <label style={styles.modalLabel}>Upload Latest Reduced Utility Bill (Proof)</label>
-                <input
-                  type="file"
-                  accept=".png,.jpg,.jpeg,.pdf"
-                  onChange={(e) => setUpgradeFile(e.target.files[0])}
-                  required
-                  style={{ fontSize: 13 }}
-                />
+                <label style={styles.modalLabel}>Latest Utility Statement Evidence (Mandatory)</label>
+                <label style={styles.filePickerBox}>
+                  <Upload size={16} color="#4b5563" />
+                  <span style={{ fontWeight: 600, fontSize: 13, color: "#374151" }}>
+                    {upgradeFile ? upgradeFile.name : "Choose File (PDF, PNG < 800KB)"}
+                  </span>
+                  <input
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    onChange={(e) => {
+                      const f = e.target.files[0];
+                      if (f && f.size > 800 * 1024) {
+                        alert("File exceeds 800KB limit.");
+                        return;
+                      }
+                      setUpgradeFile(f);
+                    }}
+                    style={{ display: "none" }}
+                  />
+                </label>
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 10 }}>

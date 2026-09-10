@@ -5,6 +5,9 @@ export const TRIP_FLOW = {
   NAV: "navigation_preview",
   DESTINATION_REACHED: "destination_reached",
   ALL_REACHED: "all_destinations_reached",
+  COMPLETION_SUMMARY: "completion_summary",
+  FINISHING: "finishing",
+  COMPLETED_REPORT: "completed_report",
 };
 
 export const FLOW_STEPS = [

@@ -33,8 +33,10 @@ export const DESTINATIONS = [
     state: "Pulau Pinang",
     latitude: 5.4141,
     longitude: 100.3288,
+    // George Town "Kids on Bicycle" street-art mural — Penang-specific.
+    // (Previously reused the Kuala Lumpur photo id.)
     imageUrl:
-      "https://images.unsplash.com/photo-1596422846543-75c6fc197f07?w=600&q=80",
+      "https://images.unsplash.com/photo-1664859751688-34c6949923b8?w=600&q=80",
   },
   {
     id: "langkawi",
@@ -78,8 +80,10 @@ export const DESTINATIONS = [
     state: "Melaka",
     latitude: 2.1896,
     longitude: 102.2501,
+    // Christ Church / the red Stadthuys square in Melaka — Melaka-specific.
+    // (The previous photo id returned 404 on Unsplash.)
     imageUrl:
-      "https://images.unsplash.com/photo-1508050919630-b135583b29ab?w=600&q=80",
+      "https://images.unsplash.com/photo-1571761348738-f448a9739ff5?w=600&q=80",
   },
 ];
 
@@ -352,8 +356,9 @@ export const ACTIVITIES = {
       durationHours: 2,
       priceMyr: 40,
       carbonKg: 0.3,
+      // Melaka River winding past the riverfront shophouses.
       imageUrl:
-        "https://images.unsplash.com/photo-1508050919630-b135583b29ab?w=400&q=80",
+        "https://images.unsplash.com/photo-1720511849359-4fa5df588340?w=400&q=80",
     },
     {
       id: "melaka-heritage",
@@ -504,8 +509,9 @@ export const ACCOMMODATIONS = {
       ecoScore: 90,
       pricePerNight: 110,
       certifications: ["Community Owned"],
+      // Lantern-strung Jonker Street lane in Melaka's heritage core.
       imageUrl:
-        "https://images.unsplash.com/photo-1508050919630-b135583b29ab?w=400&q=80",
+        "https://images.unsplash.com/photo-1654428168579-a8c200df6848?w=400&q=80",
     },
   ],
 };
@@ -754,6 +760,57 @@ export function evaluateBudget(estimatedTotal, budget) {
     overBy: overBy > 0 ? overBy : 0,
     withinBudget: !hasBudget || overBy <= 0,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Date-range overlap (Step 1 — block double-booked itineraries)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * True when two inclusive date ranges overlap by at least one day.
+ *
+ * Two ranges overlap iff:  aStart <= bEnd && aEnd >= bStart
+ *
+ * yyyy-mm-dd strings sort chronologically as plain strings, so they can be
+ * compared directly. Any missing bound => no overlap (nothing to compare).
+ */
+export function dateRangesOverlap(aStart, aEnd, bStart, bEnd) {
+  if (!aStart || !aEnd || !bStart || !bEnd) return false;
+  return aStart <= bEnd && aEnd >= bStart;
+}
+
+/**
+ * Returns the first existing itinerary whose dates overlap [startDate, endDate],
+ * or null when the range is clear.
+ *
+ * @param {string} startDate           yyyy-mm-dd
+ * @param {string} endDate             yyyy-mm-dd
+ * @param {Array}  existingRanges      [{ id, itineraryId, title, startDate, endDate }]
+ * @param {string} [excludeId]         itinerary id to skip (the one being edited)
+ * @returns {{ id, itineraryId, title, startDate, endDate } | null}
+ */
+export function findDateConflict(
+  startDate,
+  endDate,
+  existingRanges = [],
+  excludeId = null
+) {
+  if (!startDate || !endDate) return null;
+
+  return (
+    existingRanges.find((row) => {
+      if (!row) return false;
+      if (excludeId && (row.id === excludeId || row.itineraryId === excludeId)) {
+        return false;
+      }
+      return dateRangesOverlap(
+        startDate,
+        endDate,
+        row.startDate,
+        row.endDate
+      );
+    }) || null
+  );
 }
 
 /** Formats yyyy-mm-dd as dd/mm/yyyy for display, matching the mockups. */

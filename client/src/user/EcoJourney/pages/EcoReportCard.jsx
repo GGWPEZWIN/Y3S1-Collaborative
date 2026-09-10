@@ -1,10 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import html2canvas from "html2canvas";
+﻿import { useEffect, useState } from "react";
 import {
   Share2,
-  Download,
-  TrendingDown,
-  Leaf,
   ChevronRight,
   ChevronLeft,
   Calendar,
@@ -19,11 +15,26 @@ import {
 
 import {
   getEcoReport,
+  publishEcoReport,
 } from "../../../firebase/ecoReportService";
 
 import {
   useCurrentUser,
 } from "../../../firebase/useCurrentUser";
+
+import CompletedEcoReport from "../../AIRecommendation/components/CompletedEcoReport";
+import {
+  buildCompletedReportView,
+  isModule2Report,
+} from "../../AIRecommendation/services/report/completedReportView.js";
+import {
+  formatCarbonKg,
+  formatCompletionDate,
+  formatScore,
+  visibilityLabel,
+} from "../../AIRecommendation/services/report/reportDisplay.js";
+import { PUBLISH_ERROR_MESSAGE } from "../../AIRecommendation/services/report/finishFlowState.js";
+import "../../AIRecommendation/styles/aiRecommendation.css";
 
 // ============================================================
 // ECO REPORT CARD
@@ -79,7 +90,7 @@ export default function EcoReportCard({
           const data = await getEcoReport(tripId);
 
           if (!mounted) return;
-          setReport(data);
+          setReport(isModule2Report(data) ? data : null);
           setReports([]);
           return;
         }
@@ -102,7 +113,7 @@ export default function EcoReportCard({
               try {
                 const data = await getEcoReport(trip.id);
 
-                if (!data) {
+                if (!isModule2Report(data)) {
                   return {
                     tripId: trip.id,
                     trip,
@@ -116,17 +127,11 @@ export default function EcoReportCard({
                   tripId: trip.id,
                   trip,
                 };
-              } catch (reportError) {
-                console.error(
-                  `Failed to load Eco Report for ${trip.id}:`,
-                  reportError
-                );
-
+              } catch {
                 return {
                   tripId: trip.id,
                   trip,
                   reportError:
-                    reportError?.message ||
                     "Unable to load this Eco-Report Card.",
                 };
               }
@@ -137,14 +142,9 @@ export default function EcoReportCard({
 
         setReports(results);
         setReport(null);
-      } catch (err) {
-        console.error("Failed to load Eco-Report Card:", err);
-
+      } catch {
         if (mounted) {
-          setError(
-            err?.message ||
-              "Unable to load Eco-Report Card."
-          );
+          setError("Unable to load Eco-Report Card.");
         }
       } finally {
         if (mounted) setLoading(false);
@@ -240,8 +240,8 @@ export default function EcoReportCard({
     return (
       <FullEcoReport
         report={report}
+        tripId={tripId}
         layoutUser={layoutUser}
-        authUser={authUser}
         onNavigate={onNavigate}
       />
     );
@@ -311,8 +311,6 @@ export default function EcoReportCard({
               <ReportListCard
                 key={item.tripId || item.trip?.id}
                 report={item}
-                userName={layoutUser.name}
-                userEmail={authUser.email || profileEmailFallback(item)}
                 onView={() =>
                   onNavigate?.(
                     "/community/report",
@@ -334,122 +332,90 @@ export default function EcoReportCard({
 
 function ReportListCard({
   report,
-  userName,
-  userEmail,
   onView,
 }) {
-  const cardRef = useRef(null);
-  const [busy, setBusy] = useState(false);
   const trip = report.trip || {};
-
+  const view = buildCompletedReportView(report, report.tripId);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState(null);
+  const [isPublic, setIsPublic] = useState(Boolean(view?.isPublic));
+  const hasError = Boolean(report.reportError);
   const tripName =
-    report.tripName ||
+    view?.title ||
     trip.name ||
     trip.title ||
     "Untitled Trip";
 
-  const ecoScore = Number(
-    report.ecoScore ?? trip.ecoScore ?? 0
-  );
-
-  const carbonKg = Number(
-    report.carbonKg ?? trip.carbonKg ?? 0
-  );
-
-  const badges =
-    report.badgesEarned ??
-    trip.badgesEarned ??
-    0;
-
-  const grade =
-    report.grade ||
-    trip.grade ||
-    getGrade(ecoScore);
-
-  const status =
-    report.status ||
-    trip.status ||
-    "Completed";
-
-  const dateRange =
-    report.dateRange ||
-    trip.dateRange ||
-    formatDateRange(
-      report.startDate || trip.startDate,
-      report.endDate || trip.endDate
-    );
-
-  const gradeStyle = getGradeStyle(grade);
-  const hasError = Boolean(report.reportError);
+  async function handlePublish() {
+    if (publishing || isPublic || !report.tripId) return;
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const updated = await publishEcoReport(report.tripId);
+      setIsPublic(updated?.visibility === "public" || updated?.alreadyPublic);
+    } catch {
+      setPublishError(PUBLISH_ERROR_MESSAGE);
+    } finally {
+      setPublishing(false);
+    }
+  }
 
   return (
-    <div ref={cardRef} style={styles.reportCard}>
+    <div style={styles.reportCard}>
       <div style={styles.topBar} />
 
       <div style={styles.cardBody}>
         <div style={styles.listHeader}>
           <div style={styles.cardInfo}>
             <div style={styles.reportTag}>ECO-REPORT CARD</div>
-
             <h2 style={styles.tripName}>{tripName}</h2>
-
-            {dateRange && (
+            {view ? (
               <div style={styles.dateRow}>
                 <Calendar size={16} color="#9ca3af" />
-                <span>{dateRange}</span>
+                <span>{formatCompletionDate(view.completedAt)}</span>
               </div>
-            )}
+            ) : null}
           </div>
-
-          <div
-            style={{
-              ...styles.gradeCircle,
-              background: gradeStyle.background,
-              color: gradeStyle.color,
-            }}
-          >
-            {grade}
-          </div>
-        </div>
-
-        <div style={styles.statsGrid}>
-          <div style={styles.statBox}>
-            <div style={styles.statLabel}>Eco Score</div>
-            <div style={styles.scoreValue}>
-              {ecoScore}
-              <span style={styles.scoreMax}>/100</span>
-            </div>
-          </div>
-
-          <div style={styles.statBox}>
-            <div style={styles.statLabel}>Carbon Footprint</div>
-            <div style={styles.statValue}>
-              {carbonKg.toFixed(1)} kg CO₂
-            </div>
-          </div>
-
-          <div style={styles.statBox}>
-            <div style={styles.statLabel}>Badges Earned</div>
-            <div style={styles.statValueRow}>
-              <Award size={17} color="#f59e0b" />
-              <span style={styles.statValue}>{badges}</span>
-            </div>
-          </div>
-
-          <div style={styles.statBox}>
-            <div style={styles.statLabel}>Status</div>
-            <span style={styles.statusPill}>
-              {status}
+          {view ? (
+            <span style={isPublic ? styles.statusPill : styles.privatePill}>
+              {visibilityLabel(isPublic ? "public" : "private")}
             </span>
-          </div>
+          ) : null}
         </div>
+
+        {view ? (
+          <div style={styles.statsGrid}>
+            <div style={styles.statBox}>
+              <div style={styles.statLabel}>Final Trip Eco-Score</div>
+              <div style={styles.scoreValue}>
+                {formatScore(view.finalEcoScore)}
+              </div>
+            </div>
+            <div style={styles.statBox}>
+              <div style={styles.statLabel}>Confirmed transportation carbon</div>
+              <div style={styles.statValue}>
+                {formatCarbonKg(view.confirmedTransportationCarbonKg)}
+              </div>
+            </div>
+            <div style={styles.statBox}>
+              <div style={styles.statLabel}>Destinations</div>
+              <div style={styles.statValue}>{view.destinationCount}</div>
+            </div>
+            <div style={styles.statBox}>
+              <div style={styles.statLabel}>Visibility</div>
+              <span style={isPublic ? styles.statusPill : styles.privatePill}>
+                {visibilityLabel(isPublic ? "public" : "private")}
+              </span>
+            </div>
+          </div>
+        ) : null}
 
         {hasError ? (
           <div style={styles.reportError}>
             {report.reportError}
           </div>
         ) : (
-          <div style={styles.actionsRow} data-html2canvas-ignore="true">
+          <div style={styles.actionsRow}>
             <button
               type="button"
               onClick={onView}
@@ -458,114 +424,79 @@ function ReportListCard({
               View Full Report
               <ChevronRight size={17} />
             </button>
-
-            <button
-              type="button"
-              onClick={async () => {
-                if (busy) return;
-                try {
-                  setBusy(true);
-                  await shareElementImage(
-                    cardRef.current,
-                    report,
-                    userName,
-                    userEmail
-                  );
-                } catch (err) {
-                  if (err?.name !== "AbortError") {
-                    console.error("List card share failed:", err);
-                    alert("Unable to share this Eco-Report Card. Please try again.");
-                  }
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              style={styles.btnOutline}
-              disabled={busy}
-            >
-              <Share2 size={15} />
-              Share
-            </button>
-
-            <button
-              type="button"
-              onClick={async () => {
-                if (busy) return;
-                try {
-                  setBusy(true);
-                  await downloadElementImage(cardRef.current, report, userName, userEmail);
-                } catch (err) {
-                  console.error("List card download failed:", err);
-                  alert("Unable to download this Eco-Report Card. Please try again.");
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              style={styles.btnDark}
-            >
-              <Download size={15} />
-              Download
-            </button>
+            {isPublic ? (
+              <span style={styles.statusPill}>
+                Public â€” ready for Community Hub
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={handlePublish}
+                style={styles.btnOutline}
+                disabled={publishing}
+              >
+                <Share2 size={15} />
+                {publishing ? "Sharingâ€¦" : "Share Eco Report to Community"}
+              </button>
+            )}
           </div>
         )}
+        {publishError ? (
+          <div style={styles.reportError} role="alert">
+            {publishError}
+          </div>
+        ) : null}
       </div>
-
     </div>
   );
 }
 
-// ============================================================
-// FULL REPORT SCREEN
-// ============================================================
-
 function FullEcoReport({
   report,
+  tripId,
   layoutUser,
-  authUser,
   onNavigate,
 }) {
-  const breakdown = getBreakdown(report);
-  const carbonSplit = getCarbonSplit(report);
-  const impact = getImpact(report);
-  const achievements = getAchievements(report);
-  const reportCaptureRef = useRef(null);
-  const [shareBusy, setShareBusy] = useState(false);
+  const reportView = buildCompletedReportView(report, tripId);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState(null);
+  const [reportState, setReportView] = useState(reportView);
 
-  const userName = layoutUser?.name || authUser?.displayName || "User";
-  const userEmail = authUser?.email || profileEmailFallback(report) || "";
-
-  const handleDownloadReport = async () => {
-    if (!reportCaptureRef.current) return;
+  async function handlePublish() {
+    if (publishing || reportState?.isPublic || !tripId) return;
+    setPublishing(true);
+    setPublishError(null);
     try {
-      setShareBusy(true);
-      await downloadElementImage(reportCaptureRef.current, report, userName, userEmail);
-    } catch (err) {
-      console.error("Failed to download Eco-Report Card:", err);
-      alert("Unable to create the report image. Please try again.");
-    } finally {
-      setShareBusy(false);
-    }
-  };
-
-  const handleShareImage = async () => {
-    if (!reportCaptureRef.current) return;
-    try {
-      setShareBusy(true);
-      await shareElementImage(
-        reportCaptureRef.current,
-        report,
-        userName,
-        userEmail
+      const updated = await publishEcoReport(tripId);
+      setReportView(
+        buildCompletedReportView(
+          { ...report, ...updated, visibility: "public" },
+          tripId
+        )
       );
-    } catch (err) {
-      if (err?.name !== "AbortError") {
-        console.error("Share failed:", err);
-        alert("Unable to share the Eco-Report Card. Please try again.");
-      }
+    } catch {
+      setPublishError(PUBLISH_ERROR_MESSAGE);
     } finally {
-      setShareBusy(false);
+      setPublishing(false);
     }
-  };
+  }
+
+  if (!reportState) {
+    return (
+      <div style={styles.loadingPage}>
+        <p style={styles.errorText}>
+          Report available after trip completion
+        </p>
+        <button
+          type="button"
+          onClick={() => onNavigate?.("/community/reports")}
+          style={styles.loginButton}
+        >
+          Back to Eco-Reports
+        </button>
+      </div>
+    );
+  }
 
   return (
     <Layout
@@ -574,764 +505,26 @@ function FullEcoReport({
       onNavigate={onNavigate}
     >
       <div style={styles.detailPage}>
-        <div style={styles.detailTopRow} data-html2canvas-ignore="true">
+        <div style={styles.detailTopRow}>
           <button
             type="button"
             style={styles.backButton}
-            onClick={() =>
-              onNavigate?.("/community/reports")
-            }
+            onClick={() => onNavigate?.("/community/reports")}
           >
             <ChevronLeft size={20} />
             <span>Back to Eco-Reports</span>
           </button>
-
-          <div style={styles.actionGroup}>
-            <button
-              type="button"
-              style={styles.btnOutline}
-              onClick={handleShareImage}
-              disabled={shareBusy}
-            >
-              <Share2 size={15} />
-              {shareBusy ? "Preparing…" : "Share"}
-            </button>
-
-            <button
-              type="button"
-              style={styles.btnDark}
-              onClick={handleDownloadReport}
-            >
-              <Download size={15} />
-              Download Report
-            </button>
-          </div>
         </div>
-
-        <div ref={reportCaptureRef} style={styles.reportCapture}>
-        {/* HERO */}
-        <div style={styles.hero}>
-          <div style={styles.heroTop}>
-            <div style={styles.heroInfo}>
-              <div style={styles.heroTag}>ECO-REPORT CARD</div>
-
-              <h1 style={styles.heroTitle}>
-                {report.tripName || "Untitled Trip"}
-              </h1>
-
-              {getDateRangeFromReport(report) && (
-                <div style={styles.heroSub}>
-                  {getDateRangeFromReport(report)}
-                </div>
-              )}
-
-              <div style={styles.heroSub}>
-                Traveller: {layoutUser.name}
-              </div>
-            </div>
-
-            <div style={styles.gradeContainer}>
-              <div style={styles.heroGrade}>
-                {report.grade || getGrade(report.ecoScore)}
-              </div>
-              <div style={styles.heroGradeLabel}>
-                {report.gradeLabel ||
-                  getGradeLabel(report.grade || getGrade(report.ecoScore))}
-              </div>
-            </div>
-          </div>
-
-          <div style={styles.heroStats}>
-            <div style={styles.heroStatBox}>
-              <div style={styles.heroStatValue}>
-                {Number(report.ecoScore ?? 0)}
-              </div>
-              <div style={styles.heroStatLabel}>
-                Eco Score
-              </div>
-            </div>
-
-            <div style={styles.heroStatBox}>
-              <div style={styles.heroStatValue}>
-                {Number(report.carbonKg ?? 0).toFixed(1)}
-              </div>
-              <div style={styles.heroStatLabel}>
-                kg CO₂
-              </div>
-            </div>
-
-            <div style={styles.heroStatBox}>
-              <div style={styles.heroStatValue}>
-                {report.badgesEarned ?? 0}
-              </div>
-              <div style={styles.heroStatLabel}>
-                Badges Earned
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* BREAKDOWN + CARBON */}
-        <div style={styles.twoCol}>
-          <div style={styles.card}>
-            <div style={styles.cardHeader}>
-              <Leaf size={18} color="#22c55e" />
-              <span style={styles.cardTitle}>
-                Eco Score Breakdown
-              </span>
-            </div>
-
-            {breakdown.length > 0 ? (
-              breakdown.map((item) => {
-                const value = Math.min(
-                  Math.max(Number(item.value) || 0, 0),
-                  100
-                );
-
-                return (
-                  <div
-                    key={item.label}
-                    style={{ marginTop: 16 }}
-                  >
-                    <div style={styles.breakdownRow}>
-                      <span style={styles.breakdownLabel}>
-                        {item.label}
-                      </span>
-                      <span style={styles.breakdownValue}>
-                        {value}/100
-                      </span>
-                    </div>
-
-                    <div style={styles.progressTrack}>
-                      <div
-                        style={{
-                          ...styles.progressFill,
-                          width: `${value}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div style={styles.emptyData}>
-                No Eco Score breakdown data available.
-              </div>
-            )}
-          </div>
-
-          <div style={styles.card}>
-            <div style={styles.cardHeader}>
-              <TrendingDown size={18} color="#1683ff" />
-              <span style={styles.cardTitle}>
-                Carbon Footprint
-              </span>
-            </div>
-
-            {carbonSplit.length > 0 ? (
-              <>
-                <div style={styles.chartBox}>
-                  <div
-                    style={{
-                      ...styles.cssPie,
-                      background: buildPieGradient(carbonSplit),
-                    }}
-                    aria-label="Carbon footprint chart"
-                  />
-                </div>
-
-                <div style={styles.legend}>
-                  {carbonSplit.map((item, index) => (
-                    <div
-                      key={`${item.name}-${index}`}
-                      style={styles.legendRow}
-                    >
-                      <div style={styles.legendLeft}>
-                        <span
-                          style={{
-                            ...styles.legendDot,
-                            background:
-                              item.color ||
-                              FALLBACK_CHART_COLORS[index % FALLBACK_CHART_COLORS.length],
-                          }}
-                        />
-                        <span>{item.name}</span>
-                      </div>
-                      <span style={styles.legendValue}>
-                        {Number(item.value || 0).toFixed(2)} kg
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div style={styles.emptyData}>
-                No carbon breakdown data available.
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ENVIRONMENTAL IMPACT */}
-        <div style={{ ...styles.card, marginTop: 20 }}>
-          <div style={styles.cardTitle}>
-            Environmental Impact
-          </div>
-
-          {impact.length > 0 ? (
-            <div style={styles.impactGrid}>
-              {impact.map((item, index) => (
-                <div
-                  key={`${item.label}-${index}`}
-                  style={styles.impactCard}
-                >
-                  <div style={styles.impactIcon}>
-                    {item.icon || "🌱"}
-                  </div>
-                  <div style={styles.impactValue}>
-                    {item.value}
-                  </div>
-                  <div style={styles.impactSub}>
-                    {item.sub || ""}
-                  </div>
-                  <div style={styles.impactLabel}>
-                    {item.label}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={styles.emptyData}>
-              No environmental impact data available.
-            </div>
-          )}
-        </div>
-
-        {/* RECENT ACHIEVEMENTS */}
-        <div style={{ ...styles.card, marginTop: 20 }}>
-          <div style={styles.achievementsHeader}>
-            <span style={styles.cardTitle}>
-              Recent Achievements
-            </span>
-
-            <button
-              type="button"
-              style={styles.viewMoreButton}
-              onClick={() =>
-                onNavigate?.("/community/achievements")
-              }
-            >
-              View More
-              <ChevronRight size={18} />
-            </button>
-          </div>
-
-          {achievements.length > 0 ? (
-            <div style={styles.achievementGrid}>
-              {achievements.slice(0, 3).map((achievement, index) => (
-                <div
-                  key={`${achievement.title}-${index}`}
-                  style={styles.achievementCard}
-                >
-                  <div style={styles.achievementIcon}>
-                    {achievement.icon || "🏆"}
-                  </div>
-                  <div style={styles.achievementTitle}>
-                    {achievement.title}
-                  </div>
-                  <div style={styles.achievementCategory}>
-                    {achievement.category || "General"}
-                  </div>
-                  {achievement.dateEarned && (
-                    <div style={styles.achievementDate}>
-                      {achievement.dateEarned}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={styles.emptyAchievement}>
-              No recent achievements for this trip yet.
-            </div>
-          )}
-        </div>
-
-        <div
-          style={{
-            ...styles.card,
-            marginTop: 20,
-            marginBottom: 32,
-            textAlign: "center",
-          }}
-        >
-          <div style={styles.footerTitle}>
-            🌱 Keep travelling sustainably!
-          </div>
-          <div style={styles.footerText}>
-            Your Eco-Report Card is stored securely in your GreenTrip travel history.
-          </div>
-        </div>
-        </div>
-
+        <CompletedEcoReport
+          reportView={reportState}
+          publishing={publishing}
+          publishError={publishError}
+          onPublish={handlePublish}
+        />
       </div>
     </Layout>
   );
 }
-
-// ============================================================
-// DATA HELPERS
-// ============================================================
-
-const FALLBACK_CHART_COLORS = [
-  "#2495e8",
-  "#facc15",
-  "#43a047",
-  "#f97316",
-];
-
-function getBreakdown(report) {
-  if (Array.isArray(report?.breakdown)) {
-    return report.breakdown;
-  }
-
-  // Some report documents may store the values individually.
-  const source = report?.ecoScoreBreakdown;
-  if (source && typeof source === "object") {
-    return Object.entries(source).map(([label, value]) => ({
-      label,
-      value,
-    }));
-  }
-
-  return [];
-}
-
-function getCarbonSplit(report) {
-  if (Array.isArray(report?.carbonSplit)) {
-    return report.carbonSplit;
-  }
-
-  if (Array.isArray(report?.carbonBreakdown)) {
-    return report.carbonBreakdown.map((item) => ({
-      name: item.name || item.label,
-      value: Number(item.value) || 0,
-      color: item.color,
-    }));
-  }
-
-  return [];
-}
-
-function getImpact(report) {
-  if (Array.isArray(report?.impact)) {
-    return report.impact;
-  }
-
-  if (Array.isArray(report?.environmentalImpact)) {
-    return report.environmentalImpact;
-  }
-
-  return [];
-}
-
-function getAchievements(report) {
-  if (Array.isArray(report?.achievements)) {
-    return report.achievements;
-  }
-
-  if (Array.isArray(report?.recentAchievements)) {
-    return report.recentAchievements;
-  }
-
-  return [];
-}
-
-function getGrade(score) {
-  const value = Number(score) || 0;
-
-  if (value >= 90) return "A+";
-  if (value >= 80) return "A";
-  if (value >= 70) return "B";
-  if (value >= 60) return "C";
-  return "D";
-}
-
-function getGradeLabel(grade) {
-  if (grade === "A+") return "Outstanding";
-  if (grade === "A") return "Excellent";
-  if (grade === "B") return "Good";
-  if (grade === "C") return "Fair";
-  return "Needs Improvement";
-}
-
-function getGradeStyle(grade) {
-  if (grade === "A+" || grade === "A") {
-    return {
-      background: "#dcfce7",
-      color: "#15803d",
-    };
-  }
-
-  if (grade === "B") {
-    return {
-      background: "#fef3c7",
-      color: "#d97706",
-    };
-  }
-
-  if (grade === "C") {
-    return {
-      background: "#ffedd5",
-      color: "#ea580c",
-    };
-  }
-
-  return {
-    background: "#fee2e2",
-    color: "#dc2626",
-  };
-}
-
-function formatDateRange(start, end) {
-  const format = (value) => {
-    if (!value) return null;
-
-    if (value?.toDate) {
-      return value.toDate().toLocaleDateString("en-MY", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      });
-    }
-
-    if (value instanceof Date) {
-      return value.toLocaleDateString("en-MY", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      });
-    }
-
-    if (typeof value === "string") {
-      const date = new Date(value);
-      if (!Number.isNaN(date.getTime())) {
-        return date.toLocaleDateString("en-MY", {
-          day: "numeric",
-          month: "short",
-          year: "numeric",
-        });
-      }
-    }
-
-    return null;
-  };
-
-  const first = format(start);
-  const second = format(end);
-
-  if (first && second && first !== second) {
-    return `${first} - ${second}`;
-  }
-
-  return first || second || "";
-}
-
-function getDateRangeFromReport(report) {
-  return (
-    report?.dateRange ||
-    formatDateRange(report?.startDate, report?.endDate)
-  );
-}
-
-async function createReportImageBlob(element, report, userName, userEmail) {
-  if (!element) {
-    throw new Error("Report element is not available.");
-  }
-
-  // Wait until the report has fully painted before capturing it.
-  await new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(resolve);
-    });
-  });
-
-  const rect = element.getBoundingClientRect();
-  const width = Math.max(360, Math.ceil(rect.width));
-
-  // Clone only the report itself. Buttons marked with
-  // data-html2canvas-ignore are removed from the generated image.
-  const clone = element.cloneNode(true);
-
-  clone
-    .querySelectorAll("[data-html2canvas-ignore]")
-    .forEach((node) => node.remove());
-
-  // Add the user/app identity ONLY to the generated image.
-  // It is not rendered permanently on the normal page.
-  const identity = document.createElement("div");
-  identity.style.cssText = `
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    gap:24px;
-    width:100%;
-    padding:22px 26px;
-    background:#ffffff;
-    border:1px solid #e5e7eb;
-    box-sizing:border-box;
-    font-family:Arial, Helvetica, sans-serif;
-  `;
-
-  identity.innerHTML = `
-    <div style="min-width:0;flex:1">
-      <div style="font-size:14px;font-weight:800;letter-spacing:.08em;color:#15803d">
-        GREEN TRIP MALAYSIA
-      </div>
-      <div style="font-size:12px;color:#94a3b8;margin-top:5px">
-        Eco-Report Card generated for
-      </div>
-      <div style="font-size:18px;font-weight:800;color:#111827;margin-top:4px;word-break:break-word">
-        ${escapeHtml(userName || "User")}
-      </div>
-    </div>
-    <div style="font-size:13px;color:#64748b;text-align:right;word-break:break-word;max-width:42%">
-      ${escapeHtml(userEmail || "Email not available")}
-    </div>
-  `;
-
-  const wrapper = document.createElement("div");
-
-  // Keep the capture target outside the visible viewport, but DO NOT use
-  // display:none, visibility:hidden, opacity:0 or a huge negative z-index.
-  // html2canvas cannot reliably capture those elements.
-  wrapper.style.cssText = `
-    position:absolute;
-    left:-5000px;
-    top:0;
-    width:${width}px;
-    background:#f3f4f6;
-    box-sizing:border-box;
-    overflow:visible;
-    font-family:Arial, Helvetica, sans-serif;
-  `;
-
-  wrapper.appendChild(identity);
-  wrapper.appendChild(clone);
-
-  // Friendly invitation is part of the exported/shared image only.
-  const invitation = document.createElement("div");
-  invitation.style.cssText = `
-    width:100%;
-    box-sizing:border-box;
-    padding:18px 24px;
-    background:#ecfdf5;
-    border:1px solid #bbf7d0;
-    color:#166534;
-    font-family:Arial, Helvetica, sans-serif;
-    font-size:16px;
-    font-weight:700;
-    line-height:1.45;
-    text-align:center;
-  `;
-  invitation.textContent =
-    "🌱 Come join me on my sustainable journey with GreenTrip Malaysia!";
-
-  wrapper.appendChild(invitation);
-  document.body.appendChild(wrapper);
-
-  try {
-    // Give the browser one paint cycle for the cloned report.
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-
-    const canvas = await html2canvas(wrapper, {
-      backgroundColor: "#f3f4f6",
-      scale: Math.min(2, window.devicePixelRatio || 1.5),
-      useCORS: true,
-      allowTaint: false,
-      logging: false,
-      imageTimeout: 20000,
-      removeContainer: true,
-      scrollX: 0,
-      scrollY: 0,
-      width: wrapper.scrollWidth,
-      height: wrapper.scrollHeight,
-      windowWidth: Math.max(window.innerWidth, wrapper.scrollWidth),
-      windowHeight: Math.max(window.innerHeight, wrapper.scrollHeight),
-    });
-
-    if (!canvas || !canvas.width || !canvas.height) {
-      throw new Error("html2canvas returned an empty image.");
-    }
-
-    return await new Promise((resolve, reject) => {
-      canvas.toBlob(
-        (blob) => {
-          if (blob && blob.size > 0) {
-            resolve(blob);
-          } else {
-            reject(new Error("Could not create PNG image."));
-          }
-        },
-        "image/png",
-        1
-      );
-    });
-  } finally {
-    wrapper.remove();
-  }
-}
-
-function makeReportFile(blob, report) {
-  const filename = `${sanitizeFilename(
-    report?.tripName || "eco-report"
-  )}-eco-report.png`;
-
-  return new File([blob], filename, {
-    type: "image/png",
-  });
-}
-
-async function downloadElementImage(element, report, userName, userEmail) {
-  const blob = await createReportImageBlob(
-    element,
-    report,
-    userName,
-    userEmail
-  );
-
-  const url = URL.createObjectURL(blob);
-
-  try {
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${sanitizeFilename(
-      report?.tripName || "eco-report"
-    )}-eco-report.png`;
-    link.style.display = "none";
-
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 3000);
-  }
-}
-
-async function shareElementImage(
-  element,
-  report,
-  userName,
-  userEmail
-) {
-  const blob = await createReportImageBlob(
-    element,
-    report,
-    userName,
-    userEmail
-  );
-
-  const file = makeReportFile(blob, report);
-
-  // Use the operating system/browser native share sheet.
-  // The generated PNG is the shared file itself.
-  if (
-    typeof navigator !== "undefined" &&
-    typeof navigator.share === "function"
-  ) {
-    const fileShareSupported =
-      typeof navigator.canShare !== "function" ||
-      navigator.canShare({ files: [file] });
-
-    if (fileShareSupported) {
-      await navigator.share({
-        title: `${report?.tripName || "GreenTrip"} - Eco-Report Card`,
-        files: [file],
-      });
-
-      return { method: "native-share" };
-    }
-  }
-
-  // Desktop fallback. Browsers do not allow a normal webpage to force
-  // WhatsApp/Instagram/etc. to receive a local file. We still give the
-  // user the actual image, not a report URL or text.
-  let copiedImage = false;
-
-  try {
-    if (
-      navigator.clipboard &&
-      typeof window.ClipboardItem !== "undefined"
-    ) {
-      const item = new ClipboardItem({
-        "image/png": blob,
-      });
-
-      await navigator.clipboard.write([item]);
-      copiedImage = true;
-    }
-  } catch (error) {
-    console.warn("Could not copy report image:", error);
-  }
-
-  await downloadElementImage(
-    element,
-    report,
-    userName,
-    userEmail
-  );
-
-  if (copiedImage) {
-    alert(
-      "The Eco-Report Card image was copied and downloaded. Your browser does not support the native image share sheet here. You can paste the actual image into WhatsApp, Instagram, Messenger or another app."
-    );
-  } else {
-    alert(
-      "The Eco-Report Card image was downloaded. Your browser does not support sharing image files directly from this page."
-    );
-  }
-
-  return { method: "desktop-fallback" };
-}
-
-function sanitizeFilename(value) {
-  return String(value || "eco-report")
-    .replace(/[^a-z0-9\-_]+/gi, "-")
-    .replace(/^-+|-+$/g, "")
-    .toLowerCase() || "eco-report";
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-function buildPieGradient(items) {
-  if (!items?.length) return "#e5e7eb";
-  const total = items.reduce((sum, item) => sum + Math.max(Number(item.value) || 0, 0), 0);
-  if (!total) return "#e5e7eb";
-  let current = 0;
-  const stops = items.map((item, index) => {
-    const value = Math.max(Number(item.value) || 0, 0);
-    const start = (current / total) * 100;
-    current += value;
-    const end = (current / total) * 100;
-    const color = item.color || FALLBACK_CHART_COLORS[index % FALLBACK_CHART_COLORS.length];
-    return `${color} ${start}% ${end}%`;
-  });
-  return `conic-gradient(${stops.join(", ")})`;
-}
-
-function profileEmailFallback(report) {
-  return report?.userEmail || report?.email || "";
-}
-
-
-
 
 function LoadingPage({ text }) {
   return (
@@ -1536,6 +729,17 @@ const styles = {
     width: "fit-content",
     background: "#dcfce7",
     color: "#15803d",
+    padding: "7px 13px",
+    borderRadius: 999,
+    fontSize: "13px",
+    fontWeight: 700,
+  },
+
+  privatePill: {
+    display: "inline-flex",
+    width: "fit-content",
+    background: "#f3f4f6",
+    color: "#374151",
     padding: "7px 13px",
     borderRadius: 999,
     fontSize: "13px",

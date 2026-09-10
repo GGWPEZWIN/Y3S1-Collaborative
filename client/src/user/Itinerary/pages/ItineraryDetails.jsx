@@ -1577,7 +1577,7 @@ function SavedItineraryView({
           }
         >
           <Sparkles size={16} />
-          Get Green Recommendation
+          Start Trip
         </button>
       </div>
     </>

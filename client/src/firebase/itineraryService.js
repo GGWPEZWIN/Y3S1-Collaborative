@@ -231,6 +231,25 @@ function buildAccommodation(accommodation) {
       Array.isArray(accommodation.certifications)
         ? accommodation.certifications
         : [],
+
+    // Plan-level eco score of the stay (0–100) — persisted so the review step
+    // and the dashboard keep the same number after an edit reload. Optional;
+    // older docs simply won't have it.
+    ecoScore:
+      toNumberOrNull(
+        accommodation.ecoScore
+      ),
+
+    // Extra context kept for an approved Firebase hotel so the saved itinerary
+    // is self-describing. Null for static-catalogue stays that don't have them.
+    certificationTier:
+      accommodation.certificationTier ?? null,
+
+    state:
+      accommodation.state ?? null,
+
+    source:
+      accommodation.source ?? null,
   };
 
   if (
@@ -416,6 +435,45 @@ function buildItineraryCoreFields(
 
 /*
  * ============================================================
+ * ASSERT NO DATE OVERLAP
+ * ============================================================
+ *
+ * Server-side backstop for the Step 1 overlap block: refuses to write an
+ * itinerary whose [startDate, endDate] range overlaps one the SIGNED-IN USER
+ * already has, so an overlapping itinerary can't be created by bypassing the
+ * wizard UI (jumped steps, a stale tab, a direct call, a save-time race).
+ *
+ * Inclusive interval test — two ranges overlap iff aStart <= bEnd && aEnd >=
+ * bStart. yyyy-mm-dd strings compare chronologically as plain strings. Mirrors
+ * dateRangesOverlap / findDateConflict in
+ * user/Itinerary/constants/itineraryData.js (kept inline to avoid coupling the
+ * Firebase layer to a UI module). Missing dates => nothing to check.
+ */
+
+async function assertNoDateOverlap(startDate, endDate, excludeId = null) {
+  if (!startDate || !endDate) {
+    return;
+  }
+
+  const ranges = await getMyItineraryDateRanges();
+
+  const clash = ranges.find(
+    (row) =>
+      row.id !== excludeId &&
+      row.itineraryId !== excludeId &&
+      startDate <= row.endDate &&
+      endDate >= row.startDate
+  );
+
+  if (clash) {
+    throw new Error(
+      `These dates overlap an existing itinerary ("${clash.title}", ${clash.startDate} to ${clash.endDate}). Please choose different dates.`
+    );
+  }
+}
+
+/*
+ * ============================================================
  * SAVE ITINERARY
  * ============================================================
  */
@@ -425,6 +483,11 @@ export async function saveItinerary(input) {
     await getLoggedInUser();
 
   assertItineraryInput(input);
+
+  await assertNoDateOverlap(
+    input.startDate,
+    input.endDate
+  );
 
   const ref =
     doc(
@@ -533,6 +596,12 @@ export async function updateItinerary(
       "You do not have permission to edit this itinerary."
     );
   }
+
+  await assertNoDateOverlap(
+    input.startDate,
+    input.endDate,
+    itineraryId
+  );
 
   const updates =
     buildItineraryCoreFields(
@@ -824,6 +893,45 @@ export async function getMyItineraries() {
       ...item.data(),
     })
   );
+}
+
+/*
+ * ============================================================
+ * GET MY ITINERARY DATE RANGES
+ * ============================================================
+ *
+ * Lightweight read used by the Create wizard (Step 1) to stop a traveller
+ * booking two overlapping itineraries. Returns only what the overlap check
+ * needs, for the SIGNED-IN USER ONLY.
+ *
+ * Uses a single-field `where("userId", "==", uid)` filter (no orderBy), so it
+ * needs no composite index of its own.
+ *
+ *   [{ id, itineraryId, title, startDate, endDate }]
+ *
+ * Rows without both dates are dropped — they can't overlap anything.
+ * ============================================================
+ */
+
+export async function getMyItineraryDateRanges() {
+  const user = await getLoggedInUser();
+
+  const snapshot = await getDocs(
+    query(collection(db, ITINERARIES), where("userId", "==", user.uid))
+  );
+
+  return snapshot.docs
+    .map((item) => {
+      const data = item.data();
+      return {
+        id: item.id,
+        itineraryId: data.itineraryId || item.id,
+        title: data.title || "Untitled trip",
+        startDate: data.dates?.startDate || null,
+        endDate: data.dates?.endDate || null,
+      };
+    })
+    .filter((row) => row.startDate && row.endDate);
 }
 
 /*
