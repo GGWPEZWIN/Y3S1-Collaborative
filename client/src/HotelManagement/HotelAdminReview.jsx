@@ -263,11 +263,11 @@ export default function HotelAdminReview() {
   const handleTriggerSpotCheck = async (hotel) => {
     const docOptions = [
       {
-        title: "Electricity Bill + Meter Photo",
+        title: "Electricity Bill",
         instruction: "Upload your latest official electricity statement and matching photograph of the main meter reading.",
       },
       {
-        title: "Water Utility Bill + Meter Photo",
+        title: "Water Utility Bill",
         instruction: "Upload your state water utility statement along with a clear photograph of your primary water meter dial.",
       },
     ];
@@ -314,14 +314,18 @@ export default function HotelAdminReview() {
     }
   };
 
-  // Category partition
+  // Category partition with strict clearing for processed items
   const pendingApps = applications.filter((a) => {
-    if (pendingFilter === "All") return !a.status || a.status === "Pending Review" || a.status === "Submitted" || a.status === "Rejected";
+    if (a.status === "Approved" || a.status === "Rejected" || a.status === "Flagged" || a.status === "Suspended") return false;
+    if (pendingFilter === "All") return !a.status || a.status === "Pending Review" || a.status === "Submitted";
     if (pendingFilter === "Pending") return !a.status || a.status === "Pending Review" || a.status === "Submitted";
     return a.status === pendingFilter;
   });
 
   const flaggedApps = applications.filter((a) => {
+    // Once pardoned (Approved) or fully resolved, remove from flagged list
+    if (a.status === "Approved") return false;
+
     const isSuspended = a.status === "Suspended";
     const isFlagged = a.status === "Flagged" || a.fraudFlags?.hasSuspicion;
     if (flaggedFilter === "Active") return isFlagged && !isSuspended;
