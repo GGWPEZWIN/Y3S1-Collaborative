@@ -49,6 +49,17 @@ function clearMarkers(markers) {
   });
 }
 
+function clearGpsOverlay(markerRef, circleRef) {
+  if (markerRef.current) {
+    markerRef.current.map = null;
+    markerRef.current = null;
+  }
+  if (circleRef.current) {
+    circleRef.current.setMap(null);
+    circleRef.current = null;
+  }
+}
+
 function clearPolyline(polylineRef) {
   if (polylineRef.current) {
     polylineRef.current.setMap(null);
@@ -74,12 +85,17 @@ export default function TripMap({
   encodedPolyline = null,
   routeTravelMode = null,
   markerSource = "demo",
+  currentLocation = null,
+  currentLocationAccuracyMeters = null,
+  legendLabel = "Displayed selected route",
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const mapsApiRef = useRef(null);
   const markersRef = useRef([]);
   const polylineRef = useRef(null);
+  const gpsMarkerRef = useRef(null);
+  const accuracyCircleRef = useRef(null);
   const [status, setStatus] = useState("loading");
 
   useEffect(() => {
@@ -120,6 +136,7 @@ export default function TripMap({
     return () => {
       cancelled = true;
       clearPolyline(polylineRef);
+      clearGpsOverlay(gpsMarkerRef, accuracyCircleRef);
       clearMarkers(markersRef.current);
       markersRef.current = [];
       mapRef.current = null;
@@ -262,6 +279,70 @@ export default function TripMap({
     };
   }, [encodedPolyline, routeTravelMode, status]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    const api = mapsApiRef.current;
+    if (status !== "ready" || !map || !api) return undefined;
+
+    if (
+      !isValidCoordinate(currentLocation?.latitude, currentLocation?.longitude)
+    ) {
+      clearGpsOverlay(gpsMarkerRef, accuracyCircleRef);
+      return undefined;
+    }
+
+    const position = toLatLng(
+      currentLocation.latitude,
+      currentLocation.longitude
+    );
+    const { AdvancedMarkerElement, PinElement, Circle } = api;
+
+    if (gpsMarkerRef.current) {
+      gpsMarkerRef.current.position = position;
+    } else {
+      gpsMarkerRef.current = createMarker(AdvancedMarkerElement, PinElement, {
+        map,
+        position,
+        title: "Current location",
+        pin: {
+          background: "#2563eb",
+          borderColor: "#1d4ed8",
+          glyphText: "•",
+        },
+      });
+    }
+
+    if (
+      typeof Circle === "function" &&
+      typeof currentLocationAccuracyMeters === "number" &&
+      Number.isFinite(currentLocationAccuracyMeters) &&
+      currentLocationAccuracyMeters > 0
+    ) {
+      if (accuracyCircleRef.current) {
+        accuracyCircleRef.current.setCenter(position);
+        accuracyCircleRef.current.setRadius(currentLocationAccuracyMeters);
+      } else {
+        accuracyCircleRef.current = new Circle({
+          map,
+          center: position,
+          radius: currentLocationAccuracyMeters,
+          fillColor: "#2563eb",
+          fillOpacity: 0.12,
+          strokeColor: "#1d4ed8",
+          strokeOpacity: 0.6,
+          strokeWeight: 1,
+          clickable: false,
+          zIndex: 2,
+        });
+      }
+    } else if (accuracyCircleRef.current) {
+      accuracyCircleRef.current.setMap(null);
+      accuracyCircleRef.current = null;
+    }
+
+    return undefined;
+  }, [currentLocation, currentLocationAccuracyMeters, status]);
+
   const savedMarkers = markerSource === "saved";
   const statusMessage =
     status === "loading"
@@ -313,17 +394,17 @@ export default function TripMap({
             className={`m2-route-swatch m2-route-swatch--${routeTravelMode.toLowerCase()}`}
             aria-hidden="true"
           />
-          Displayed first-segment route: {polylineLabel(routeTravelMode)}
+          {legendLabel}: {polylineLabel(routeTravelMode)}
         </p>
       ) : null}
       <p className="m2-map-note">
         {encodedPolyline
           ? savedMarkers
-            ? "The coloured line is the selected live route for the first itinerary segment only. Markers stay on the saved starting location and destinations."
-            : "The coloured line is the selected live route for the first itinerary segment only. Other markers remain demonstration destinations."
+            ? "The coloured line is the selected live route for the current unfinished segment. The blue marker is your current GPS location."
+            : "The coloured line is the selected live route for the current unfinished segment. The blue marker is your current GPS location."
           : savedMarkers
-            ? "Markers use the saved Module 1 starting location and destinations. A live route line is drawn only after a selected first-segment route is requested."
-            : "The Google basemap is shown when a Maps JavaScript API key is configured. Markers use the demonstration itinerary. A live route line is drawn only after a selected first-segment route is available."}
+            ? "Markers use the saved Module 1 starting location and destinations. A live route line is drawn only after a selected route is requested."
+            : "The Google basemap is shown when a Maps JavaScript API key is configured. Markers use the demonstration itinerary. A live route line is drawn only after a selected route is available."}
       </p>
     </section>
   );

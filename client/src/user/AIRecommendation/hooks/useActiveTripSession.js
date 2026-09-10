@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   subscribeActiveTripLock,
+  subscribeCompletedSegments,
   subscribeTripSession,
 } from "../../../firebase/tripSessionService";
 
@@ -33,6 +34,7 @@ export default function useActiveTripSession(currentItineraryId = null) {
   const [lock, setLock] = useState(undefined);
   const [warning, setWarning] = useState(null);
   const [session, setSession] = useState(null);
+  const [completedSegments, setCompletedSegments] = useState([]);
 
   useEffect(() => {
     const unsubscribe = subscribeActiveTripLock((nextLock, nextWarning) => {
@@ -45,9 +47,20 @@ export default function useActiveTripSession(currentItineraryId = null) {
   const sessionId = lock?.sessionId || null;
 
   useEffect(() => {
-    if (!sessionId) return undefined;
+    if (!sessionId) {
+      return undefined;
+    }
     return subscribeTripSession(sessionId, (nextSession) => {
       setSession(nextSession);
+    });
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return undefined;
+    }
+    return subscribeCompletedSegments(sessionId, (records) => {
+      setCompletedSegments(Array.isArray(records) ? records : []);
     });
   }, [sessionId]);
 
@@ -57,6 +70,7 @@ export default function useActiveTripSession(currentItineraryId = null) {
       lock: null,
       session: null,
       currentSegmentIndex: 0,
+      completedSegments: [],
       warning: null,
     };
   }
@@ -68,6 +82,7 @@ export default function useActiveTripSession(currentItineraryId = null) {
     lock,
     session: visibleSession,
     currentSegmentIndex: readSegmentIndex(visibleSession),
+    completedSegments: sessionId ? completedSegments : [],
     warning,
   };
 }

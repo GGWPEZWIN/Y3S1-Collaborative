@@ -864,6 +864,40 @@
   color: #6b7280;
 }
 
+.m2-nav-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.m2-nav-toolbar h1,
+.m2-nav-toolbar h3 {
+  margin-bottom: 8px;
+}
+
+.m2-btn--icon {
+  min-width: 40px;
+  padding: 8px 12px;
+}
+
+.m2-deviation {
+  border-color: #fde68a;
+  background: #fffbeb;
+  grid-column: 1 / -1;
+}
+
+.m2-reached {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.m2-nav-preview {
+  align-items: start;
+}
+
 @media (max-width: 900px) {
   .m2-page {
     padding: 16px;

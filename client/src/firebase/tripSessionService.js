@@ -11,6 +11,14 @@ import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "./config";
 import { buildOrderedSegments } from "../user/AIRecommendation/services/itinerary/buildRouteSegments.js";
 import { normalizeModule1Itinerary } from "../user/AIRecommendation/services/itinerary/normalizeItinerary.js";
+import { completedSegmentDocumentId } from "../user/AIRecommendation/services/navigation/constants.js";
+import {
+  ALLOWED_ROUTE_SOURCE,
+  buildCompletedSegmentSnapshot,
+  normalizeCompletedSegmentRecords,
+  planSegmentCompletion,
+  SEGMENT_COMPLETION_ERROR,
+} from "../user/AIRecommendation/services/navigation/segmentCompletion.js";
 
 /*
  * ============================================================
@@ -24,6 +32,7 @@ import { normalizeModule1Itinerary } from "../user/AIRecommendation/services/iti
  *
  * Module 2 owns:
  *   tripSessions/{sessionId}     — activation history (kept on cancel)
+ *   tripSessions/{sessionId}/completedSegments/{segmentId}
  *   activeTripLocks/{uid}        — deterministic one-active-trip lock
  * ============================================================
  */
@@ -31,6 +40,7 @@ import { normalizeModule1Itinerary } from "../user/AIRecommendation/services/iti
 const ITINERARIES = "itineraries";
 const TRIP_SESSIONS = "tripSessions";
 const ACTIVE_LOCKS = "activeTripLocks";
+const COMPLETED_SEGMENTS = "completedSegments";
 
 export const TRIP_SESSION_ERROR = {
   AUTH_REQUIRED: "AUTH_REQUIRED",
@@ -40,6 +50,11 @@ export const TRIP_SESSION_ERROR = {
   NOT_ROUTEABLE: "NOT_ROUTEABLE",
   ACTIVE_TRIP_EXISTS: "ACTIVE_TRIP_EXISTS",
   SESSION_MISMATCH: "SESSION_MISMATCH",
+  TRIP_NOT_ACTIVE: "TRIP_NOT_ACTIVE",
+  SEGMENT_NOT_CURRENT: "SEGMENT_NOT_CURRENT",
+  SEGMENT_SKIP: "SEGMENT_SKIP",
+  ALL_SEGMENTS_DONE: "ALL_SEGMENTS_DONE",
+  INVALID_SNAPSHOT: "INVALID_SNAPSHOT",
   UNAVAILABLE: "UNAVAILABLE",
 };
 
@@ -127,6 +142,29 @@ function asSession(sessionId, data) {
     completedAt: data.completedAt ?? null,
     cancelledAt: data.cancelledAt ?? null,
     cancellationReason: data.cancellationReason ?? null,
+    version: data.version ?? 1,
+    latestCompletedSegmentId: data.latestCompletedSegmentId ?? null,
+  };
+}
+
+function asCompletedSegment(segmentId, data) {
+  return {
+    userId: data.userId,
+    itineraryId: data.itineraryId,
+    sessionId: data.sessionId,
+    segmentId: data.segmentId || segmentId,
+    segmentIndex: data.segmentIndex,
+    originName: data.originName,
+    destinationName: data.destinationName,
+    travelMode: data.travelMode,
+    distanceMeters: data.distanceMeters ?? null,
+    durationSeconds: data.durationSeconds ?? null,
+    carbonKgCo2e: data.carbonKgCo2e ?? null,
+    prototypeEcoScore: data.prototypeEcoScore ?? null,
+    rankingScore: data.rankingScore ?? null,
+    source: data.source,
+    carbonVersion: data.carbonVersion,
+    completedAt: data.completedAt ?? null,
     version: data.version ?? 1,
   };
 }
@@ -230,6 +268,32 @@ export async function getTripSession(sessionId) {
     throw new TripSessionError(TRIP_SESSION_ERROR.UNAUTHORIZED);
   }
   return asSession(snap.id, data);
+}
+
+/**
+ * Live completed-segment records for confirmed transportation carbon.
+ * Missing or unreadable collections are treated as none completed.
+ */
+export function subscribeCompletedSegments(sessionId, onNext) {
+  const id = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (!id) {
+    onNext([]);
+    return () => {};
+  }
+
+  return onSnapshot(
+    collection(db, TRIP_SESSIONS, id, COMPLETED_SEGMENTS),
+    (snap) => {
+      onNext(
+        normalizeCompletedSegmentRecords(
+          snap.docs.map((docSnap) => asCompletedSegment(docSnap.id, docSnap.data()))
+        )
+      );
+    },
+    () => {
+      onNext([]);
+    }
+  );
 }
 
 /**
@@ -375,6 +439,142 @@ export async function cancelActiveTripSession() {
       }
 
       throw new TripSessionError(TRIP_SESSION_ERROR.SESSION_MISMATCH);
+    });
+  } catch (error) {
+    throw mapFirebaseFailure(error);
+  }
+}
+
+/**
+ * Confirms arrival for the current unfinished segment.
+ * Creates tripSessions/{sessionId}/completedSegments/{segmentId} and
+ * increments currentSegmentIndex in one transaction.
+ * Does not mark the trip completed or release the active lock.
+ * Does not store encoded polylines, GPS coordinates, or tokens.
+ */
+export async function completeCurrentSegment({
+  expectedSegmentIndex,
+  originName,
+  destinationName,
+  route,
+  rankingScore = null,
+}) {
+  const user = await getLoggedInUser();
+
+  try {
+    return await runTransaction(db, async (transaction) => {
+      const lockRef = doc(db, ACTIVE_LOCKS, user.uid);
+      const lockSnap = await transaction.get(lockRef);
+      if (!lockSnap.exists()) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.SESSION_MISMATCH);
+      }
+
+      const lock = asLock(lockSnap.data());
+      if (lock.userId !== user.uid) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.UNAUTHORIZED);
+      }
+
+      const sessionRef = doc(db, TRIP_SESSIONS, lock.sessionId);
+      const sessionSnap = await transaction.get(sessionRef);
+      if (!sessionSnap.exists()) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.SESSION_MISMATCH);
+      }
+
+      const session = asSession(sessionSnap.id, sessionSnap.data());
+      if (lock.itineraryId !== session.itineraryId) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.SESSION_MISMATCH);
+      }
+      if (session.userId !== user.uid) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.UNAUTHORIZED);
+      }
+      const segmentId = completedSegmentDocumentId(expectedSegmentIndex);
+      if (!segmentId) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.SEGMENT_NOT_CURRENT);
+      }
+
+      const completionRef = doc(
+        db,
+        TRIP_SESSIONS,
+        session.sessionId,
+        COMPLETED_SEGMENTS,
+        segmentId
+      );
+      const existingSnap = await transaction.get(completionRef);
+      const existingCompletion = existingSnap.exists()
+        ? asCompletedSegment(existingSnap.id, existingSnap.data())
+        : null;
+
+      const snapshot = buildCompletedSegmentSnapshot({
+        userId: user.uid,
+        itineraryId: session.itineraryId,
+        sessionId: session.sessionId,
+        segmentIndex: expectedSegmentIndex,
+        originName,
+        destinationName,
+        route,
+        rankingScore,
+      });
+
+      const plan = planSegmentCompletion({
+        user,
+        lock,
+        session,
+        expectedSegmentIndex,
+        existingCompletion,
+        snapshot,
+      });
+
+      if (plan.type === "idempotent") {
+        return {
+          alreadyCompleted: true,
+          sessionId: session.sessionId,
+          currentSegmentIndex: plan.session.currentSegmentIndex,
+          allDestinationsReached:
+            plan.session.currentSegmentIndex >= plan.session.totalSegments,
+        };
+      }
+
+      if (plan.type !== "commit") {
+        const code =
+          SEGMENT_COMPLETION_ERROR[plan.code] ||
+          TRIP_SESSION_ERROR[plan.code] ||
+          plan.code ||
+          TRIP_SESSION_ERROR.UNAVAILABLE;
+        throw new TripSessionError(code);
+      }
+
+      transaction.set(completionRef, {
+        userId: plan.completion.userId,
+        itineraryId: plan.completion.itineraryId,
+        sessionId: plan.completion.sessionId,
+        segmentId: plan.completion.segmentId,
+        segmentIndex: plan.completion.segmentIndex,
+        originName: plan.completion.originName,
+        destinationName: plan.completion.destinationName,
+        travelMode: plan.completion.travelMode,
+        distanceMeters: plan.completion.distanceMeters,
+        durationSeconds: plan.completion.durationSeconds,
+        carbonKgCo2e: plan.completion.carbonKgCo2e,
+        prototypeEcoScore: plan.completion.prototypeEcoScore,
+        rankingScore: plan.completion.rankingScore,
+        source: ALLOWED_ROUTE_SOURCE,
+        carbonVersion: plan.completion.carbonVersion,
+        completedAt: serverTimestamp(),
+        version: plan.completion.version,
+      });
+      transaction.update(sessionRef, {
+        currentSegmentIndex: plan.sessionUpdate.currentSegmentIndex,
+        updatedAt: serverTimestamp(),
+        latestCompletedSegmentId: plan.sessionUpdate.latestCompletedSegmentId,
+      });
+
+      return {
+        alreadyCompleted: false,
+        sessionId: session.sessionId,
+        currentSegmentIndex: plan.sessionUpdate.currentSegmentIndex,
+        allDestinationsReached:
+          plan.sessionUpdate.currentSegmentIndex >= session.totalSegments,
+      };
     });
   } catch (error) {
     throw mapFirebaseFailure(error);

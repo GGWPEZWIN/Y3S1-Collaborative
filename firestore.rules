@@ -567,6 +567,141 @@ service cloud.firestore {
              && !existsAfter(lockPath);
     }
 
+    function completedSegmentPath(sessionId, segmentId) {
+      return /databases/$(database)/documents/tripSessions/$(sessionId)/completedSegments/$(segmentId);
+    }
+
+    function completedSegmentCreateKeys() {
+      return [
+        "userId",
+        "itineraryId",
+        "sessionId",
+        "segmentId",
+        "segmentIndex",
+        "originName",
+        "destinationName",
+        "travelMode",
+        "distanceMeters",
+        "durationSeconds",
+        "carbonKgCo2e",
+        "prototypeEcoScore",
+        "rankingScore",
+        "source",
+        "carbonVersion",
+        "completedAt",
+        "version"
+      ];
+    }
+
+    function isPositiveNumber(value) {
+      return (value is int || value is float) && value > 0;
+    }
+
+    function isNonNegativeNumber(value) {
+      return (value is int || value is float) && value >= 0;
+    }
+
+    function isScore(value) {
+      return (value is int || value is float) && value >= 0 && value <= 100;
+    }
+
+    function isScoreOrNull(value) {
+      return value == null || isScore(value);
+    }
+
+    function ownedTripSession(sessionId) {
+      return isSignedIn()
+             && exists(tripSessionPath(sessionId))
+             && get(tripSessionPath(sessionId)).data.userId == request.auth.uid;
+    }
+
+    function validTripSessionProgress(sessionId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let lockPath = activeLockPath(request.auth.uid);
+      let completedId = after.latestCompletedSegmentId;
+      let completedPath = completedSegmentPath(sessionId, completedId);
+
+      return isSignedIn()
+             && before.userId == request.auth.uid
+             && after.userId == before.userId
+             && after.itineraryId == before.itineraryId
+             && after.itineraryTitle == before.itineraryTitle
+             && before.status == "active"
+             && after.status == "active"
+             && after.completedAt == null
+             && after.cancelledAt == before.cancelledAt
+             && after.cancellationReason == before.cancellationReason
+             && after.version == before.version
+             && after.totalSegments == before.totalSegments
+             && after.startedAt == before.startedAt
+             && after.updatedAt == request.time
+             && after.currentSegmentIndex is int
+             && before.currentSegmentIndex is int
+             && after.currentSegmentIndex == before.currentSegmentIndex + 1
+             && after.currentSegmentIndex <= before.totalSegments
+             && isNonEmptyString(completedId)
+             && completedId == "segment-" + string(before.currentSegmentIndex)
+             && after.diff(before).affectedKeys().hasOnly([
+                  "currentSegmentIndex",
+                  "updatedAt",
+                  "latestCompletedSegmentId"
+                ])
+             && exists(lockPath)
+             && get(lockPath).data.userId == request.auth.uid
+             && get(lockPath).data.sessionId == sessionId
+             && get(lockPath).data.status == "active"
+             && existsAfter(lockPath)
+             && getAfter(lockPath).data.sessionId == sessionId
+             && getAfter(lockPath).data.status == "active"
+             && existsAfter(completedPath)
+             && getAfter(completedPath).data.userId == request.auth.uid
+             && getAfter(completedPath).data.sessionId == sessionId
+             && getAfter(completedPath).data.itineraryId == before.itineraryId
+             && getAfter(completedPath).data.segmentIndex == before.currentSegmentIndex
+             && getAfter(completedPath).data.segmentId == completedId;
+    }
+
+    function validCompletedSegmentCreate(sessionId, segmentId) {
+      let data = request.resource.data;
+      let sessionPath = tripSessionPath(sessionId);
+
+      return isSignedIn()
+             && exists(sessionPath)
+             && get(sessionPath).data.userId == request.auth.uid
+             && get(sessionPath).data.status == "active"
+             && data.keys().hasAll(completedSegmentCreateKeys())
+             && data.keys().hasOnly(completedSegmentCreateKeys())
+             && data.userId is string
+             && data.userId == request.auth.uid
+             && data.sessionId == sessionId
+             && data.itineraryId == get(sessionPath).data.itineraryId
+             && data.segmentId == segmentId
+             && data.segmentIndex is int
+             && data.segmentIndex == get(sessionPath).data.currentSegmentIndex
+             && segmentId == "segment-" + string(data.segmentIndex)
+             && isNonEmptyString(data.originName)
+             && isNonEmptyString(data.destinationName)
+             && data.travelMode in ["WALK", "TRANSIT", "DRIVE"]
+             && isPositiveNumber(data.distanceMeters)
+             && isPositiveNumber(data.durationSeconds)
+             && isNonNegativeNumber(data.carbonKgCo2e)
+             && isScore(data.prototypeEcoScore)
+             && isScoreOrNull(data.rankingScore)
+             && data.source == "google_routes"
+             && data.carbonVersion == "prototype-uk-ghg-2026-v1"
+             && data.completedAt == request.time
+             && data.version is int
+             && data.version == 1
+             && existsAfter(sessionPath)
+             && getAfter(sessionPath).data.userId == request.auth.uid
+             && getAfter(sessionPath).data.status == "active"
+             && getAfter(sessionPath).data.currentSegmentIndex == data.segmentIndex + 1
+             && getAfter(sessionPath).data.latestCompletedSegmentId == segmentId
+             && getAfter(sessionPath).data.itineraryId == data.itineraryId
+             && getAfter(sessionPath).data.completedAt == null;
+    }
+
     function lockCreateKeys() {
       return [
         "userId",
@@ -622,9 +757,27 @@ service cloud.firestore {
 
       allow create: if validTripSessionCreate(sessionId);
 
-      allow update: if validTripSessionCancel();
+      allow update: if validTripSessionCancel()
+                    || validTripSessionProgress(sessionId);
 
       allow delete: if false;
+
+      match /completedSegments/{segmentId} {
+
+        allow get: if ownedTripSession(sessionId)
+                   && resource.data.userId == request.auth.uid
+                   && resource.data.sessionId == sessionId;
+
+        allow list: if ownedTripSession(sessionId)
+                    && resource.data.userId == request.auth.uid
+                    && resource.data.sessionId == sessionId;
+
+        allow create: if validCompletedSegmentCreate(sessionId, segmentId);
+
+        allow update: if false;
+
+        allow delete: if false;
+      }
     }
 
 

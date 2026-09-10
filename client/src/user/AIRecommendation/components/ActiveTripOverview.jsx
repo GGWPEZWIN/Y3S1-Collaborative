@@ -1,4 +1,5 @@
 import TripMap from "./TripMap";
+import { routeStopKind } from "../services/navigation/segmentOrigin.js";
 
 const LOCATION_MESSAGES = {
   loading: "Getting your location…",
@@ -14,20 +15,21 @@ const LOCATION_MESSAGES = {
   error: "Location could not be updated. The saved origin is still in use.",
 };
 
+function formatCarbonKg(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "0 kg CO₂e";
+  if (value < 1) return `${value.toFixed(3)} kg CO₂e`;
+  return `${value.toFixed(2)} kg CO₂e`;
+}
+
 function formatOptionalNumber(value) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "Unavailable";
   return String(value);
 }
 
-function progressKind(index, currentIndex) {
-  if (index === currentIndex) return "CURRENT";
-  if (index === currentIndex + 1) return "NEXT DESTINATION";
-  return "UPCOMING";
-}
-
 function progressClass(kind) {
   if (kind === "CURRENT") return "m2-order-item m2-order-item--start";
   if (kind === "NEXT DESTINATION") return "m2-order-item m2-order-item--next";
+  if (kind === "COMPLETED") return "m2-order-item m2-order-item--done";
   return "m2-order-item";
 }
 
@@ -53,6 +55,9 @@ export default function ActiveTripOverview({
   onGo,
   goDisabled = false,
   goDisabledReason = null,
+  originNotice = null,
+  transportCarbonKg = 0,
+  transportCarbonEmpty = true,
   onRequestCancel,
   onConfirmCancel,
   onKeepTrip,
@@ -134,6 +139,9 @@ export default function ActiveTripOverview({
           {locationMessage && locationStatus !== "loading" ? (
             <p className="m2-status m2-status--error">{locationMessage}</p>
           ) : null}
+          {originNotice ? (
+            <p className="m2-status">{originNotice}</p>
+          ) : null}
         </div>
         <div className="m2-actions">
           <button
@@ -162,11 +170,16 @@ export default function ActiveTripOverview({
           <h3>Saved route</h3>
           <p className="m2-muted">
             Saved start → destination 1 → destination 2 → final destination.
-            Nothing is marked completed yet.
+            Completed destinations stay in the saved order.
           </p>
           <ol className="m2-order" style={{ marginTop: 16 }}>
             {stops.map((stop, index) => {
-              const kind = progressKind(index, currentStopIndex);
+              const kind = routeStopKind({
+                stopIndex: index,
+                currentSegmentIndex: currentStopIndex,
+                totalSegments,
+                isStart: index === 0,
+              });
               return (
                 <li key={stop.id || `${stop.name}-${index}`} className={progressClass(kind)}>
                   <span className="m2-order-index" aria-hidden="true">
@@ -211,8 +224,12 @@ export default function ActiveTripOverview({
         <dl className="m2-stat-row">
           <div className="m2-stat">
             <dt>Transportation</dt>
-            <dd>0 kg CO₂e</dd>
-            <p className="m2-muted">No completed transport segments yet</p>
+            <dd>{formatCarbonKg(transportCarbonKg)}</dd>
+            <p className="m2-muted">
+              {transportCarbonEmpty
+                ? "No completed transport segments yet"
+                : "Sum of confirmed completed segments only."}
+            </p>
           </div>
           <div className="m2-stat" data-status="pending">
             <dt>Food waste</dt>
@@ -221,7 +238,7 @@ export default function ActiveTripOverview({
           </div>
           <div className="m2-stat">
             <dt>Total tracked</dt>
-            <dd>0 kg CO₂e</dd>
+            <dd>{formatCarbonKg(transportCarbonKg)}</dd>
             <p className="m2-muted">
               Provisional sum of confirmed values only. Food-waste data is
               pending and is not included.

@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Layout from "../../../shared/components/Layout";
 import {
   cancelActiveTripSession,
+  completeCurrentSegment,
   startTripSession,
 } from "../../../firebase/tripSessionService";
 import { mockGreenRecommendation } from "../data/mockModule2Data";
@@ -10,17 +11,33 @@ import useActiveTripSession, {
 } from "../hooks/useActiveTripSession";
 import useCurrentLocation from "../hooks/useCurrentLocation";
 import useLiveTransportComparison from "../hooks/useLiveTransportComparison";
+import useNavigationGpsWatch from "../hooks/useNavigationGpsWatch";
+import useRecalculateSelectedRoute from "../hooks/useRecalculateSelectedRoute";
 import useResolvedItinerary from "../hooks/useResolvedItinerary";
-import { isRouteableCoordinate } from "../services/itinerary/normalizeItinerary.js";
-import { firstRouteableSegment } from "../services/itinerary/buildRouteSegments.js";
 import { ITINERARY_LOAD_STATUS } from "../services/itinerary/resolveItinerary.js";
+import { isRouteableCoordinate } from "../services/itinerary/normalizeItinerary.js";
 import {
   formatMetersAsKilometres,
   formatSecondsAsMinutes,
 } from "../services/formatMeasurement.js";
+import { decodeGooglePolyline } from "../services/navigation/decodePolyline.js";
+import {
+  emptyNavigationStreaks,
+  evaluateNavigationFix,
+} from "../services/navigation/detection.js";
+import { isValidGpsFix } from "../services/navigation/coordinates.js";
+import { leaveNavigationPreview } from "../services/navigation/leaveNavigation.js";
+import { sumCompletedTransportCarbon } from "../services/navigation/segmentCompletion.js";
+import {
+  liveDestinationForSegment,
+  savedOriginForSegment,
+} from "../services/navigation/segmentOrigin.js";
+import { rankGreenRoutes } from "../services/sustainability/greenRouteRanker";
 import { TRIP_FLOW } from "../tripFlow.js";
 import ActiveTripOverview from "../components/ActiveTripOverview";
+import AllDestinationsReached from "../components/AllDestinationsReached";
 import ComparisonLoadingScreen from "../components/ComparisonLoadingScreen";
+import DestinationReached from "../components/DestinationReached";
 import NavigationPreview from "../components/NavigationPreview";
 import NoActiveTrip from "../components/NoActiveTrip";
 import SavedItineraryPreview from "../components/SavedItineraryPreview";
@@ -35,12 +52,21 @@ const OPTION_TO_TRAVEL_MODE = {
   driving: "DRIVE",
 };
 
+const TRAVEL_MODE_LABEL = {
+  WALK: "Walking",
+  TRANSIT: "Public transit",
+  DRIVE: "Driving",
+};
+
 const CANCEL_MESSAGES = {
   AUTH_REQUIRED: "Please sign in again to cancel the active trip.",
   UNAUTHORIZED: "You do not have access to cancel this trip.",
   SESSION_MISMATCH: "The active trip could not be cancelled. Please try again.",
   UNAVAILABLE: "The trip could not be cancelled. Please try again.",
 };
+
+const COMPLETE_ERROR =
+  "The destination could not be saved. Please try again.";
 
 function mapDestinationsForMap(itinerary) {
   if (!itinerary?.destinations) return [];
@@ -64,44 +90,35 @@ function mapStartForMap(itinerary) {
   };
 }
 
-function liveDestinationFromSegment(segments, segmentIndex) {
-  const segment = Array.isArray(segments) ? segments[segmentIndex] : null;
-  if (segment?.routeable) {
-    return {
-      destinationId: segment.destination.id,
-      name: segment.destination.name,
-      latitude: segment.destination.latitude,
-      longitude: segment.destination.longitude,
-    };
-  }
-  const first = firstRouteableSegment(segments);
-  if (!first) return null;
-  return {
-    destinationId: first.destination.id,
-    name: first.destination.name,
-    latitude: first.destination.latitude,
-    longitude: first.destination.longitude,
-  };
+function rankingScoreForMode(results, travelMode) {
+  if (!results || !travelMode) return null;
+  const candidates = ["WALK", "TRANSIT", "DRIVE"].flatMap((mode) => {
+    const entry = results[mode];
+    if (entry?.status !== "success" || !entry.route) return [];
+    return [
+      {
+        travelMode: mode,
+        distanceMeters: entry.route.distanceMeters,
+        durationSeconds: entry.route.durationSeconds,
+      },
+    ];
+  });
+  const ranking = rankGreenRoutes(candidates);
+  const ranked = ranking.ranked.find((item) => item.travelMode === travelMode);
+  return typeof ranked?.rankingScore === "number" &&
+    Number.isFinite(ranked.rankingScore) &&
+    ranked.rankingScore >= 0 &&
+    ranked.rankingScore <= 100
+    ? ranked.rankingScore
+    : null;
 }
 
-function mapStops(itinerary) {
-  if (!itinerary) return [];
-  const stops = [];
-  if (itinerary.startLocation) {
-    stops.push({
-      stopId: itinerary.startLocation.locationId,
-      name: itinerary.startLocation.name,
-      kind: "start",
-    });
-  }
-  itinerary.destinations.forEach((destination) => {
-    stops.push({
-      stopId: destination.destinationId,
-      name: destination.name,
-      kind: "destination",
-    });
-  });
-  return stops;
+function currentSegmentNames(segments, segmentIndex) {
+  const segment = Array.isArray(segments) ? segments[segmentIndex] : null;
+  return {
+    originName: segment?.origin?.name || null,
+    destinationName: segment?.destination?.name || null,
+  };
 }
 
 export default function GreenRecommendationPage({
@@ -111,7 +128,6 @@ export default function GreenRecommendationPage({
 }) {
   const [flowScreen, setFlowScreen] = useState(TRIP_FLOW.OVERVIEW);
   const [selectedMode, setSelectedMode] = useState(null);
-  const [paused, setPaused] = useState(false);
   const [activeItineraryId, setActiveItineraryId] = useState(itineraryId);
   const [tripAction, setTripAction] = useState({
     status: "idle",
@@ -119,14 +135,35 @@ export default function GreenRecommendationPage({
   });
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [originStamp, setOriginStamp] = useState(null);
+  const [segmentOriginOverride, setSegmentOriginOverride] = useState(null);
+  const [originNotice, setOriginNotice] = useState(null);
+  const [navRoute, setNavRoute] = useState(null);
+  const [isDeviated, setIsDeviated] = useState(false);
+  const [selectedRankingScore, setSelectedRankingScore] = useState(null);
+  const [completeError, setCompleteError] = useState(null);
+  const [completing, setCompleting] = useState(false);
+  const completingRef = useRef(false);
+  const streaksRef = useRef(emptyNavigationStreaks());
+  const navigationGuardRef = useRef({
+    sessionId: "",
+    currentSegmentIndex: 0,
+    flowScreen: TRIP_FLOW.OVERVIEW,
+    destinationId: null,
+    travelMode: null,
+  });
 
   if (activeItineraryId !== itineraryId) {
     setActiveItineraryId(itineraryId);
     setFlowScreen(TRIP_FLOW.OVERVIEW);
     setSelectedMode(null);
-    setPaused(false);
     setTripAction({ status: "idle", error: null });
     setConfirmingCancel(false);
+    setSegmentOriginOverride(null);
+    setOriginNotice(null);
+    setNavRoute(null);
+    setIsDeviated(false);
+    setSelectedRankingScore(null);
+    setCompleteError(null);
   }
 
   const context = useResolvedItinerary({ itineraryId, itinerary });
@@ -144,9 +181,19 @@ export default function GreenRecommendationPage({
     context.status === ITINERARY_LOAD_STATUS.LOADING
       ? `loading:${requestedId}`
       : context.itinerary?.itineraryId || requestedId || context.source;
-  const routingContextKey = `${contextKey}:${thisTripActive ? "active" : "inactive"}`;
   const currentSegmentIndex = tripSession.currentSegmentIndex || 0;
-  const firstLiveDestination = liveDestinationFromSegment(
+  const totalSegments =
+    tripSession.session?.totalSegments ||
+    context.segments.length ||
+    1;
+  const allDestinationsReached =
+    thisTripActive && totalSegments > 0 && currentSegmentIndex >= totalSegments;
+  const firstLiveDestination = liveDestinationForSegment(
+    context.segments,
+    currentSegmentIndex
+  );
+  const savedOrigin = savedOriginForSegment(
+    context.itinerary,
     context.segments,
     currentSegmentIndex
   );
@@ -155,19 +202,45 @@ export default function GreenRecommendationPage({
     location,
     status: locationStatus,
     requestCurrentLocation,
-    useDemoLocation,
+    useDemoLocation: restoreSavedOrigin,
   } = useCurrentLocation({
     savedStart: context.itinerary?.startLocation || null,
     itineraryKey: contextKey,
   });
 
-  const originKey = `${location.latitude},${location.longitude},${location.source}`;
+  const effectiveOrigin = segmentOriginOverride ||
+    (location.source === "device" ? location : savedOrigin);
+
+  const routingContextKey = `${contextKey}:${thisTripActive ? "active" : "inactive"}:${currentSegmentIndex}`;
+  const sessionId = tripSession.lock?.sessionId || "";
+  const gpsWatchEnabled =
+    thisTripActive &&
+    !allDestinationsReached &&
+    (flowScreen === TRIP_FLOW.NAV ||
+      flowScreen === TRIP_FLOW.DESTINATION_REACHED);
+  const {
+    status: gpsStatus,
+    lastFix: gpsLastFix,
+    reset: resetGpsWatch,
+  } = useNavigationGpsWatch(gpsWatchEnabled, `${contextKey}:${sessionId}`);
+  const recalculateRoute = useRecalculateSelectedRoute(
+    `${sessionId}:${currentSegmentIndex}`
+  );
+
+  const originKey = `${effectiveOrigin.latitude},${effectiveOrigin.longitude},${effectiveOrigin.source},${currentSegmentIndex}`;
   if (originStamp !== originKey) {
     const hadOrigin = originStamp !== null;
     setOriginStamp(originKey);
     if (hadOrigin) {
       setSelectedMode(null);
-      if (flowScreen !== TRIP_FLOW.OVERVIEW) {
+      setNavRoute(null);
+      setIsDeviated(false);
+      setSelectedRankingScore(null);
+      if (
+        flowScreen !== TRIP_FLOW.OVERVIEW &&
+        flowScreen !== TRIP_FLOW.ALL_REACHED &&
+        flowScreen !== TRIP_FLOW.DESTINATION_REACHED
+      ) {
         setFlowScreen(TRIP_FLOW.OVERVIEW);
       }
     }
@@ -175,14 +248,15 @@ export default function GreenRecommendationPage({
 
   const selectedTravelMode = selectedMode
     ? OPTION_TO_TRAVEL_MODE[selectedMode] || null
-    : null;
+    : navRoute?.travelMode || null;
   const originHasCoords = isRouteableCoordinate(
-    location.latitude,
-    location.longitude
+    effectiveOrigin.latitude,
+    effectiveOrigin.longitude
   );
-  const canRequestFirstSegment =
+  const canRequestCurrentSegment =
     thisTripActive &&
     !isDemo &&
+    !allDestinationsReached &&
     context.status === ITINERARY_LOAD_STATUS.SUCCESS &&
     Boolean(firstLiveDestination) &&
     originHasCoords &&
@@ -194,7 +268,7 @@ export default function GreenRecommendationPage({
     errorCode: liveComparisonError,
     loadComparison: loadLiveTransportComparison,
   } = useLiveTransportComparison({
-    origin: location,
+    origin: effectiveOrigin,
     destination: firstLiveDestination,
     contextKey: routingContextKey,
   });
@@ -207,19 +281,66 @@ export default function GreenRecommendationPage({
   const visibleComparisonResults = thisTripActive
     ? liveComparisonResults
     : null;
-  const navigationLive = useMemo(() => {
-    if (!hasSuccessfulSelection) {
-      return { status: "idle", route: null, errorCode: null, sourceKind: null };
-    }
-    return {
-      status: "success",
-      route: selectedEntry.route,
-      errorCode: null,
-      sourceKind: "comparison",
-    };
-  }, [hasSuccessfulSelection, selectedEntry]);
+  const activeNavRoute = navRoute || (hasSuccessfulSelection ? selectedEntry.route : null);
+  const polylinePoints = useMemo(
+    () => decodeGooglePolyline(navRoute?.encodedPolyline || ""),
+    [navRoute]
+  );
+  const carbonSummary = sumCompletedTransportCarbon(
+    tripSession.completedSegments
+  );
 
-  if (thisTripActive && flowScreen === TRIP_FLOW.NAV && !hasSuccessfulSelection) {
+  useEffect(() => {
+    navigationGuardRef.current = {
+      sessionId,
+      currentSegmentIndex,
+      flowScreen,
+      destinationId: firstLiveDestination?.destinationId || null,
+      travelMode: selectedTravelMode,
+    };
+  }, [
+    sessionId,
+    currentSegmentIndex,
+    flowScreen,
+    firstLiveDestination?.destinationId,
+    selectedTravelMode,
+  ]);
+
+  useEffect(() => {
+    if (flowScreen !== TRIP_FLOW.NAV || allDestinationsReached) return;
+    if (!gpsLastFix || !navRoute) return;
+    const result = evaluateNavigationFix({
+      fix: gpsLastFix,
+      destination: firstLiveDestination,
+      polylinePoints,
+      streaks: streaksRef.current,
+    });
+    streaksRef.current = result.streaks;
+    if (result.arrived) {
+      setIsDeviated(false);
+      setFlowScreen(TRIP_FLOW.DESTINATION_REACHED);
+      return;
+    }
+    if (result.deviated) {
+      setIsDeviated(true);
+    }
+  }, [
+    gpsLastFix,
+    flowScreen,
+    navRoute,
+    polylinePoints,
+    firstLiveDestination,
+    allDestinationsReached,
+  ]);
+
+  if (thisTripActive && allDestinationsReached && flowScreen !== TRIP_FLOW.ALL_REACHED) {
+    setFlowScreen(TRIP_FLOW.ALL_REACHED);
+  } else if (
+    thisTripActive &&
+    flowScreen === TRIP_FLOW.NAV &&
+    !hasSuccessfulSelection &&
+    !navRoute
+  ) {
     setFlowScreen(
       liveComparisonStatus === "success" || liveComparisonStatus === "error"
         ? TRIP_FLOW.COMPARE
@@ -229,40 +350,44 @@ export default function GreenRecommendationPage({
     setFlowScreen(TRIP_FLOW.OVERVIEW);
   }
 
-  const startLocationName =
-    location.source === "device"
-      ? location.label
-      : context.itinerary?.startLocation?.name || location.label;
-  const stops = mapStops(context.itinerary);
+  const startLocationName = effectiveOrigin.label || "Current origin";
   const isReady = context.status === ITINERARY_LOAD_STATUS.SUCCESS;
   const isLoadError =
     Boolean(requestedId) &&
     !isReady &&
     context.status !== ITINERARY_LOAD_STATUS.LOADING;
   const mapStartLocation = mapStartForMap(context.itinerary);
-  const totalSegments =
-    tripSession.session?.totalSegments ||
-    context.segments.length ||
-    1;
-  const selectedRoute = hasSuccessfulSelection ? selectedEntry.route : null;
-  const firstSegmentDistance = selectedRoute
+  const selectedRoute = activeNavRoute;
+  const segmentDistance = selectedRoute
     ? {
-        label: "Selected first-segment distance",
+        label: "Selected segment distance",
         value: formatMetersAsKilometres(selectedRoute.distanceMeters),
       }
     : {
-        label: "First-segment distance",
+        label: "Segment distance",
         value: "Not calculated yet",
       };
-  const firstSegmentEta = selectedRoute
+  const segmentEta = selectedRoute
     ? {
-        label: "Selected first-segment ETA",
+        label: "Selected segment ETA",
         value: formatSecondsAsMinutes(selectedRoute.durationSeconds),
       }
     : {
-        label: "First-segment ETA",
+        label: "Segment ETA",
         value: "Not calculated yet",
       };
+
+  function resetNavigationState() {
+    setNavRoute(null);
+    setIsDeviated(false);
+    setSelectedRankingScore(null);
+    setCompleteError(null);
+    setCompleting(false);
+    completingRef.current = false;
+    streaksRef.current = emptyNavigationStreaks();
+    resetGpsWatch();
+    recalculateRoute.reset();
+  }
 
   function goDisabledReason() {
     if (!originHasCoords) return "This segment needs a usable origin before GO.";
@@ -273,7 +398,7 @@ export default function GreenRecommendationPage({
   }
 
   async function handleGo() {
-    if (!canRequestFirstSegment) return;
+    if (!canRequestCurrentSegment) return;
     if (liveComparisonStatus === "loading") return;
     if (
       liveComparisonStatus === "success" ||
@@ -290,9 +415,10 @@ export default function GreenRecommendationPage({
   }
 
   async function handleRefreshComparison() {
-    if (!canRequestFirstSegment) return;
+    if (!canRequestCurrentSegment) return;
     if (liveComparisonStatus === "loading") return;
     setSelectedMode(null);
+    setNavRoute(null);
     setFlowScreen(TRIP_FLOW.LOADING);
     await loadLiveTransportComparison();
     setFlowScreen((screen) =>
@@ -301,12 +427,96 @@ export default function GreenRecommendationPage({
   }
 
   function handleBackToOverview() {
+    const result = leaveNavigationPreview({
+      currentSegmentIndex,
+      destination: firstLiveDestination,
+      lastValidFix: gpsLastFix,
+      previousOrigin: effectiveOrigin,
+    });
+    if (result.usedGpsOrigin && result.originChanged) {
+      setSegmentOriginOverride(result.nextOrigin);
+    }
+    setOriginNotice(result.message);
+    resetNavigationState();
     setFlowScreen(TRIP_FLOW.OVERVIEW);
   }
 
   function handleStartNavigation() {
     if (!hasSuccessfulSelection) return;
+    setNavRoute(selectedEntry.route);
+    setIsDeviated(false);
+    setCompleteError(null);
+    streaksRef.current = emptyNavigationStreaks();
+    setSelectedRankingScore(
+      rankingScoreForMode(liveComparisonResults, selectedTravelMode)
+    );
     setFlowScreen(TRIP_FLOW.NAV);
+  }
+
+  async function handleRecalculate() {
+    if (!isValidGpsFix(gpsLastFix) || !firstLiveDestination || !selectedTravelMode) {
+      return;
+    }
+    const requestedSession = sessionId;
+    const requestedSegment = currentSegmentIndex;
+    const requestedDestinationId = firstLiveDestination.destinationId || null;
+    const requestedMode = selectedTravelMode;
+    const result = await recalculateRoute.recalculate({
+      origin: {
+        latitude: gpsLastFix.latitude,
+        longitude: gpsLastFix.longitude,
+      },
+      destination: {
+        latitude: firstLiveDestination.latitude,
+        longitude: firstLiveDestination.longitude,
+      },
+      travelMode: requestedMode,
+    });
+    const guard = navigationGuardRef.current;
+    if (
+      !result.ok ||
+      guard.flowScreen !== TRIP_FLOW.NAV ||
+      guard.sessionId !== requestedSession ||
+      guard.currentSegmentIndex !== requestedSegment ||
+      guard.destinationId !== requestedDestinationId ||
+      guard.travelMode !== requestedMode
+    ) {
+      return;
+    }
+    setNavRoute(result.route);
+    setIsDeviated(false);
+    setSelectedRankingScore(null);
+    streaksRef.current = emptyNavigationStreaks();
+  }
+
+  async function handleCompleteDestination() {
+    if (completingRef.current || completing) return;
+    if (!navRoute || !firstLiveDestination) return;
+    completingRef.current = true;
+    setCompleting(true);
+    setCompleteError(null);
+    const names = currentSegmentNames(context.segments, currentSegmentIndex);
+    try {
+      const result = await completeCurrentSegment({
+        expectedSegmentIndex: currentSegmentIndex,
+        originName: names.originName || startLocationName,
+        destinationName: names.destinationName || firstLiveDestination.name,
+        route: navRoute,
+        rankingScore: selectedRankingScore,
+      });
+      setSegmentOriginOverride(null);
+      setOriginNotice(null);
+      restoreSavedOrigin();
+      setSelectedMode(null);
+      resetNavigationState();
+      setFlowScreen(
+        result.allDestinationsReached ? TRIP_FLOW.ALL_REACHED : TRIP_FLOW.OVERVIEW
+      );
+    } catch {
+      setCompleteError(COMPLETE_ERROR);
+      completingRef.current = false;
+      setCompleting(false);
+    }
   }
 
   async function handleStartTrip() {
@@ -331,9 +541,11 @@ export default function GreenRecommendationPage({
       await cancelActiveTripSession();
       setConfirmingCancel(false);
       setTripAction({ status: "idle", error: null });
-      setFlowScreen(TRIP_FLOW.OVERVIEW);
+      setSegmentOriginOverride(null);
+      setOriginNotice(null);
       setSelectedMode(null);
-      setPaused(false);
+      resetNavigationState();
+      setFlowScreen(TRIP_FLOW.OVERVIEW);
     } catch (error) {
       setTripAction({
         status: "idle",
@@ -351,6 +563,14 @@ export default function GreenRecommendationPage({
   const tripChecking = tripSession.status === ACTIVE_TRIP_STATUS.LOADING;
   const itineraryLoading =
     Boolean(requestedId) && context.status === ITINERARY_LOAD_STATUS.LOADING;
+  const gpsCurrentLocation =
+    gpsLastFix &&
+    (flowScreen === TRIP_FLOW.NAV || flowScreen === TRIP_FLOW.DESTINATION_REACHED)
+      ? {
+          latitude: gpsLastFix.latitude,
+          longitude: gpsLastFix.longitude,
+        }
+      : null;
 
   return (
     <Layout active="recommendations" onNavigate={onNavigate}>
@@ -415,24 +635,44 @@ export default function GreenRecommendationPage({
 
         {thisTripActive && isReady ? (
           <>
-            <TripFlowStepper screen={flowScreen} />
+            {flowScreen !== TRIP_FLOW.ALL_REACHED ? (
+              <TripFlowStepper screen={flowScreen} />
+            ) : null}
 
-            {flowScreen === TRIP_FLOW.OVERVIEW ? (
+            {flowScreen === TRIP_FLOW.ALL_REACHED ? (
+              <AllDestinationsReached
+                itinerary={context.itinerary}
+                transportCarbonKg={carbonSummary.kg}
+                transportCarbonEmpty={carbonSummary.empty}
+                confirmingCancel={confirmingCancel}
+                cancelError={CANCEL_MESSAGES[tripAction.error] || null}
+                isCancelling={tripAction.status === "cancelling"}
+                onRequestCancel={() => setConfirmingCancel(true)}
+                onConfirmCancel={handleConfirmCancel}
+                onKeepTrip={() => setConfirmingCancel(false)}
+              />
+            ) : null}
+
+            {flowScreen === TRIP_FLOW.OVERVIEW && !allDestinationsReached ? (
               <ActiveTripOverview
                 itinerary={context.itinerary}
                 originName={startLocationName}
-                originIsDevice={location.source === "device"}
+                originIsDevice={effectiveOrigin.source === "device"}
                 nextDestinationName={
                   firstLiveDestination?.name || "Next destination unavailable"
                 }
                 segmentNumber={currentSegmentIndex + 1}
                 totalSegments={totalSegments}
                 currentStopIndex={currentSegmentIndex}
-                firstSegmentDistance={firstSegmentDistance}
-                firstSegmentEta={firstSegmentEta}
+                firstSegmentDistance={segmentDistance}
+                firstSegmentEta={segmentEta}
                 locationStatus={locationStatus}
                 onUseCurrentLocation={requestCurrentLocation}
-                onUseSavedStart={useDemoLocation}
+                onUseSavedStart={() => {
+                  setSegmentOriginOverride(null);
+                  setOriginNotice(null);
+                  restoreSavedOrigin();
+                }}
                 locationLoading={locationStatus === "loading"}
                 startLocation={mapStartLocation}
                 destinations={mapDestinationsForMap(context.itinerary)}
@@ -440,8 +680,11 @@ export default function GreenRecommendationPage({
                 cancelError={CANCEL_MESSAGES[tripAction.error] || null}
                 isCancelling={tripAction.status === "cancelling"}
                 onGo={handleGo}
-                goDisabled={!canRequestFirstSegment}
+                goDisabled={!canRequestCurrentSegment}
                 goDisabledReason={goDisabledReason()}
+                originNotice={originNotice}
+                transportCarbonKg={carbonSummary.kg}
+                transportCarbonEmpty={carbonSummary.empty}
                 onRequestCancel={() => setConfirmingCancel(true)}
                 onConfirmCancel={handleConfirmCancel}
                 onKeepTrip={() => setConfirmingCancel(false)}
@@ -462,7 +705,7 @@ export default function GreenRecommendationPage({
                 options={mockGreenRecommendation.transportationOptions}
                 selectedMode={selectedMode}
                 onSelect={setSelectedMode}
-                onBack={handleBackToOverview}
+                onBack={() => setFlowScreen(TRIP_FLOW.OVERVIEW)}
                 onStartNavigation={handleStartNavigation}
                 liveOriginName={startLocationName}
                 liveDestinationName={
@@ -472,7 +715,7 @@ export default function GreenRecommendationPage({
                 liveComparisonError={liveComparisonError}
                 liveComparisonResults={visibleComparisonResults}
                 onLoadComparison={
-                  canRequestFirstSegment ? handleRefreshComparison : undefined
+                  canRequestCurrentSegment ? handleRefreshComparison : undefined
                 }
                 canStartNavigation={hasSuccessfulSelection}
               />
@@ -480,39 +723,48 @@ export default function GreenRecommendationPage({
 
             {flowScreen === TRIP_FLOW.NAV ? (
               <NavigationPreview
-                stops={stops}
-                segments={context.segments}
                 startLocation={
-                  location.source === "device"
+                  effectiveOrigin.source === "device"
                     ? {
-                        latitude: location.latitude,
-                        longitude: location.longitude,
-                        label: location.label,
+                        latitude: effectiveOrigin.latitude,
+                        longitude: effectiveOrigin.longitude,
+                        label: effectiveOrigin.label,
                       }
-                    : mapStartLocation || location
+                    : mapStartLocation || effectiveOrigin
                 }
                 destinations={mapDestinationsForMap(context.itinerary)}
-                currentIndex={currentSegmentIndex}
-                paused={paused}
-                onPause={() => setPaused(true)}
-                onResume={() => setPaused(false)}
-                onNext={() => {}}
-                onBack={() => setFlowScreen(TRIP_FLOW.COMPARE)}
                 liveOriginName={startLocationName}
                 liveDestinationName={
                   firstLiveDestination?.name || "Next destination"
                 }
                 selectedTravelMode={selectedTravelMode || "TRANSIT"}
-                liveRouteStatus={navigationLive.status}
-                liveRoute={navigationLive.route}
-                liveRouteError={navigationLive.errorCode}
-                liveRouteSource={navigationLive.sourceKind}
+                liveRoute={activeNavRoute}
                 markerSource="saved"
-                progressControlsEnabled
-                progressDisabledReason="Segment completion is not available yet."
-                allowNextDestination={false}
-                backLabel="Back to transport options"
-                useSessionProgressLabels
+                gpsStatus={gpsStatus}
+                gpsAccuracyMeters={gpsLastFix?.accuracyMeters ?? null}
+                currentLocation={gpsCurrentLocation}
+                isDeviated={isDeviated}
+                recalculateStatus={recalculateRoute.status}
+                recalculateError={recalculateRoute.errorCode}
+                canRecalculate={isValidGpsFix(gpsLastFix)}
+                onRecalculate={handleRecalculate}
+                onBackToOverview={handleBackToOverview}
+              />
+            ) : null}
+
+            {flowScreen === TRIP_FLOW.DESTINATION_REACHED ? (
+              <DestinationReached
+                destinationName={
+                  firstLiveDestination?.name || "Current destination"
+                }
+                originName={startLocationName}
+                travelModeLabel={
+                  TRAVEL_MODE_LABEL[selectedTravelMode] || "Selected transport"
+                }
+                completing={completing}
+                completeError={completeError}
+                onComplete={handleCompleteDestination}
+                onBackToOverview={handleBackToOverview}
               />
             ) : null}
           </>

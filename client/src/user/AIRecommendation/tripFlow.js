@@ -3,6 +3,8 @@ export const TRIP_FLOW = {
   LOADING: "comparison_loading",
   COMPARE: "transport_comparison",
   NAV: "navigation_preview",
+  DESTINATION_REACHED: "destination_reached",
+  ALL_REACHED: "all_destinations_reached",
 };
 
 export const FLOW_STEPS = [
@@ -12,7 +14,9 @@ export const FLOW_STEPS = [
 ];
 
 export function flowStepIndex(screen) {
-  if (screen === TRIP_FLOW.NAV) return 2;
+  if (screen === TRIP_FLOW.NAV || screen === TRIP_FLOW.DESTINATION_REACHED) {
+    return 2;
+  }
   if (screen === TRIP_FLOW.LOADING || screen === TRIP_FLOW.COMPARE) return 1;
   return 0;
 }

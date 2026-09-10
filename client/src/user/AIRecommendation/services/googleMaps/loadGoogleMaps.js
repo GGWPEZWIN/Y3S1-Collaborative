@@ -59,6 +59,7 @@ export function loadGoogleMapsLibraries() {
 
       const Map = mapsLibrary.Map;
       const Polyline = mapsLibrary.Polyline;
+      const Circle = mapsLibrary.Circle;
       const AdvancedMarkerElement = markerLibrary.AdvancedMarkerElement;
       const PinElement = markerLibrary.PinElement;
       const LatLngBounds = coreLibrary.LatLngBounds;
@@ -76,6 +77,7 @@ export function loadGoogleMapsLibraries() {
       return {
         Map,
         Polyline,
+        Circle: typeof Circle === "function" ? Circle : null,
         LatLngBounds,
         AdvancedMarkerElement,
         PinElement,
