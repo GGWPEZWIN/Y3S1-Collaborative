@@ -33,22 +33,23 @@ export function fileToBase64(file) {
   });
 }
 
-// 1. Submit or update hotel certification application
-export async function submitHotelApplication(formData, electricityBillFile, waterBillFile) {
+// 1. Submit or update hotel certification application (Supporting 3-month records / 6 files)
+export async function submitHotelApplication(formData, elecFiles = {}, waterFiles = {}) {
   const user = auth.currentUser;
   if (!user) throw new Error("User must be logged in.");
 
   let fraudCheckPassed = true;
   let fraudReason = "Passed automated checks";
 
-  // --- Fraud Check (File Size Heuristic + OCR Scan) ---
-  if (electricityBillFile) {
-    if (electricityBillFile.size < 40 * 1024) {
+  // --- Fraud Check using Month 1 Electricity Bill ---
+  const primaryElecFile = elecFiles.m1_file || elecFiles; // backwards compatibility if passed as a single file
+  if (primaryElecFile && typeof primaryElecFile.size === "number") {
+    if (primaryElecFile.size < 40 * 1024) {
       fraudCheckPassed = false;
       fraudReason = "Suspicious bill: Image file size is too small or low-resolution (< 40KB).";
     } else {
       try {
-        const ocrResult = await Tesseract.recognize(electricityBillFile, "eng");
+        const ocrResult = await Tesseract.recognize(primaryElecFile, "eng");
         const cleanText = (ocrResult?.data?.text || "").replace(/,/g, "");
         const targetUsage = String(formData.electricityUsage || "").trim();
 
@@ -62,16 +63,14 @@ export async function submitHotelApplication(formData, electricityBillFile, wate
     }
   }
 
-  // Convert files to Base64 Data URLs
-  let electricityBillUrl = null;
-  let waterBillUrl = null;
+  // Convert all 6 monthly files to Base64 Data URLs
+  const elecM1Url = elecFiles.m1_file ? await fileToBase64(elecFiles.m1_file) : (typeof elecFiles.size === "number" ? await fileToBase64(elecFiles) : null);
+  const elecM2Url = elecFiles.m2_file ? await fileToBase64(elecFiles.m2_file) : null;
+  const elecM3Url = elecFiles.m3_file ? await fileToBase64(elecFiles.m3_file) : null;
 
-  if (electricityBillFile) {
-    electricityBillUrl = await fileToBase64(electricityBillFile);
-  }
-  if (waterBillFile) {
-    waterBillUrl = await fileToBase64(waterBillFile);
-  }
+  const waterM1Url = waterFiles.m1_file ? await fileToBase64(waterFiles.m1_file) : (waterFiles.name ? await fileToBase64(waterFiles) : null);
+  const waterM2Url = waterFiles.m2_file ? await fileToBase64(waterFiles.m2_file) : null;
+  const waterM3Url = waterFiles.m3_file ? await fileToBase64(waterFiles.m3_file) : null;
 
   const initialStatus = fraudCheckPassed ? "Pending Review" : "Flagged";
 
@@ -89,14 +88,25 @@ export async function submitHotelApplication(formData, electricityBillFile, wate
     waterUsage: Number(formData.waterUsage) || 0,
     electricityUsage: Number(formData.electricityUsage) || 0,
     sustainabilityInitiatives: formData.sustainabilityInitiatives || "",
-    status: initialStatus, // "Pending Review" | "Approved" | "Flagged" | "Rejected"
+    status: initialStatus,
     fraudFlags: {
       hasSuspicion: !fraudCheckPassed,
       reason: fraudReason,
     },
-    certificationTier: null, // No tier until Admin approves
-    electricityBillUrl: electricityBillUrl || null,
-    waterBillUrl: waterBillUrl || null,
+    certificationTier: null,
+    
+    // Store individual URLs so AdminReview can render all 6 files explicitly
+    electricityBillUrl: elecM1Url || null,
+    waterBillUrl: waterM1Url || null,
+    
+    electricityBillM1Url: elecM1Url || null,
+    electricityBillM2Url: elecM2Url || null,
+    electricityBillM3Url: elecM3Url || null,
+    waterBillM1Url: waterM1Url || null,
+    waterBillM2Url: waterM2Url || null,
+    waterBillM3Url: waterM3Url || null,
+
+    threeMonthRecords: formData.threeMonthRecords || {},
     expiryDate: oneYearFromNow.toISOString(),
     violationsCount: 0,
     spotCheck: {

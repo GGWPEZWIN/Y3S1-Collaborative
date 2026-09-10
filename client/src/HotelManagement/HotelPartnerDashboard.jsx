@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Leaf,
   CheckCircle2,
@@ -18,20 +18,38 @@ import {
   X,
   ExternalLink,
   Lightbulb,
-  ArrowUpRight,
   TrendingUp,
   Filter
 } from "lucide-react";
 import { auth, db } from "../firebase/config";
 import { listenToHotelApplication, uploadSpotCheckEvidence } from "../firebase/hotelService";
-import { doc, getDoc, collection, onSnapshot, query, orderBy, updateDoc, addDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, collection, onSnapshot, query, orderBy, updateDoc } from "firebase/firestore";
+
+/* ------------------------------------------------------------------
+   Clock helpers live at module scope. Expiry and renewal windows are
+   day-scale, so the clock only needs to tick hourly, but it must never
+   be read during render or the renewal banner can flip on an unrelated
+   re-render.
+   ------------------------------------------------------------------ */
+
+const MOUNT_TIME = Date.now();
+const CLOCK_TICK_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const isoNow = () => new Date().toISOString();
 
 export default function HotelPartnerDashboard({ onNavigate }) {
+
   const [tab, setTab] = useState("pending");
   const [hotelData, setHotelData] = useState(null);
   const [userName, setUserName] = useState("Hotel Partner");
-  const [loading, setLoading] = useState(true);
+  // Seeded from the auth state at mount, so the effect below never has to
+  // call setLoading(false) synchronously for the signed-out case.
+  const [loading, setLoading] = useState(() => Boolean(auth.currentUser));
   const [dismissedNotice, setDismissedNotice] = useState(false);
+
+  // Single clock for expiry and renewal maths
+  const [now, setNow] = useState(MOUNT_TIME);
 
   // Subcollection audit history
   const [auditHistory, setAuditHistory] = useState([]);
@@ -56,11 +74,13 @@ export default function HotelPartnerDashboard({ onNavigate }) {
   const [submittingUpgrade, setSubmittingUpgrade] = useState(false);
 
   useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
     const user = auth.currentUser;
-    if (!user) {
-      setLoading(false);
-      return;
-    }
+    if (!user) return;
 
     const fallbackTag = `Hotel_${(user.uid.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0) % 9000) + 1000}`;
 
@@ -114,9 +134,8 @@ export default function HotelPartnerDashboard({ onNavigate }) {
   const targetNextTier = currentTier === "Bronze" ? "Silver" : currentTier === "Silver" ? "Gold" : "Platinum";
 
   // Expiry calculation
-  const nowMs = Date.now();
-  const expiryDateMs = hotelData?.expiryDate ? new Date(hotelData.expiryDate).getTime() : nowMs + 365 * 24 * 3600 * 1000;
-  const daysUntilExpiry = Math.ceil((expiryDateMs - nowMs) / (1000 * 60 * 60 * 24));
+  const expiryDateMs = hotelData?.expiryDate ? new Date(hotelData.expiryDate).getTime() : now + 365 * DAY_MS;
+  const daysUntilExpiry = Math.ceil((expiryDateMs - now) / DAY_MS);
   const isRenewalDue = !isSuspended && isApproved && daysUntilExpiry <= 30 && hotelData?.renewal?.status !== "Submitted";
 
   // Active spot-check only shows when strictly Pending and not suspended
@@ -215,7 +234,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
           initiatives: upgradeForm.implementedInitiatives,
           submittedFileName: upgradeFile.name,
           submittedFileUrl: fileUrl,
-          requestedAt: new Date().toISOString(),
+          requestedAt: isoNow(),
         }
       });
 
@@ -517,7 +536,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
         {/* Documents & Audits Section Header */}
         <div style={styles.docHeaderRow}>
           <button style={styles.docFilterBtn}>
-            <FileText size={16} /> Documents & Audits
+            <FileText size={16} /> Documents &amp; Audits
           </button>
         </div>
 
@@ -550,7 +569,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
               >
                 <option value="All">All Statuses ({auditHistory.length})</option>
                 <option value="Under Review">Under Review</option>
-                <option value="Passed">Verified & Passed</option>
+                <option value="Passed">Verified &amp; Passed</option>
                 <option value="Rejected">Rejected</option>
               </select>
             </div>
