@@ -323,7 +323,6 @@ export default function HotelAdminReview() {
   });
 
   const flaggedApps = applications.filter((a) => {
-    // Once pardoned (Approved) or fully resolved, remove from flagged list
     if (a.status === "Approved") return false;
 
     const isSuspended = a.status === "Suspended";
@@ -369,6 +368,45 @@ export default function HotelAdminReview() {
         (item.address || "").toLowerCase().includes(q) ||
         (item.state || "").toLowerCase().includes(q)
     );
+  };
+
+  // Helper to collect all attached document URLs from a hotel application
+  const getAllAppDocuments = (app) => {
+    const docs = [];
+    
+    // Check 3-month electricity records
+    if (app.electricityBillM1Url) docs.push({ name: "Electricity Bill (Month 1)", url: app.electricityBillM1Url });
+    if (app.electricityBillM2Url) docs.push({ name: "Electricity Bill (Month 2)", url: app.electricityBillM2Url });
+    if (app.electricityBillM3Url) docs.push({ name: "Electricity Bill (Month 3)", url: app.electricityBillM3Url });
+
+    // Check 3-month water records
+    if (app.waterBillM1Url) docs.push({ name: "Water Bill (Month 1)", url: app.waterBillM1Url });
+    if (app.waterBillM2Url) docs.push({ name: "Water Bill (Month 2)", url: app.waterBillM2Url });
+    if (app.waterBillM3Url) docs.push({ name: "Water Bill (Month 3)", url: app.waterBillM3Url });
+
+    // Legacy single field fallbacks if 3-month fields aren't populated yet
+    if (docs.length === 0) {
+      if (app.electricityBillUrl) docs.push({ name: "Electricity Bill", url: app.electricityBillUrl });
+      if (app.waterBillUrl) docs.push({ name: "Water Bill", url: app.waterBillUrl });
+      if (app.gasBillUrl) docs.push({ name: "Gas / Energy Bill", url: app.gasBillUrl });
+      if (app.meterPhotoUrl) docs.push({ name: "Meter Photo", url: app.meterPhotoUrl });
+      if (app.licenseUrl) docs.push({ name: "Business License", url: app.licenseUrl });
+      if (app.auditReportUrl) docs.push({ name: "Audit Report", url: app.auditReportUrl });
+    }
+
+    // Check if there is a generic documents array
+    if (Array.isArray(app.documents)) {
+      app.documents.forEach((d, idx) => {
+        if (d && d.url) docs.push({ name: d.name || `Document ${idx + 1}`, url: d.url });
+      });
+    }
+
+    // Final generic fallback
+    if (docs.length === 0 && app.documentUrl) {
+      docs.push({ name: "Submitted Evidence Document", url: app.documentUrl });
+    }
+
+    return docs;
   };
 
   return (
@@ -565,67 +603,69 @@ export default function HotelAdminReview() {
             filterBySearch(pendingApps).length === 0 ? (
               <div style={styles.emptyBox}>No applications found under this filter.</div>
             ) : (
-              filterBySearch(pendingApps).map((app) => (
-                <div key={app.id} style={styles.pendingCard}>
-                  <div style={styles.cardHeaderRow}>
-                    <h3 style={styles.cardHotelName}>{app.hotelName || "Hotel Property"}</h3>
-                    <span style={styles.cardDate}>
-                      {app.status === "Approved" ? "✓ Approved" : app.status === "Rejected" ? "✕ Rejected" : "Pending Review"}
-                    </span>
-                  </div>
+              filterBySearch(pendingApps).map((app) => {
+                const allDocs = getAllAppDocuments(app);
 
-                  <div style={styles.locationRow}>
-                    <MapPin size={16} color="#9ca3af" />
-                    <span>{app.address ? `${app.address}, ${app.state || "Malaysia"}` : "Address not provided"}</span>
-                  </div>
+                return (
+                  <div key={app.id} style={styles.pendingCard}>
+                    <div style={styles.cardHeaderRow}>
+                      <h3 style={styles.cardHotelName}>{app.hotelName || "Hotel Property"}</h3>
+                      <span style={styles.cardDate}>
+                        {app.status === "Approved" ? "✓ Approved" : app.status === "Rejected" ? "✕ Rejected" : "Pending Review"}
+                      </span>
+                    </div>
 
-                  <div style={styles.metricsGrid3}>
-                    <div style={styles.metricBox}>
-                      <Zap size={24} color="#eab308" fill="#fef08a" />
-                      <div style={styles.metricNum}>{app.electricityUsage?.toLocaleString() || "0"}</div>
-                      <div style={styles.metricUnit}>kWh/mo</div>
+                    <div style={styles.locationRow}>
+                      <MapPin size={16} color="#9ca3af" />
+                      <span>{app.address ? `${app.address}, ${app.state || "Malaysia"}` : "Address not provided"}</span>
                     </div>
-                    <div style={styles.metricBox}>
-                      <Droplets size={24} color="#38bdf8" fill="#bae6fd" />
-                      <div style={styles.metricNum}>{app.waterUsage?.toLocaleString() || "0"}</div>
-                      <div style={styles.metricUnit}>L/mo</div>
-                    </div>
-                    <div style={styles.metricBox}>
-                      <FileText size={24} color="#4b5563" />
-                      <div style={styles.metricNum}>{app.rooms || "1"}</div>
-                      <div style={styles.metricUnit}>rooms</div>
-                    </div>
-                  </div>
 
-                  <div style={styles.documentPreviewRow}>
-                    {app.electricityBillUrl && (
-                      <button type="button" onClick={() => openDocumentPreview(app.electricityBillUrl)} style={styles.previewBtn}>
-                        <FileText size={14} color="#0284c7" />
-                        <span>View Electricity Bill</span>
-                        <ExternalLink size={12} />
-                      </button>
+                    <div style={styles.metricsGrid3}>
+                      <div style={styles.metricBox}>
+                        <Zap size={24} color="#eab308" fill="#fef08a" />
+                        <div style={styles.metricNum}>{app.electricityUsage?.toLocaleString() || "0"}</div>
+                        <div style={styles.metricUnit}>kWh/mo</div>
+                      </div>
+                      <div style={styles.metricBox}>
+                        <Droplets size={24} color="#38bdf8" fill="#bae6fd" />
+                        <div style={styles.metricNum}>{app.waterUsage?.toLocaleString() || "0"}</div>
+                        <div style={styles.metricUnit}>L/mo</div>
+                      </div>
+                      <div style={styles.metricBox}>
+                        <FileText size={24} color="#4b5563" />
+                        <div style={styles.metricNum}>{app.rooms || "1"}</div>
+                        <div style={styles.metricUnit}>rooms</div>
+                      </div>
+                    </div>
+
+                    {/* DYNAMICALLY RENDER ALL ATTACHED DOCUMENTS */}
+                    <div style={styles.documentPreviewRow}>
+                      {allDocs.length > 0 ? (
+                        allDocs.map((docItem, idx) => (
+                          <button key={idx} type="button" onClick={() => openDocumentPreview(docItem.url)} style={styles.previewBtn}>
+                            <FileText size={14} color="#0284c7" />
+                            <span>View {docItem.name}</span>
+                            <ExternalLink size={12} />
+                          </button>
+                        ))
+                      ) : (
+                        <span style={{ fontSize: 12, color: "#9ca3af" }}>No documents attached to this application.</span>
+                      )}
+                    </div>
+
+                    {app.status !== "Approved" && (
+                      <div style={styles.actionRow}>
+                        <button type="button" onClick={() => handleStatus(app.id, "Approved")} style={styles.greenBtn}>
+                          Approve (Grant Bronze)
+                        </button>
+                        <button type="button" onClick={() => handleStatus(app.id, "Rejected")} style={styles.redOutlineBtn}>
+                          Reject
+                        </button>
+                      </div>
                     )}
-                    {app.waterBillUrl && (
-                      <button type="button" onClick={() => openDocumentPreview(app.waterBillUrl)} style={styles.previewBtn}>
-                        <FileText size={14} color="#0284c7" />
-                        <span>View Water Bill</span>
-                        <ExternalLink size={12} />
-                      </button>
-                    )}
                   </div>
-
-                  {app.status !== "Approved" && (
-                    <div style={styles.actionRow}>
-                      <button type="button" onClick={() => handleStatus(app.id, "Approved")} style={styles.greenBtn}>
-                        Approve (Grant Bronze)
-                      </button>
-                      <button type="button" onClick={() => handleStatus(app.id, "Rejected")} style={styles.redOutlineBtn}>
-                        Reject
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))
+                );
+              })
             )
           )}
 
@@ -638,6 +678,7 @@ export default function HotelAdminReview() {
                 const isOpen = showAiDetails[app.id] ?? true;
                 const strikes = app.flagStrikesCount || 0;
                 const isSuspended = app.status === "Suspended";
+                const allDocs = getAllAppDocuments(app);
 
                 return (
                   <div key={app.id} style={{ ...styles.flaggedCard, borderColor: isSuspended ? "#7f1d1d" : "#ef4444" }}>
@@ -675,14 +716,15 @@ export default function HotelAdminReview() {
                       </div>
                     )}
 
+                    {/* DYNAMICALLY RENDER ALL DOCUMENTS FOR FLAGGED CARDS */}
                     <div style={styles.documentPreviewRow}>
-                      {app.electricityBillUrl && (
-                        <button type="button" onClick={() => openDocumentPreview(app.electricityBillUrl)} style={styles.previewBtn}>
+                      {allDocs.map((docItem, idx) => (
+                        <button key={idx} type="button" onClick={() => openDocumentPreview(docItem.url)} style={styles.previewBtn}>
                           <FileText size={14} color="#dc2626" />
-                          <span>Inspect Declared Document</span>
+                          <span>Inspect {docItem.name}</span>
                           <ExternalLink size={12} />
                         </button>
-                      )}
+                      ))}
                     </div>
 
                     {!isSuspended && (
