@@ -1,11 +1,12 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import useAuthUser from "../hooks/useAuthUser";
 import useWasteLedger from "../hooks/useWasteLedger";
 import useLodging from "../hooks/useLodging";
+import useReminderPref from "../hooks/useReminderPref";
+import useActiveTrip from "../hooks/useActiveTrip";
 
-import TopBar from "../components/TopBar";
-import Sidebar from "../components/Sidebar";
+import Layout from "../../../shared/components/Layout";
 import ReminderBanner from "../components/ReminderBanner";
 import WasteStats from "../components/WasteStats";
 import EntryPoints from "../components/EntryPoints";
@@ -13,6 +14,7 @@ import EcoNudge from "../components/EcoNudge";
 import RecentLogs from "../components/RecentLogs";
 import ReminderSettings from "../components/ReminderSettings";
 import useGeofenceReminder from "../hooks/useGeofenceReminder";
+import { notify } from "../services/geoService";
 
 import ScannerView from "../components/ScannerView";
 import ResourceLoggerView from "../components/ResourceLoggerView";
@@ -37,11 +39,9 @@ function Shell({ children }) {
 }
 
 export default function WastePage({ onNavigate = () => {} }) {
-  const [active, setActive] = useState("waste");
   const [view, setView] = useState("dashboard"); // dashboard | scan | logger | edit | reports
   const [inspecting, setInspecting] = useState(null);
   const [editing, setEditing] = useState(null);
-  const [remindersOn, setRemindersOn] = useState(false);
   const [reminderBanner, setReminderBanner] = useState(false);
 
   const { status, user: authUser } = useAuthUser();
@@ -50,6 +50,31 @@ export default function WastePage({ onNavigate = () => {} }) {
   const { logs, loading, error, addLog, editLog, hasLoggedToday, recent, nudges, monthlies, mcc } =
     useWasteLedger(uid);
   const { lodging, save: saveLodging } = useLodging(uid);
+  const [remindersOn, setRemindersOn] = useReminderPref(uid);
+  const { tripId, tripTitle } = useActiveTrip();
+
+  // Greet a returning traveller who hasn't logged today yet, every time
+  // the page loads — not just when the geofence catches them arriving.
+  // The OS-level popup is gated on the reminders toggle, since that is
+  // the only place permission is ever requested from the user.
+  //
+  // The tag carries a per-visit timestamp: a fixed tag would make a new
+  // Notification silently replace the previous one (per spec) instead of
+  // alerting again, so a still-open reminder from the last visit would
+  // swallow every notification after it.
+  const notifiedRef = useRef(false);
+  useEffect(() => {
+    if (!loading && !hasLoggedToday) {
+      setReminderBanner(true);
+      if (remindersOn && !notifiedRef.current) {
+        notifiedRef.current = true;
+        notify("GreenTrip Malaysia", {
+          body: "You haven't logged today's waste yet. Complete today's ledger while the day is still fresh.",
+          tag: `greentrip-daily-ledger-${Date.now()}`,
+        });
+      }
+    }
+  }, [loading, hasLoggedToday, remindersOn]);
 
   const handleGeofenceTrigger = useCallback(() => setReminderBanner(true), []);
   const geofence = useGeofenceReminder({
@@ -63,17 +88,9 @@ export default function WastePage({ onNavigate = () => {} }) {
     async (entry) => {
       setView("dashboard");
       setReminderBanner(false);
-      await addLog(entry);
+      await addLog({ ...entry, tripId: tripId || null, tripTitle: tripId ? tripTitle : null });
     },
-    [addLog]
-  );
-
-  const navigate = useCallback(
-    (item) => {
-      setActive(item.id);
-      onNavigate(item.path);
-    },
-    [onNavigate]
+    [addLog, tripId, tripTitle]
   );
 
   if (status === "loading") {
@@ -101,18 +118,9 @@ export default function WastePage({ onNavigate = () => {} }) {
     );
   }
 
-  const displayUser = {
-    name: authUser.displayName || authUser.email || "Traveller",
-    ecoScore: mcc.score,
-  };
-
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <TopBar user={displayUser} />
-
-      <div className="flex">
-        <Sidebar active={active} onSelect={navigate} />
-
+    <Layout active="waste" onNavigate={onNavigate}>
+      <div className="bg-slate-50 text-slate-900">
         {view === "scan" ? (
           <ScannerView onBack={() => setView("dashboard")} onCommit={commit} />
         ) : view === "logger" ? (
@@ -138,7 +146,7 @@ export default function WastePage({ onNavigate = () => {} }) {
             }}
           />
         ) : (
-        <main className="flex-1 px-6 lg:px-8 py-8 max-w-6xl">
+        <main className="px-6 lg:px-8 py-8 max-w-6xl">
           <h1 className="text-4xl font-bold tracking-tight">Waste &amp; Resource Footprint</h1>
           <p className="mt-2 text-lg text-slate-500">
             Track and reduce your environmental impact
@@ -156,12 +164,7 @@ export default function WastePage({ onNavigate = () => {} }) {
             </div>
           )}
 
-          {reminderBanner && (
-            <ReminderBanner
-              onDismiss={() => setReminderBanner(false)}
-              lodgingName={lodging ? lodging.name : "your lodging"}
-            />
-          )}
+          {reminderBanner && <ReminderBanner onDismiss={() => setReminderBanner(false)} />}
 
           {loading ? (
             <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -188,7 +191,7 @@ export default function WastePage({ onNavigate = () => {} }) {
 
           {!loading && (
             <RecentLogs
-              logs={logs.slice(0, 3)}
+              logs={logs}
               onOpenReports={() => setView("reports")}
               onInspect={setInspecting}
               onEdit={(log) => {
@@ -200,7 +203,7 @@ export default function WastePage({ onNavigate = () => {} }) {
 
           <ReminderSettings
             enabled={remindersOn}
-            onToggle={() => setRemindersOn((v) => !v)}
+            onToggle={() => setRemindersOn(!remindersOn)}
             status={geofence.status}
             distance={geofence.distance}
             lodging={lodging}
@@ -210,10 +213,7 @@ export default function WastePage({ onNavigate = () => {} }) {
         )}
       </div>
 
-
-
       {inspecting && <DetectionModal log={inspecting} onClose={() => setInspecting(null)} />}
-
-    </div>
+    </Layout>
   );
 }

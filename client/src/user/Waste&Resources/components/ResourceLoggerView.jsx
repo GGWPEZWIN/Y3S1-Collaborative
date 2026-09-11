@@ -13,6 +13,7 @@ import { getBenchmarks } from "../services/baselineService";
 const WATER_MAX = 200;
 
 export default function ResourceLoggerView({ onBack, onCommit }) {
+  const [foodWaste, setFoodWaste] = useState(0);
   const [plastic, setPlastic] = useState(0);
   const [water, setWater] = useState(50);
   const [disposables, setDisposables] = useState(0);
@@ -40,6 +41,16 @@ export default function ResourceLoggerView({ onBack, onCommit }) {
           <h2 className="text-lg font-semibold">Log Today&apos;s Usage</h2>
 
           <div className="mt-6 space-y-6">
+            <div>
+              <NumberField
+                label="Food Waste"
+                hint="Leftovers on the plate — type it in, or use the AI Scanner instead"
+                suffix="g"
+                value={foodWaste}
+                onChange={setFoodWaste}
+              />
+            </div>
+
             <NumberField
               label="Single-Use Plastic Items"
               hint="Bottles, bags, straws, containers, etc."
@@ -79,6 +90,9 @@ export default function ResourceLoggerView({ onBack, onCommit }) {
             <h3 className="text-base font-semibold">Impact Summary</h3>
             <ul className="mt-3 space-y-1.5 text-base text-slate-700">
               <li>
+                • Food waste: {foodWaste}g (Avg: {benchmarks.foodWaste}g/day)
+              </li>
+              <li>
                 • Plastic items: {plastic} (Avg: {benchmarks.plastic.toFixed(1)}/day)
               </li>
               <li>
@@ -97,7 +111,7 @@ export default function ResourceLoggerView({ onBack, onCommit }) {
               onCommit({
                 type: "Resource",
                 source: "manual",
-                foodWaste: 0,
+                foodWaste,
                 plastic,
                 water,
                 disposables,

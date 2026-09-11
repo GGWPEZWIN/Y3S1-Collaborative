@@ -123,23 +123,23 @@ export async function getUserRole(uid) {
    ENSURE SEARCH FIELDS
 ========================================================= */
 
-async function ensureSearchFields(userDocRef) {
-  const snap = await getDoc(userDocRef);
-
-  if (snap.exists()) {
-    const data = snap.data();
-
-    if (!data.name_lower && data.name) {
-      await setDoc(
-        userDocRef,
-        {
-          name_lower: data.name.trim().toLowerCase(),
-        },
-        { merge: true }
-      );
-    }
-  }
-}
+//async function ensureSearchFields(userDocRef) {
+//  const snap = await getDoc(userDocRef);
+//
+//  if (snap.exists()) {
+//    const data = snap.data();
+//
+//    if (!data.name_lower && data.name) {
+//      await setDoc(
+//        userDocRef,
+//        {
+//          name_lower: data.name.trim().toLowerCase(),
+//        },
+//        { merge: true }
+//      );
+//    }
+//  }
+//}
 
 /* =========================================================
    ENSURE USER DOCUMENT

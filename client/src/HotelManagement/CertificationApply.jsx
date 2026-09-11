@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Leaf,
   ChevronLeft,
   Upload,
   AlertCircle,
   CheckCircle2,
-  FileText,
   Calculator,
   Calendar
 } from "lucide-react";
@@ -50,12 +49,14 @@ export default function CertificationApply({ onNavigate }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Pre-fill contact email if hotel user is logged in
   useEffect(() => {
-    const user = auth.currentUser;
-    if (user && user.email) {
+  const unsubscribe = auth.onAuthStateChanged((user) => {
+    if (user?.email) {
       setFormData((prev) => ({ ...prev, contactEmail: user.email }));
     }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const handleInputChange = (e) => {

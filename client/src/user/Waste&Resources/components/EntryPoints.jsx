@@ -26,7 +26,7 @@ export default function EntryPoints({ onScan, onLog }) {
           <h2 className="text-xl font-semibold">Resource Logger</h2>
         </div>
         <p className="mt-3 text-lg text-slate-500">
-          Manually log plastic, water, and amenities
+          Manually log food waste, plastic, water, and amenities
         </p>
         <div className="flex-1" />
         <button

@@ -72,7 +72,14 @@ app.add_middleware(
 device = "cuda" if torch.cuda.is_available() else "cpu"
 profile = load_profile()
 
+# Captured once, at the moment the model actually loads — /health must report
+# what this process has in memory, not re-check the filesystem on every call.
+# Re-checking the path let /health claim the fine-tuned weights were active
+# whenever the file existed on disk, even on a stale process that loaded the
+# stock fallback before that file was created and was never restarted.
+_SEG_WEIGHTS_LOADED = SEG_WEIGHTS if os.path.exists(SEG_WEIGHTS) else "yolo11n-seg.pt (NOT fine-tuned)"
 seg_model = YOLO(SEG_WEIGHTS) if os.path.exists(SEG_WEIGHTS) else YOLO("yolo11n-seg.pt")
+logger.info("[startup] segmentation weights: %s", _SEG_WEIGHTS_LOADED)
 depth_processor = AutoImageProcessor.from_pretrained(DEPTH_MODEL)
 depth_model = AutoModelForDepthEstimation.from_pretrained(DEPTH_MODEL).to(device).eval()
 
@@ -82,8 +89,7 @@ def health():
     return {
         "status": "ok",
         "device": device,
-        "segmentation_weights": SEG_WEIGHTS if os.path.exists(SEG_WEIGHTS)
-        else "yolo11n-seg.pt (NOT fine-tuned)",
+        "segmentation_weights": _SEG_WEIGHTS_LOADED,
         "calibrated": os.path.exists(os.environ.get("CALIBRATION_PATH", "calibration.json")),
     }
 

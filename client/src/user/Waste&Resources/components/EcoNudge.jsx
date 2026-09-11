@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { MapPin } from "lucide-react";
 import MiniMap from "./MiniMap";
 import useNearbyPois from "../hooks/useNearbyPois";
@@ -13,7 +13,18 @@ import useNearbyPois from "../hooks/useNearbyPois";
 
 export default function EcoNudge({ nudge, lodging }) {
   const [open, setOpen] = useState(false);
-  const fallbackCentre = lodging ? { lat: lodging.lat, lng: lodging.lng } : null;
+  // Keyed on the coordinates themselves, not on `lodging` — the Firestore
+  // subscription hands back a new object on every snapshot even when the
+  // data hasn't changed, and a fresh object identity here is a dependency
+  // of useNearbyPois's effect below. Without this, any unrelated re-render
+  // (e.g. the geofence watch ticking while reminders are on) recreated the
+  // fallback centre, which tore down and restarted the POI lookup before
+  // it could ever finish — stuck forever on "Looking for nearby places…".
+  const fallbackCentre = useMemo(() => {
+    return lodging ? { lat: lodging.lat, lng: lodging.lng } : null;
+    // lodging?.lat/lng are the real deps; `lodging` itself churns identity
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lodging?.lat, lodging?.lng]);
   const { status, pois, centre, approximate, live } = useNearbyPois(
     nudge.poiKind,
     open,
@@ -41,26 +52,22 @@ export default function EcoNudge({ nudge, lodging }) {
 
               {open && (
                 <div className="mt-4">
-                  {status === "loading" && (
+                  {/* The map only needs a centre — render it as soon as one is
+                      known instead of waiting on the slower POI lookup too. */}
+                  {!centre && status === "error" ? (
+                    // No lodging to fall back to and live location failed —
+                    // without this branch the card was stuck on the spinner
+                    // forever, since it never gets a centre to render past.
+                    <p className="mt-2 text-sm text-slate-500">
+                      Could not determine your location. Check that location access is
+                      allowed for this site, or set your lodging in Logging Reminders
+                      below so this can fall back to it.
+                    </p>
+                  ) : !centre ? (
                     <div className="h-64 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center">
                       <div className="w-8 h-8 rounded-full border-4 border-slate-200 border-t-green-600 animate-spin" />
                     </div>
-                  )}
-
-                  {status === "error" && (
-                    <p className="text-slate-500">
-                      Could not load nearby places right now. Try again shortly.
-                    </p>
-                  )}
-
-                  {status === "empty" && (
-                    <p className="text-slate-500">
-                      No mapped locations within 3km. OpenStreetMap coverage varies by
-                      area, and you can add missing ones at openstreetmap.org.
-                    </p>
-                  )}
-
-                  {status === "ready" && (
+                  ) : (
                     <>
                       <MiniMap centre={centre} pois={pois} />
 
@@ -77,21 +84,43 @@ export default function EcoNudge({ nudge, lodging }) {
                         </p>
                       )}
 
-                      <ul className="mt-4 space-y-3">
-                        {pois.map((p) => (
-                          <li key={p.id} className="flex items-center justify-between gap-4">
-                            <span className="text-base truncate">{p.name}</span>
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-base font-medium text-green-700 hover:text-green-900 whitespace-nowrap tabular-nums shrink-0"
-                            >
-                              {p.km} km →
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
+                      {status === "loading" && (
+                        <p className="mt-2 text-sm text-slate-500">
+                          Looking for nearby places…
+                        </p>
+                      )}
+
+                      {status === "error" && (
+                        <p className="mt-2 text-sm text-slate-500">
+                          Could not load nearby places right now. Try again shortly.
+                        </p>
+                      )}
+
+                      {status === "empty" && (
+                        <p className="mt-2 text-sm text-slate-500">
+                          No mapped locations within 5km. OpenStreetMap coverage
+                          varies by area, and you can add missing ones at
+                          openstreetmap.org.
+                        </p>
+                      )}
+
+                      {status === "ready" && (
+                        <ul className="mt-4 space-y-3">
+                          {pois.map((p) => (
+                            <li key={p.id} className="flex items-center justify-between gap-4">
+                              <span className="text-base truncate">{p.name}</span>
+                              <a
+                                href={`https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-base font-medium text-green-700 hover:text-green-900 whitespace-nowrap tabular-nums shrink-0"
+                              >
+                                {p.km} km →
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </>
                   )}
                 </div>

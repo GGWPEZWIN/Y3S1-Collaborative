@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { ArrowLeft, Search, UserPlus, Check, X, MessageCircle, Trash2, Users, MoreVertical } from "lucide-react";
 import Layout from "../../../shared/components/Layout";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
@@ -86,7 +86,12 @@ export default function Friends({ onNavigate }) {
     setSearchStatus("");
     try {
       await sendFriendRequest(
-        { uid: authUser.uid, displayName: profile?.name, email: profile?.email },
+        {
+          uid: authUser.uid,
+          displayName: profile?.name,
+          email: profile?.email,
+          profile_photo_url: profile?.profile_photo_url,
+        },
         targetUser
       );
       setSearchStatus(`Friend request sent to ${targetUser.name || targetUser.email}!`);
