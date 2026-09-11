@@ -8,6 +8,8 @@ import {
   startTripSession,
 } from "../../../firebase/tripSessionService";
 import { publishEcoReport } from "../../../firebase/ecoReportService";
+import { useCurrentUser } from "../../../firebase/useCurrentUser";
+import useTripWasteImpact from "../../../firebase/useTripWasteImpact";
 import { mockGreenRecommendation } from "../data/mockModule2Data";
 import useActiveTripSession, {
   ACTIVE_TRIP_STATUS,
@@ -247,6 +249,8 @@ export default function GreenRecommendationPage({
     typeof itineraryId === "string" ? itineraryId.trim() : "";
   const tripSession = useActiveTripSession(requestedId || null);
   const ecoReport = useEcoReport(requestedId || null);
+  const { authUser } = useCurrentUser();
+  const wasteImpact = useTripWasteImpact(authUser?.uid || null, requestedId || null);
   useEffect(() => {
     finishingRef.current = false;
     publishingRef.current = false;
@@ -977,6 +981,8 @@ export default function GreenRecommendationPage({
         {surface === RECOMMENDATION_SURFACE.COMPLETED_REPORT ? (
           <CompletedEcoReport
             reportView={completedReportView}
+            wasteImpact={wasteImpact.impact}
+            wasteImpactStatus={wasteImpact.status}
             publishing={publishing}
             publishError={publishError}
             onPublish={handlePublishReport}
@@ -1004,6 +1010,8 @@ export default function GreenRecommendationPage({
         {surface === RECOMMENDATION_SURFACE.COMPLETION_SUMMARY ? (
           <CompletionSummary
             summary={completionSummary}
+            wasteImpact={wasteImpact.impact}
+            wasteImpactStatus={wasteImpact.status}
             confirmingCancel={confirmingCancel}
             cancelError={CANCEL_MESSAGES[tripAction.error] || null}
             isCancelling={tripAction.status === "cancelling"}
