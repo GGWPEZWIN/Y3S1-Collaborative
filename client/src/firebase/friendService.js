@@ -246,6 +246,8 @@ export async function sendFriendRequest(
     );
   }
 
+  // Check whether the two users are already friends.
+  // This read is allowed by your current users/friends rules.
   const friendDoc =
     await getDoc(
       doc(
@@ -283,29 +285,51 @@ export async function sendFriendRequest(
       )
     );
 
+  /*
+   * IMPORTANT FIX
+   *
+   * Do NOT use:
+   *
+   *   getDoc(forwardRef)
+   *   getDoc(reverseRef)
+   *
+   * Your Firestore rules only allow a signed-in user to read a
+   * friend request when they are the fromUid or toUid.
+   *
+   * We therefore query using the exact fromUid/toUid/status fields.
+   */
+
+  const forwardQuery = query(
+    collection(db, "friendRequests"),
+    where("fromUid", "==", fromUid),
+    where("toUid", "==", toUid),
+    where("status", "==", "pending"),
+    limit(1)
+  );
+
+  const reverseQuery = query(
+    collection(db, "friendRequests"),
+    where("fromUid", "==", toUid),
+    where("toUid", "==", fromUid),
+    where("status", "==", "pending"),
+    limit(1)
+  );
+
   const [
     forwardSnap,
     reverseSnap,
   ] = await Promise.all([
-    getDoc(forwardRef),
-    getDoc(reverseRef),
+    getDocs(forwardQuery),
+    getDocs(reverseQuery),
   ]);
 
-  if (
-    forwardSnap.exists() &&
-    forwardSnap.data().status ===
-      "pending"
-  ) {
+  if (!forwardSnap.empty) {
     throw new Error(
       "Friend request already sent."
     );
   }
 
-  if (
-    reverseSnap.exists() &&
-    reverseSnap.data().status ===
-      "pending"
-  ) {
+  if (!reverseSnap.empty) {
     throw new Error(
       "This user already sent you a request — check your incoming requests."
     );

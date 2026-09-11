@@ -4,6 +4,7 @@ import {
   getDoc,
   getDocs,
   setDoc,
+  deleteDoc,
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
@@ -342,6 +343,44 @@ function getItineraryLocation(
  * ============================================================
  */
 
+const MODULE2_REPORT_SOURCE = "module2_finish_trip";
+
+function ecoReportRef(uid, itineraryId) {
+  return doc(
+    db,
+    "users",
+    uid,
+    "travelHistory",
+    itineraryId,
+    "ecoReport",
+    "report"
+  );
+}
+
+function isModule2HistoryRecord(data) {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  return (
+    data.finalEcoScore != null ||
+    data.confirmedTransportationCarbonKg != null ||
+    data.transportationEcoScore != null ||
+    data.carbonScope != null
+  );
+}
+
+async function hasModule2EcoReport(uid, itineraryId) {
+  const reportSnapshot = await getDoc(
+    ecoReportRef(uid, itineraryId)
+  );
+
+  return (
+    reportSnapshot.exists() &&
+    reportSnapshot.data()?.source === MODULE2_REPORT_SOURCE
+  );
+}
+
 function getNumber(...values) {
   for (
     const value of values
@@ -394,7 +433,22 @@ export async function syncTravelHistoryFromItinerary(
     "Planning";
 
   /*
-   * users/{uid}/travelHistory/{itineraryId}
+   * ==========================================================
+   * TRAVEL HISTORY RULE
+   * ==========================================================
+   *
+   * Travel History must contain ONLY completed trips.
+   *
+   * Planning / Active:
+   *   - revoke/remove any existing history record
+   *
+   * Completed:
+   *   - create/update the history record
+   *
+   * This also protects against an old history record remaining
+   * when a user changes a completed itinerary back to Planning
+   * or Active.
+   * ==========================================================
    */
 
   const historyRef =
@@ -410,6 +464,32 @@ export async function syncTravelHistoryFromItinerary(
     await getDoc(
       historyRef
     );
+
+  const preserveModule2 =
+    isModule2HistoryRecord(
+      existingSnapshot.data()
+    ) ||
+    await hasModule2EcoReport(
+      firebaseUser.uid,
+      itineraryId
+    );
+
+  if (status !== "Completed") {
+    /*
+     * Incoming rule: Planning / Active trips are not kept in
+     * Travel History. Module 2 Finish records are an exception:
+     * deleting the parent would drop final scores / carbon and
+     * orphan the private eco report.
+     */
+    if (
+      existingSnapshot.exists() &&
+      !preserveModule2
+    ) {
+      await deleteDoc(historyRef);
+    }
+
+    return null;
+  }
 
   /*
    * IMPORTANT:
@@ -509,10 +589,6 @@ export async function syncTravelHistoryFromItinerary(
         itinerary
       ),
 
-    ecoScore,
-
-    carbonKg,
-
     badgesEarned,
 
     status,
@@ -534,25 +610,22 @@ export async function syncTravelHistoryFromItinerary(
 
   /*
    * Completed status fields.
+   *
+   * This function only creates/updates Travel History for
+   * Completed itineraries.
    */
 
-  if (
-    status === "Completed"
-  ) {
-    payload.completed =
-      true;
+  payload.completed = true;
 
-    payload.isCompleted =
-      true;
+  payload.isCompleted = true;
 
-    payload.completedAt =
-      serverTimestamp();
-  } else {
-    payload.completed =
-      false;
+  if (!preserveModule2) {
+    payload.ecoScore = ecoScore;
+    payload.carbonKg = carbonKg;
+  }
 
-    payload.isCompleted =
-      false;
+  if (!existingSnapshot.exists()) {
+    payload.completedAt = serverTimestamp();
   }
 
   /*

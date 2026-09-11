@@ -22,6 +22,8 @@ import { listenToFriends } from "../../../firebase/friendService";
 import {
   createOrGetDirectChat,
   leaveGroup,
+  makeGroupAdmin,
+  addMemberToGroup,
   toggleMuteChat,
 } from "../../../firebase/chatService";
 
@@ -57,6 +59,8 @@ export default function GroupInfo({ chatId, onNavigate }) {
   const [chatLoading, setChatLoading] = useState(true);
   const [chatError, setChatError] = useState("");
   const [friendSearch, setFriendSearch] = useState("");
+  const [showCreatorLeave, setShowCreatorLeave] = useState(false);
+  const [successorUid, setSuccessorUid] = useState("");
 
   useEffect(() => {
     if (!chatId) {
@@ -237,42 +241,61 @@ export default function GroupInfo({ chatId, onNavigate }) {
     setBusy("add");
 
     try {
-      const nextMembers = [
-        ...memberUids,
-        ...selectedToAdd
-          .map((friend) => friend.uid)
-          .filter((uid) => !memberUids.includes(uid)),
-      ];
-
-      const nextMemberNames = {
-        ...(chat.memberNames || {}),
+      // Add each selected friend through the chat service so creator/admin
+      // checks are applied consistently, including older groups that do not
+      // yet have an `admins` field.
+      let workingChat = {
+        ...chat,
+        members: [...memberUids],
+        memberNames: { ...(chat.memberNames || {}) },
+        memberPhotos: { ...(chat.memberPhotos || {}) },
+        unreadCounts: { ...(chat.unreadCounts || {}) },
       };
 
-      const nextMemberPhotos = {
-        ...(chat.memberPhotos || {}),
-      };
+      for (const friend of selectedToAdd) {
+        if (!friend?.uid || workingChat.members.includes(friend.uid)) continue;
 
-      selectedToAdd.forEach((friend) => {
-        nextMemberNames[friend.uid] =
-          friend.name || friend.email || "Unknown";
+        const member = {
+          uid: friend.uid,
+          name: friend.name || friend.displayName || friend.email || "Unknown",
+          displayName: friend.displayName || friend.name || friend.email || "Unknown",
+          profile_photo_url: friend.profile_photo_url || friend.profilePhotoUrl || "",
+          photoURL: friend.photoURL || friend.profile_photo_url || friend.profilePhotoUrl || "",
+        };
 
-        if (friend.profile_photo_url) {
-          nextMemberPhotos[friend.uid] = friend.profile_photo_url;
-        }
-      });
+        await addMemberToGroup(
+          chatId,
+          workingChat,
+          member,
+          authUser.uid
+        );
 
-      await updateDoc(doc(db, "chats", chatId), {
-        members: nextMembers,
-        memberNames: nextMemberNames,
-        memberPhotos: nextMemberPhotos,
-      });
+        workingChat = {
+          ...workingChat,
+          members: [...workingChat.members, member.uid],
+          memberNames: {
+            ...workingChat.memberNames,
+            [member.uid]: member.name,
+          },
+          memberPhotos: {
+            ...workingChat.memberPhotos,
+            ...(member.profile_photo_url
+              ? { [member.uid]: member.profile_photo_url }
+              : {}),
+          },
+          unreadCounts: {
+            ...workingChat.unreadCounts,
+            [member.uid]: 0,
+          },
+        };
+      }
 
       setSelectedToAdd([]);
       setShowAddFriends(false);
       setFriendSearch("");
     } catch (err) {
       console.error(err);
-      setError(err?.message || "Failed to add members.");
+      setError(err?.message || "Failed to invite members.");
     } finally {
       setBusy("");
     }
@@ -443,10 +466,20 @@ export default function GroupInfo({ chatId, onNavigate }) {
   };
 
   const handleLeaveGroup = async () => {
+    setError("");
+
+    // The creator must explicitly choose a successor before leaving.
+    // This prevents the app from silently handing ownership to an
+    // arbitrary member.
+    if (isCreator && memberUids.length > 1) {
+      setSuccessorUid("");
+      setShowCreatorLeave(true);
+      return;
+    }
+
     if (!window.confirm("Leave this group?")) return;
 
     setBusy("leave");
-    setError("");
 
     try {
       await leaveGroup(chatId, chat, authUser.uid);
@@ -454,9 +487,56 @@ export default function GroupInfo({ chatId, onNavigate }) {
     } catch (err) {
       console.error(err);
       setError(err?.message || "Failed to leave the group.");
+    } finally {
       setBusy("");
     }
   };
+
+  const handleCreatorLeaveWithSuccessor = async () => {
+    if (!successorUid) {
+      setError("Please choose a member to become the new group admin.");
+      return;
+    }
+
+    const successor = memberList.find((member) => member.uid === successorUid);
+    if (!successor || successor.uid === authUser.uid) {
+      setError("Please choose another group member.");
+      return;
+    }
+
+    setBusy("leave-transfer");
+    setError("");
+
+    try {
+      // First promote the selected member. leaveGroup() will then see that
+      // member as an existing admin and transfer ownership to them when the
+      // creator leaves.
+      await makeGroupAdmin(chatId, chat, successor.uid, authUser.uid);
+
+      const updatedAdmins = Array.from(
+        new Set([
+          ...(Array.isArray(chat.admins) ? chat.admins : []),
+          authUser.uid,
+          successor.uid,
+        ])
+      );
+
+      await leaveGroup(
+        chatId,
+        { ...chat, admins: updatedAdmins },
+        authUser.uid
+      );
+      setShowCreatorLeave(false);
+      setSuccessorUid("");
+      onNavigate?.("/community/chat");
+    } catch (err) {
+      console.error(err);
+      setError(err?.message || "Failed to assign the new admin and leave the group.");
+    } finally {
+      setBusy("");
+    }
+  };
+
 
   return (
     <div style={styles.page}>
@@ -773,6 +853,74 @@ export default function GroupInfo({ chatId, onNavigate }) {
             ))}
           </div>
         </div>
+
+        {showCreatorLeave && isCreator && memberUids.length > 1 && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.creatorLeaveModal}>
+              <div style={styles.modalIcon}>
+                <Crown size={22} />
+              </div>
+              <h2 style={styles.modalTitle}>Choose a new group admin</h2>
+              <p style={styles.modalDescription}>
+                You are the group creator. Before you leave, choose a member to become the new admin and group owner.
+              </p>
+
+              <div style={styles.successorList}>
+                {sortedMembers
+                  .filter((member) => member.uid !== authUser.uid)
+                  .map((member) => (
+                    <button
+                      key={member.uid}
+                      type="button"
+                      onClick={() => setSuccessorUid(member.uid)}
+                      style={{
+                        ...styles.successorRow,
+                        ...(successorUid === member.uid ? styles.successorRowSelected : {}),
+                      }}
+                    >
+                      {member.photo ? (
+                        <img src={member.photo} alt="" style={styles.successorPhoto} />
+                      ) : (
+                        <div style={styles.avatarFallbackSm}>
+                          {(member.name || "?").charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div style={styles.successorText}>
+                        <div style={styles.successorName}>{member.name}</div>
+                        <div style={styles.successorRole}>
+                          {member.isAdmin ? "Current admin" : "Member"}
+                        </div>
+                      </div>
+                      {successorUid === member.uid && <Check size={18} />}
+                    </button>
+                  ))}
+              </div>
+
+              <div style={styles.modalActions}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreatorLeave(false);
+                    setSuccessorUid("");
+                    setError("");
+                  }}
+                  disabled={busy === "leave-transfer"}
+                  style={styles.modalCancelBtn}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreatorLeaveWithSuccessor}
+                  disabled={!successorUid || busy === "leave-transfer"}
+                  style={styles.modalConfirmBtn}
+                >
+                  {busy === "leave-transfer" ? "Leaving..." : "Make Admin & Leave"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <button
           type="button"
@@ -1278,4 +1426,134 @@ const styles = {
     fontWeight: 700,
     cursor: "pointer",
   },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, .45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+    zIndex: 1000,
+    boxSizing: "border-box",
+  },
+
+  creatorLeaveModal: {
+    width: "100%",
+    maxWidth: 440,
+    maxHeight: "85vh",
+    overflowY: "auto",
+    background: "#fff",
+    borderRadius: 18,
+    padding: 22,
+    boxShadow: "0 20px 50px rgba(0,0,0,.22)",
+    boxSizing: "border-box",
+  },
+
+  modalIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: "50%",
+    background: "#fff7ed",
+    color: "#ea580c",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+
+  modalTitle: {
+    margin: 0,
+    fontSize: 18,
+    fontWeight: 800,
+    color: "#111827",
+  },
+
+  modalDescription: {
+    margin: "7px 0 16px",
+    fontSize: 12.5,
+    lineHeight: 1.5,
+    color: "#6b7280",
+  },
+
+  successorList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 7,
+    marginBottom: 18,
+  },
+
+  successorRow: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "9px 10px",
+    border: "1px solid #e5e7eb",
+    borderRadius: 11,
+    background: "#fff",
+    cursor: "pointer",
+    textAlign: "left",
+    color: "#374151",
+  },
+
+  successorRowSelected: {
+    border: "1px solid #86efac",
+    background: "#f0fdf4",
+    color: "#15803d",
+  },
+
+  successorPhoto: {
+    width: 34,
+    height: 34,
+    borderRadius: "50%",
+    objectFit: "cover",
+    flexShrink: 0,
+  },
+
+  successorText: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  successorName: {
+    fontSize: 13.5,
+    fontWeight: 700,
+    color: "#111827",
+  },
+
+  successorRole: {
+    marginTop: 2,
+    fontSize: 11,
+    color: "#9ca3af",
+  },
+
+  modalActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+
+  modalCancelBtn: {
+    border: "1px solid #d1d5db",
+    background: "#fff",
+    color: "#374151",
+    borderRadius: 10,
+    padding: "10px 14px",
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
+  modalConfirmBtn: {
+    border: "none",
+    background: "#16a34a",
+    color: "#fff",
+    borderRadius: 10,
+    padding: "10px 14px",
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
 };

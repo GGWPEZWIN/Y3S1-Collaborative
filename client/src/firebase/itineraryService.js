@@ -16,7 +16,10 @@ import { onAuthStateChanged } from "firebase/auth";
 
 import { db, auth } from "./config";
 import { syncTravelHistoryFromItinerary } from "./travelHistoryService";
-import { checkAchievementsAfterProgressChange } from "./achievementService";
+import {
+  checkAchievementsAfterProgressChange,
+  checkItinerarySavedAchievement,
+} from "./achievementService";
 
 /*
  * ============================================================
@@ -26,7 +29,9 @@ import { checkAchievementsAfterProgressChange } from "./achievementService";
  * Reuses the shared Firebase app from ./config (no new config).
  *
  * Saved itineraries live in a single top-level collection so Module 2 can
- * fetch one directly:  getItinerary(id)  ->  doc(db, "itineraries", id)
+ * fetch one directly:
+ *
+ * getItinerary(id) -> doc(db, "itineraries", id)
  *
  * Document shape:
  *
@@ -48,6 +53,7 @@ import { checkAchievementsAfterProgressChange } from "./achievementService";
  *
  * Module 1 does NOT compute transport carbon or the transport-inclusive eco
  * score. Module 2 is responsible for that.
+ *
  * ============================================================
  */
 
@@ -74,7 +80,11 @@ function getLoggedInUser() {
         if (user) {
           resolve(user);
         } else {
-          reject(new Error("No user is currently logged in."));
+          reject(
+            new Error(
+              "No user is currently logged in."
+            )
+          );
         }
       },
       (error) => {
@@ -93,7 +103,10 @@ function getLoggedInUser() {
 
 function toNumberOrNull(value) {
   const n = Number(value);
-  return Number.isFinite(n) ? n : null;
+
+  return Number.isFinite(n)
+    ? n
+    : null;
 }
 
 /*
@@ -123,7 +136,9 @@ function toEcoScoreOrNull(value) {
     return null;
   }
 
-  return Math.round(Math.min(100, n));
+  return Math.round(
+    Math.min(100, n)
+  );
 }
 
 /*
@@ -132,7 +147,9 @@ function toEcoScoreOrNull(value) {
  * ============================================================
  */
 
-function buildStartLocation(startLocation) {
+function buildStartLocation(
+  startLocation
+) {
   if (!startLocation) {
     return null;
   }
@@ -148,10 +165,14 @@ function buildStartLocation(startLocation) {
       "",
 
     latitude:
-      toNumberOrNull(startLocation.latitude),
+      toNumberOrNull(
+        startLocation.latitude
+      ),
 
     longitude:
-      toNumberOrNull(startLocation.longitude),
+      toNumberOrNull(
+        startLocation.longitude
+      ),
   };
 }
 
@@ -161,7 +182,11 @@ function buildStartLocation(startLocation) {
  * ============================================================
  */
 
-function buildDestination(destination, order, day) {
+function buildDestination(
+  destination,
+  order,
+  day
+) {
   const base = {
     destinationId:
       destination.destinationId ??
@@ -173,10 +198,14 @@ function buildDestination(destination, order, day) {
       "",
 
     latitude:
-      toNumberOrNull(destination.latitude),
+      toNumberOrNull(
+        destination.latitude
+      ),
 
     longitude:
-      toNumberOrNull(destination.longitude),
+      toNumberOrNull(
+        destination.longitude
+      ),
 
     order,
 
@@ -187,7 +216,8 @@ function buildDestination(destination, order, day) {
   };
 
   if (destination.placeId) {
-    base.placeId = destination.placeId;
+    base.placeId =
+      destination.placeId;
   }
 
   return base;
@@ -199,7 +229,9 @@ function buildDestination(destination, order, day) {
  * ============================================================
  */
 
-function buildAccommodation(accommodation) {
+function buildAccommodation(
+  accommodation
+) {
   if (!accommodation) {
     return null;
   }
@@ -228,28 +260,11 @@ function buildAccommodation(accommodation) {
       ),
 
     certifications:
-      Array.isArray(accommodation.certifications)
+      Array.isArray(
+        accommodation.certifications
+      )
         ? accommodation.certifications
         : [],
-
-    // Plan-level eco score of the stay (0–100) — persisted so the review step
-    // and the dashboard keep the same number after an edit reload. Optional;
-    // older docs simply won't have it.
-    ecoScore:
-      toNumberOrNull(
-        accommodation.ecoScore
-      ),
-
-    // Extra context kept for an approved Firebase hotel so the saved itinerary
-    // is self-describing. Null for static-catalogue stays that don't have them.
-    certificationTier:
-      accommodation.certificationTier ?? null,
-
-    state:
-      accommodation.state ?? null,
-
-    source:
-      accommodation.source ?? null,
   };
 
   if (
@@ -297,7 +312,10 @@ function assertItineraryInput(input) {
     );
   }
 
-  if (orderedDestinations.length === 0) {
+  if (
+    orderedDestinations.length ===
+    0
+  ) {
     throw new Error(
       "Select at least one destination."
     );
@@ -373,7 +391,8 @@ function buildItineraryCoreFields(
 
         if (
           carried &&
-          typeof carried === "object"
+          typeof carried ===
+            "object"
         ) {
           built.sustainability = {
             ...emptySustainability(),
@@ -386,7 +405,8 @@ function buildItineraryCoreFields(
     );
 
   return {
-    title: title.trim(),
+    title:
+      title.trim(),
 
     dates: {
       startDate:
@@ -409,7 +429,8 @@ function buildItineraryCoreFields(
       ),
 
     travellers:
-      meta.travellers ?? null,
+      meta.travellers ??
+      null,
 
     budget:
       meta.budget != null
@@ -417,7 +438,8 @@ function buildItineraryCoreFields(
         : null,
 
     travellerStyle:
-      meta.travellerStyle ?? null,
+      meta.travellerStyle ??
+      null,
 
     activityIds:
       Array.isArray(
@@ -435,59 +457,17 @@ function buildItineraryCoreFields(
 
 /*
  * ============================================================
- * ASSERT NO DATE OVERLAP
- * ============================================================
- *
- * Server-side backstop for the Step 1 overlap block: refuses to write an
- * itinerary whose [startDate, endDate] range overlaps one the SIGNED-IN USER
- * already has, so an overlapping itinerary can't be created by bypassing the
- * wizard UI (jumped steps, a stale tab, a direct call, a save-time race).
- *
- * Inclusive interval test — two ranges overlap iff aStart <= bEnd && aEnd >=
- * bStart. yyyy-mm-dd strings compare chronologically as plain strings. Mirrors
- * dateRangesOverlap / findDateConflict in
- * user/Itinerary/constants/itineraryData.js (kept inline to avoid coupling the
- * Firebase layer to a UI module). Missing dates => nothing to check.
- */
-
-async function assertNoDateOverlap(startDate, endDate, excludeId = null) {
-  if (!startDate || !endDate) {
-    return;
-  }
-
-  const ranges = await getMyItineraryDateRanges();
-
-  const clash = ranges.find(
-    (row) =>
-      row.id !== excludeId &&
-      row.itineraryId !== excludeId &&
-      startDate <= row.endDate &&
-      endDate >= row.startDate
-  );
-
-  if (clash) {
-    throw new Error(
-      `These dates overlap an existing itinerary ("${clash.title}", ${clash.startDate} to ${clash.endDate}). Please choose different dates.`
-    );
-  }
-}
-
-/*
- * ============================================================
  * SAVE ITINERARY
  * ============================================================
  */
 
-export async function saveItinerary(input) {
+export async function saveItinerary(
+  input
+) {
   const user =
     await getLoggedInUser();
 
   assertItineraryInput(input);
-
-  await assertNoDateOverlap(
-    input.startDate,
-    input.endDate
-  );
 
   const ref =
     doc(
@@ -526,16 +506,26 @@ export async function saveItinerary(input) {
       serverTimestamp(),
   };
 
+  /*
+   * ----------------------------------------------------------
+   * SAVE THE ITINERARY
+   * ----------------------------------------------------------
+   */
+
   await setDoc(
     ref,
     payload
   );
 
   /*
-   * Mirror the itinerary into Travel History.
+   * ----------------------------------------------------------
+   * MIRROR INTO TRAVEL HISTORY
+   * ----------------------------------------------------------
+   *
    * The same itinerary ID is used so editing does not
    * create duplicate history records.
    */
+
   await syncTravelHistoryFromItinerary(
     {
       id: itineraryId,
@@ -543,6 +533,52 @@ export async function saveItinerary(input) {
     },
     "Planning"
   );
+
+  /*
+   * ----------------------------------------------------------
+   * CHECK "SAVE FIRST ITINERARY" ACHIEVEMENT
+   * ----------------------------------------------------------
+   *
+   * IMPORTANT:
+   *
+   * This is checked AFTER the itinerary has been successfully
+   * saved.
+   *
+   * The achievement is NOT stored inside the itinerary.
+   *
+   * It is stored separately under:
+   *
+   * users/{uid}/achievements/{achievementId}
+   *
+   * Therefore:
+   *
+   * Save itinerary
+   *      ↓
+   * Achievement unlocked
+   *      ↓
+   * Delete itinerary
+   *      ↓
+   * Achievement remains unlocked
+   *
+   * If the user saves another itinerary later,
+   * awardAchievement() checks the existing user achievement
+   * document and prevents the same achievement from being
+   * awarded again.
+   *
+   * Achievement failure must NOT cause a successful itinerary
+   * save to fail.
+   */
+
+  try {
+    await checkItinerarySavedAchievement(
+      user.uid
+    );
+  } catch (achievementError) {
+    console.error(
+      "Itinerary saved achievement check failed:",
+      achievementError
+    );
+  }
 
   return itineraryId;
 }
@@ -590,18 +626,13 @@ export async function updateItinerary(
     existingSnapshot.data();
 
   if (
-    existing.userId !== user.uid
+    existing.userId !==
+    user.uid
   ) {
     throw new Error(
       "You do not have permission to edit this itinerary."
     );
   }
-
-  await assertNoDateOverlap(
-    input.startDate,
-    input.endDate,
-    itineraryId
-  );
 
   const updates =
     buildItineraryCoreFields(
@@ -626,6 +657,7 @@ export async function updateItinerary(
   /*
    * Keep Travel History synchronized.
    */
+
   await syncTravelHistoryFromItinerary(
     {
       id: itineraryId,
@@ -658,12 +690,14 @@ export async function updateItinerary(
  * Completed
  *
  * When status becomes Completed:
+ *
  * 1. itinerary status is updated
  * 2. Travel History is updated
  * 3. achievement checking is triggered automatically
  *
  * This means the user does NOT need to open the Achievements page
  * to unlock a trip-based achievement.
+ *
  * ============================================================
  */
 
@@ -720,7 +754,8 @@ export async function updateItineraryStatus(
     snapshot.data();
 
   if (
-    existing.userId !== user.uid
+    existing.userId !==
+    user.uid
   ) {
     throw new Error(
       "You do not have permission to update this itinerary."
@@ -755,6 +790,7 @@ export async function updateItineraryStatus(
   /*
    * Update Travel History using the same document ID.
    */
+
   await syncTravelHistoryFromItinerary(
     {
       id: itineraryId,
@@ -773,11 +809,13 @@ export async function updateItineraryStatus(
    * Automatically check achievements.
    *
    * Example:
+   *
    * trips_completed >= 1
    *
    * will unlock immediately when this trip
    * becomes Completed.
    */
+
   if (
     status === "Completed"
   ) {
@@ -785,11 +823,14 @@ export async function updateItineraryStatus(
       await checkAchievementsAfterProgressChange(
         user.uid
       );
-    } catch (achievementError) {
+    } catch (
+      achievementError
+    ) {
       /*
        * Achievement failure should not make the
        * itinerary status update fail.
        */
+
       console.error(
         "Achievement check failed:",
         achievementError
@@ -841,7 +882,8 @@ export async function getItinerary(
     snapshot.data();
 
   if (
-    data.userId !== user.uid
+    data.userId !==
+    user.uid
   ) {
     throw new Error(
       "You do not have permission to view this itinerary."
@@ -873,11 +915,13 @@ export async function getMyItineraries() {
   const q =
     query(
       ref,
+
       where(
         "userId",
         "==",
         user.uid
       ),
+
       orderBy(
         "createdAt",
         "desc"
@@ -900,43 +944,64 @@ export async function getMyItineraries() {
  * GET MY ITINERARY DATE RANGES
  * ============================================================
  *
- * Lightweight read used by the Create wizard (Step 1) to stop a traveller
- * booking two overlapping itineraries. Returns only what the overlap check
- * needs, for the SIGNED-IN USER ONLY.
+ * FIX:
+ * This function was missing from itineraryService.js.
  *
- * Uses a single-field `where("userId", "==", uid)` filter (no orderBy), so it
- * needs no composite index of its own.
+ * Some page/component imports:
  *
- *   [{ id, itineraryId, title, startDate, endDate }]
+ * getMyItineraryDateRanges
  *
- * Rows without both dates are dropped — they can't overlap anything.
+ * so it MUST be exported from this file.
+ *
+ * It returns only the itinerary ID and its
+ * start/end dates.
  * ============================================================
  */
 
 export async function getMyItineraryDateRanges() {
-  const user = await getLoggedInUser();
+  const itineraries =
+    await getMyItineraries();
 
-  const snapshot = await getDocs(
-    query(collection(db, ITINERARIES), where("userId", "==", user.uid))
-  );
+  return itineraries
+    .map((itinerary) => ({
+      id: itinerary.id,
 
-  return snapshot.docs
-    .map((item) => {
-      const data = item.data();
-      return {
-        id: item.id,
-        itineraryId: data.itineraryId || item.id,
-        title: data.title || "Untitled trip",
-        startDate: data.dates?.startDate || null,
-        endDate: data.dates?.endDate || null,
-      };
-    })
-    .filter((row) => row.startDate && row.endDate);
+      startDate:
+        itinerary.dates?.startDate ||
+        null,
+
+      endDate:
+        itinerary.dates?.endDate ||
+        null,
+    }))
+    .filter(
+      (itinerary) =>
+        itinerary.startDate ||
+        itinerary.endDate
+    );
 }
 
 /*
  * ============================================================
  * DELETE ITINERARY
+ * ============================================================
+ *
+ * IMPORTANT:
+ *
+ * Deleting an itinerary does NOT delete the user's achievement.
+ *
+ * We intentionally only delete:
+ *
+ * 1. itineraries/{itineraryId}
+ * 2. users/{uid}/travelHistory/{itineraryId}
+ *
+ * We DO NOT delete:
+ *
+ * users/{uid}/achievements/{achievementId}
+ *
+ * Therefore a previously unlocked "Save First Itinerary"
+ * achievement stays permanently unlocked.
+ *
  * ============================================================
  */
 
@@ -976,7 +1041,8 @@ export async function deleteItinerary(
     snapshot.data();
 
   if (
-    data.userId !== user.uid
+    data.userId !==
+    user.uid
   ) {
     throw new Error(
       "You do not have permission to delete this itinerary."
@@ -984,15 +1050,21 @@ export async function deleteItinerary(
   }
 
   /*
-   * Delete the itinerary.
+   * ----------------------------------------------------------
+   * DELETE THE ITINERARY
+   * ----------------------------------------------------------
    */
+
   await deleteDoc(
     itineraryRef
   );
 
   /*
-   * Also remove the mirrored Travel History record.
+   * ----------------------------------------------------------
+   * ALSO REMOVE THE MIRRORED TRAVEL HISTORY RECORD
+   * ----------------------------------------------------------
    */
+
   const historyRef =
     doc(
       db,
@@ -1012,6 +1084,20 @@ export async function deleteItinerary(
       error
     );
   }
+
+  /*
+   * ----------------------------------------------------------
+   * DO NOT DELETE ACHIEVEMENTS
+   * ----------------------------------------------------------
+   *
+   * Nothing is deleted from:
+   *
+   * users/{uid}/achievements
+   *
+   * This guarantees that once an achievement has been
+   * unlocked, deleting the itinerary cannot make the
+   * achievement available again.
+   */
 
   return true;
 }

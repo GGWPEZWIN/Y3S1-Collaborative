@@ -18,19 +18,47 @@ import {
 } from "../../../firebase/chatService";
 
 import { listenToFriends } from "../../../firebase/friendService";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "../../../firebase/config";
 
 
-const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
+
+function toDate(value) {
+  try {
+    if (!value) return null;
+    if (value?.toDate) return value.toDate();
+    if (value?.seconds != null) return new Date(Number(value.seconds) * 1000);
+    if (value instanceof Date) return value;
+    if (typeof value === "number") return new Date(value);
+    if (typeof value === "string") {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+  } catch {}
+  return null;
+}
+
+function formatChatListDate(value) {
+  const date = toDate(value);
+  if (!date) return "";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const messageDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((today - messageDay) / 86400000);
+  if (diffDays === 0) return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (diffDays === 1) return "Yesterday";
+  return date.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+}
 
 export default function ChatList({ onNavigate }) {
   const { authUser, profile, loading } = useCurrentUser();
 
   const [chats, setChats] = useState([]);
   const [friends, setFriends] = useState([]);
+  const [liveProfiles, setLiveProfiles] = useState({});
 
   const [searchText, setSearchText] = useState("");
-  const [activeLetter, setActiveLetter] = useState("all");
 
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [groupName, setGroupName] = useState("");
@@ -70,6 +98,66 @@ export default function ChatList({ onNavigate }) {
 
 
   /* ---------------------------------------------------------
+     LIVE FRIEND PROFILES FOR DIRECT CHATS
+
+     chat.memberNames/memberPhotos are cached snapshots from when
+     the chat was created. The real source of truth is users/{uid}.
+     Watch the other users so a changed name/photo appears here
+     immediately without recreating the chat.
+  --------------------------------------------------------- */
+
+  useEffect(() => {
+    const friendUids = Array.from(
+      new Set(
+        chats
+          .filter((item) => item?.type !== "group")
+          .flatMap((item) =>
+            Array.isArray(item?.members) ? item.members : []
+          )
+          .filter((uid) => uid && uid !== authUser?.uid)
+      )
+    );
+
+    if (!friendUids.length) {
+      setLiveProfiles({});
+      return undefined;
+    }
+
+    const nextProfiles = {};
+
+    const unsubscribers = friendUids.map((uid) => {
+      const userRef = doc(db, "users", uid);
+
+      return onSnapshot(
+        userRef,
+        (snapshot) => {
+          if (!snapshot.exists()) {
+            delete nextProfiles[uid];
+          } else {
+            nextProfiles[uid] = {
+              uid,
+              ...snapshot.data(),
+            };
+          }
+
+          setLiveProfiles({ ...nextProfiles });
+        },
+        (error) => {
+          console.error(
+            `ChatList: failed to load live profile for ${uid}:`,
+            error
+          );
+        }
+      );
+    });
+
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe?.());
+    };
+  }, [chats, authUser?.uid]);
+
+
+  /* ---------------------------------------------------------
      CURRENT USER OBJECT
   --------------------------------------------------------- */
 
@@ -101,12 +189,15 @@ export default function ChatList({ onNavigate }) {
       (uid) => uid !== authUser?.uid
     );
 
-    if (
-      otherUid &&
-      chat.memberNames &&
-      chat.memberNames[otherUid]
-    ) {
-      return chat.memberNames[otherUid];
+    if (otherUid) {
+      const liveProfile = liveProfiles[otherUid];
+
+      return (
+        liveProfile?.name ||
+        liveProfile?.displayName ||
+        chat.memberNames?.[otherUid] ||
+        "Chat"
+      );
     }
 
     return "Chat";
@@ -128,16 +219,20 @@ export default function ChatList({ onNavigate }) {
 
     if (!otherUid) return "";
 
-    if (chat.memberPhotos?.[otherUid]) {
-      return chat.memberPhotos[otherUid];
-    }
+    const liveProfile = liveProfiles[otherUid];
 
-    return "";
+    return (
+      liveProfile?.profile_photo_url ||
+      liveProfile?.profilePhotoUrl ||
+      liveProfile?.photoURL ||
+      chat.memberPhotos?.[otherUid] ||
+      ""
+    );
   }
 
 
   /* ---------------------------------------------------------
-     SEARCH + LETTER FILTER
+     SEARCH CHATS
   --------------------------------------------------------- */
 
   const filteredChats = useMemo(() => {
@@ -145,7 +240,6 @@ export default function ChatList({ onNavigate }) {
 
     const search = searchText.trim().toLowerCase();
 
-    /* Search */
     if (search) {
       result = result.filter((chat) => {
         const name = getChatName(chat).toLowerCase();
@@ -161,20 +255,8 @@ export default function ChatList({ onNavigate }) {
       });
     }
 
-    /* Alphabet filter */
-    if (activeLetter !== "all") {
-      result = result.filter((chat) => {
-        const name = getChatName(chat).trim();
-
-        return (
-          name &&
-          name.charAt(0).toUpperCase() === activeLetter
-        );
-      });
-    }
-
     return result;
-  }, [chats, searchText, activeLetter]);
+  }, [chats, searchText, liveProfiles]);
 
 
   /* ---------------------------------------------------------
@@ -314,6 +396,12 @@ export default function ChatList({ onNavigate }) {
     return chat.lastMessage;
   }
 
+  function getLastMessageStatus(chat) {
+    if (!authUser?.uid || chat.lastMessageSenderId !== authUser.uid) return null;
+    const readBy = Array.isArray(chat.lastMessageReadBy) ? chat.lastMessageReadBy : [];
+    return readBy.some((uid) => uid !== authUser.uid) ? "seen" : "sent";
+  }
+
 
   /* ---------------------------------------------------------
      LOADING
@@ -444,48 +532,6 @@ export default function ChatList({ onNavigate }) {
 
         <div style={styles.chatArea}>
 
-          {/* VERTICAL FILTER */}
-
-          <aside style={styles.filterSidebar}>
-
-            <div style={styles.filterTitle}>
-              Filter
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                setActiveLetter("all")
-              }
-              style={
-                activeLetter === "all"
-                  ? styles.filterButtonActive
-                  : styles.filterButton
-              }
-            >
-              All
-            </button>
-
-            {ALPHABET.map((letter) => (
-              <button
-                key={letter}
-                type="button"
-                onClick={() =>
-                  setActiveLetter(letter)
-                }
-                style={
-                  activeLetter === letter
-                    ? styles.filterButtonActive
-                    : styles.filterButton
-                }
-              >
-                {letter}
-              </button>
-            ))}
-
-          </aside>
-
-
           {/* CHAT RESULTS */}
 
           <section style={styles.resultsSection}>
@@ -498,17 +544,6 @@ export default function ChatList({ onNavigate }) {
                   : "conversations"}
               </span>
 
-              {activeLetter !== "all" && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setActiveLetter("all")
-                  }
-                  style={styles.clearFilterButton}
-                >
-                  Clear filter
-                </button>
-              )}
             </div>
 
 
@@ -529,8 +564,6 @@ export default function ChatList({ onNavigate }) {
                 <p style={styles.emptyText}>
                   {searchText
                     ? "Try a different search."
-                    : activeLetter !== "all"
-                    ? `No chats or groups start with "${activeLetter}".`
                     : "Start chatting with a friend or create a group."}
                 </p>
 
@@ -623,12 +656,21 @@ export default function ChatList({ onNavigate }) {
 
                         </div>
 
-                        <div
-                          style={
-                            styles.lastMessage
-                          }
-                        >
-                          {getLastMessage(chat)}
+                        <div style={styles.lastMessageRow}>
+                          <div style={styles.lastMessage}>
+                            {getLastMessageStatus(chat) === "seen" && (
+                              <span style={styles.listSeenTicks} title="Seen">✓✓</span>
+                            )}
+                            {getLastMessageStatus(chat) === "sent" && (
+                              <span style={styles.listSentTick} title="Sent">✓</span>
+                            )}
+                            {getLastMessage(chat)}
+                          </div>
+                          {chat.lastMessageAt && (
+                            <span style={styles.chatDate}>
+                              {formatChatListDate(chat.lastMessageAt)}
+                            </span>
+                          )}
                         </div>
 
                       </div>
@@ -1018,54 +1060,6 @@ const styles = {
     gap: 20,
   },
 
-  /* VERTICAL FILTER */
-
-  filterSidebar: {
-    width: 58,
-    flexShrink: 0,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 5,
-    padding: "4px 0",
-  },
-
-  filterTitle: {
-    fontSize: 13,
-    fontWeight: 800,
-    color: "#475569",
-    marginBottom: 5,
-  },
-
-  filterButton: {
-    width: 42,
-    height: 32,
-    borderRadius: 8,
-    border: "1px solid #dbe1e8",
-    background: "#fff",
-    color: "#64748b",
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  filterButtonActive: {
-    width: 42,
-    height: 32,
-    borderRadius: 8,
-    border: "1px solid #16a34a",
-    background: "#16a34a",
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
 
   /* RESULTS */
 
@@ -1083,14 +1077,6 @@ const styles = {
     margin: "0 4px 12px",
   },
 
-  clearFilterButton: {
-    border: "none",
-    background: "transparent",
-    color: "#16a34a",
-    fontSize: 13,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
 
   chatList: {
     display: "flex",
@@ -1177,6 +1163,35 @@ const styles = {
     background: "#dcfce7",
     borderRadius: 999,
     padding: "3px 8px",
+  },
+
+  lastMessageRow: {
+    marginTop: 5,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    minWidth: 0,
+  },
+
+  chatDate: {
+    marginLeft: "auto",
+    flexShrink: 0,
+    color: "#94a3b8",
+    fontSize: 12,
+    fontWeight: 600,
+  },
+
+  listSeenTicks: {
+    color: "#16a34a",
+    fontWeight: 800,
+    marginRight: 4,
+    letterSpacing: "-2px",
+  },
+
+  listSentTick: {
+    color: "#94a3b8",
+    fontWeight: 800,
+    marginRight: 4,
   },
 
   lastMessage: {
