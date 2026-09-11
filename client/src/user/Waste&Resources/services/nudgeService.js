@@ -32,8 +32,8 @@ export function evaluateNudges(rows) {
       icon: ShoppingBag,
       tone: "text-orange-600",
       title: "Plate waste is trending high",
-      body: `Averaging ${Math.round(totals.foodWaste / days)}g a day against a ${benchmarks.foodWaste}g baseline. Asking for kurang nasi at the stall removes most of it.`,
-      poiKind: "zeroWaste",
+      body: `Averaging ${Math.round(totals.foodWaste / days)}g a day against a ${benchmarks.foodWaste}g baseline. Requesting a smaller rice portion when you order can cut most of it.`,
+      poiKind: null,
     });
   }
 
