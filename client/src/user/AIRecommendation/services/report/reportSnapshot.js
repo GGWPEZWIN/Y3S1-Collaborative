@@ -1,9 +1,12 @@
 import {
   CARBON_VERSION,
+  DESTINATION_OUTCOME_KEYS,
   REPORT_FIELD_KEYS,
   REPORT_SOURCE,
   REPORT_STATUS,
   REPORT_VERSION,
+  SCORE_COMPLETENESS,
+  SCORE_COVERAGE_POLICY,
   SEGMENT_SNAPSHOT_KEYS,
   VISIBILITY_PRIVATE,
 } from "./constants.js";
@@ -53,6 +56,32 @@ export function cloneReportSegment(record) {
   };
 }
 
+export function cloneDestinationOutcome(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  if (!Number.isInteger(entry.segmentIndex) || entry.segmentIndex < 0) return null;
+  const destinationName = requiredName(entry.destinationName);
+  const destinationId = requiredName(entry.destinationId) || `destination-${entry.segmentIndex}`;
+  if (!destinationName) return null;
+  if (entry.outcome !== "reached" && entry.outcome !== "skipped") return null;
+  return {
+    segmentIndex: entry.segmentIndex,
+    destinationId,
+    destinationName,
+    outcome: entry.outcome,
+  };
+}
+
+function outcomesFromCompletions(completions) {
+  return completions.map((record, index) =>
+    cloneDestinationOutcome({
+      segmentIndex: Number.isInteger(record.segmentIndex) ? record.segmentIndex : index,
+      destinationId: `destination-${Number.isInteger(record.segmentIndex) ? record.segmentIndex : index}`,
+      destinationName: record.destinationName,
+      outcome: "reached",
+    })
+  );
+}
+
 export function buildEcoReportSnapshot({
   userId,
   itineraryId,
@@ -60,6 +89,7 @@ export function buildEcoReportSnapshot({
   tripName,
   itinerary,
   completions,
+  destinationOutcomes = null,
   scores,
   carbon,
   createdAt = null,
@@ -71,19 +101,55 @@ export function buildEcoReportSnapshot({
   const sessionKey = requiredName(sessionId);
   const name = requiredName(tripName) || requiredName(itinerary?.title);
   if (!uid || !itineraryKey || !sessionKey || !name) return null;
-  if (!Array.isArray(completions) || completions.length < 1) return null;
+  if (!Array.isArray(completions)) return null;
   if (!scores?.ok || !carbon?.ok) return null;
+
+  const noCompletedTransport =
+    completions.length === 0 &&
+    scores.scoreCompleteness === SCORE_COMPLETENESS.NO_COMPLETED_TRANSPORT &&
+    carbon.confirmedTransportationCarbonKg == null;
+
+  if (completions.length < 1 && !noCompletedTransport) return null;
 
   const segments = completions.map((record) => cloneReportSegment(record));
   if (segments.some((segment) => segment == null)) return null;
   if (segments.some((segment) => !TRAVEL_MODES.has(segment.travelMode))) return null;
-  if (segments.some((segment) => !requiredName(segment.originName) || !requiredName(segment.destinationName))) {
+  if (
+    segments.some(
+      (segment) => !requiredName(segment.originName) || !requiredName(segment.destinationName)
+    )
+  ) {
     return null;
   }
 
-  const originName = requiredName(segments[0].originName);
-  const destinationNames = segments.map((segment) => requiredName(segment.destinationName));
-  if (!originName || destinationNames.some((destination) => !destination)) return null;
+  const outcomes = Array.isArray(destinationOutcomes)
+    ? destinationOutcomes.map((entry) => cloneDestinationOutcome(entry))
+    : outcomesFromCompletions(completions);
+  if (outcomes.some((entry) => entry == null)) return null;
+  if (
+    outcomes.some((entry) =>
+      Object.keys(entry).some((key) => !DESTINATION_OUTCOME_KEYS.includes(key))
+    )
+  ) {
+    return null;
+  }
+
+  const itineraryDestinationNames = Array.isArray(itinerary?.destinations)
+    ? itinerary.destinations.map((destination) => requiredName(destination?.name)).filter(Boolean)
+    : [];
+  const destinationNames =
+    itineraryDestinationNames.length > 0
+      ? itineraryDestinationNames
+      : outcomes.map((entry) => entry.destinationName);
+  if (destinationNames.some((destination) => !destination)) return null;
+
+  const originName =
+    requiredName(segments[0]?.originName) || requiredName(itinerary?.startLocation?.name);
+  if (!originName) return null;
+
+  const reachedCount = outcomes.filter((entry) => entry.outcome === "reached").length;
+  const skippedCount = outcomes.filter((entry) => entry.outcome === "skipped").length;
+  if (reachedCount !== segments.length) return null;
 
   const dates = datesFromItinerary(itinerary);
   const snapshot = {
@@ -102,10 +168,14 @@ export function buildEcoReportSnapshot({
     finalEcoScore: scores.finalEcoScore,
     ecoScore: scores.finalEcoScore,
     scoreCompleteness: scores.scoreCompleteness,
+    scoreCoveragePolicy: SCORE_COVERAGE_POLICY,
     scoreFormulaVersion: scores.scoreFormulaVersion,
     confirmedTransportationCarbonKg: carbon.confirmedTransportationCarbonKg,
     carbonScope: carbon.carbonScope,
     carbonVersion: CARBON_VERSION,
+    reachedCount,
+    skippedCount,
+    destinationOutcomes: outcomes,
     segments,
     status: REPORT_STATUS,
     visibility: VISIBILITY_PRIVATE,

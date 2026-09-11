@@ -34,6 +34,21 @@ function session(status = "active", extras = {}) {
   };
 }
 
+function skip(index, extras = {}) {
+  return {
+    userId: "user-1",
+    itineraryId: "itin-1",
+    sessionId: "session-1",
+    segmentId: `segment-${index}`,
+    segmentIndex: index,
+    destinationId: `dest-${index}`,
+    destinationName: `Stop ${index + 1}`,
+    outcome: "skipped",
+    reason: "user_confirmed",
+    ...extras,
+  };
+}
+
 function itinerary(extras = {}) {
   return {
     id: "itin-1",
@@ -43,6 +58,11 @@ function itinerary(extras = {}) {
     module1Complete: true,
     module2Complete: false,
     ecoScore: 89,
+    destinations: [
+      { destinationId: "dest-0", name: "Stop 1" },
+      { destinationId: "dest-1", name: "Stop 2" },
+    ],
+    startLocation: { name: "Start" },
     ...extras,
   };
 }
@@ -195,6 +215,64 @@ test("legacy stub on an active valid session may be replaced", () => {
     },
   });
   assert.equal(result.type, "commit");
+});
+
+test("mixed reached and skipped outcomes allow Finish", () => {
+  const result = planFinishTrip({
+    user: { uid: "user-1" },
+    lock: lock(),
+    session: session(),
+    itinerary: itinerary(),
+    completions: [completion(0)],
+    skips: [skip(1)],
+  });
+  assert.equal(result.type, "commit");
+  assert.equal(result.completions.length, 1);
+  assert.equal(result.skips.length, 1);
+  assert.equal(result.scores.transportationEcoScore, 72);
+  assert.equal(result.carbon.confirmedTransportationCarbonKg, 0.2);
+});
+
+test("all-skipped trip can Finish with null transport and carbon", () => {
+  const result = planFinishTrip({
+    user: { uid: "user-1" },
+    lock: lock(),
+    session: session(),
+    itinerary: itinerary(),
+    completions: [],
+    skips: [skip(0), skip(1)],
+  });
+  assert.equal(result.type, "commit");
+  assert.equal(result.scores.planEcoScore, 89);
+  assert.equal(result.scores.transportationEcoScore, null);
+  assert.equal(result.scores.finalEcoScore, null);
+  assert.equal(result.carbon.confirmedTransportationCarbonKg, null);
+});
+
+test("corrupted actual completion metrics are rejected", () => {
+  const result = planFinishTrip({
+    user: { uid: "user-1" },
+    lock: lock(),
+    session: session(),
+    itinerary: itinerary(),
+    completions: [completion(0, { carbonKgCo2e: Number.NaN })],
+    skips: [skip(1)],
+  });
+  assert.equal(result.type, "reject");
+  assert.equal(result.code, FINISH_TRIP_ERROR.INVALID_SNAPSHOT);
+});
+
+test("conflicting outcomes for one index are rejected", () => {
+  const result = planFinishTrip({
+    user: { uid: "user-1" },
+    lock: lock(),
+    session: session(),
+    itinerary: itinerary(),
+    completions: [completion(0), completion(1)],
+    skips: [skip(1)],
+  });
+  assert.equal(result.type, "reject");
+  assert.equal(result.code, FINISH_TRIP_ERROR.OUTCOME_CONFLICT);
 });
 
 test("conflicting Module 2 report for another session is not overwritten", () => {

@@ -1,4 +1,5 @@
 import TripMap from "./TripMap";
+import TripActionRow from "./TripActionRow";
 import {
   formatMetersAsKilometres,
   formatSecondsAsMinutes,
@@ -64,7 +65,9 @@ export default function NavigationPreview({
   recalculateError = null,
   canRecalculate = false,
   onRecalculate,
-  onBackToOverview,
+  onBackToTransport,
+  onNextNavigation,
+  actionsDisabled = false,
 }) {
   const modeLabel = TRAVEL_MODE_LABEL[selectedTravelMode] || "Selected transport";
   const encodedPolyline =
@@ -82,14 +85,6 @@ export default function NavigationPreview({
             <h3>Navigation Preview</h3>
             <p className="m2-badge">Web / PWA preview</p>
           </div>
-          <button
-            type="button"
-            className="m2-btn m2-btn--secondary m2-btn--icon"
-            onClick={onBackToOverview}
-            aria-label="Back to Route Overview"
-          >
-            X
-          </button>
         </header>
         <p className="m2-muted">
           This is a GPS-assisted selected-route preview. It is not Google
@@ -144,15 +139,29 @@ export default function NavigationPreview({
             local conditions before travelling.
           </p>
         ) : null}
-        <div className="m2-actions">
-          <button
-            type="button"
-            className="m2-btn m2-btn--secondary"
-            onClick={onBackToOverview}
-          >
-            Back to Route Overview
-          </button>
-        </div>
+        <TripActionRow
+          left={
+            <button
+              type="button"
+              className="m2-btn m2-btn--secondary"
+              onClick={onBackToTransport}
+              disabled={actionsDisabled}
+            >
+              Back to Transport
+            </button>
+          }
+          right={
+            <button
+              type="button"
+              className="m2-btn"
+              onClick={onNextNavigation}
+              disabled={actionsDisabled}
+            >
+              Next Navigation
+            </button>
+          }
+          helper="Next Navigation skips this destination if you have not arrived."
+        />
       </article>
 
       {isDeviated ? (
@@ -161,8 +170,8 @@ export default function NavigationPreview({
           <p className="m2-muted">
             Two accurate GPS fixes were farther from the selected route than
             the deviation threshold. Recalculate to replace only this
-            selected route, or return to Route Overview without completing the
-            destination.
+            selected route, or return to transport comparison without completing or
+            skipping this destination.
           </p>
           {recalculateError ? (
             <p className="m2-status m2-status--error" role="alert">
@@ -170,24 +179,28 @@ export default function NavigationPreview({
                 RECALCULATE_ERROR_MESSAGES.UNAVAILABLE}
             </p>
           ) : null}
-          <div className="m2-actions">
-            <button
-              type="button"
-              className="m2-btn"
-              onClick={onRecalculate}
-              disabled={!canRecalculate || recalculating}
-            >
-              {recalculating ? "Recalculating…" : "Recalculate Route"}
-            </button>
-            <button
-              type="button"
-              className="m2-btn m2-btn--secondary"
-              onClick={onBackToOverview}
-              disabled={recalculating}
-            >
-              Back to Route Overview
-            </button>
-          </div>
+          <TripActionRow
+            left={
+              <button
+                type="button"
+                className="m2-btn m2-btn--secondary"
+                onClick={onBackToTransport}
+                disabled={recalculating || actionsDisabled}
+              >
+                Back to Transport
+              </button>
+            }
+            right={
+              <button
+                type="button"
+                className="m2-btn"
+                onClick={onRecalculate}
+                disabled={!canRecalculate || recalculating || actionsDisabled}
+              >
+                {recalculating ? "Recalculating…" : "Recalculate Route"}
+              </button>
+            }
+          />
         </article>
       ) : null}
 

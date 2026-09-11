@@ -119,10 +119,14 @@ service cloud.firestore {
               "finalEcoScore",
               "ecoScore",
               "scoreCompleteness",
+              "scoreCoveragePolicy",
               "scoreFormulaVersion",
               "confirmedTransportationCarbonKg",
               "carbonScope",
               "carbonVersion",
+              "reachedCount",
+              "skippedCount",
+              "destinationOutcomes",
               "segments",
               "status",
               "visibility",
@@ -159,16 +163,34 @@ service cloud.firestore {
                    && isOptionalDate(data.endDate)
                    && data.location is string
                    && (data.planEcoScore == null || isReportScore(data.planEcoScore))
-                   && isReportScore(data.transportationEcoScore)
-                   && isReportScore(data.finalEcoScore)
+                   && (data.transportationEcoScore == null || isReportScore(data.transportationEcoScore))
+                   && (data.finalEcoScore == null || isReportScore(data.finalEcoScore))
                    && data.ecoScore == data.finalEcoScore
-                   && data.scoreCompleteness in ["plan_and_transport", "transport_only"]
+                   && data.scoreCompleteness in ["plan_and_transport", "transport_only", "no_completed_transport"]
+                   && data.scoreCoveragePolicy == "completed_transport_only"
                    && data.scoreFormulaVersion == "plan-transport-mean-v1"
-                   && (data.confirmedTransportationCarbonKg is int || data.confirmedTransportationCarbonKg is float)
-                   && data.confirmedTransportationCarbonKg >= 0
+                   && (data.confirmedTransportationCarbonKg == null ||
+                       ((data.confirmedTransportationCarbonKg is int || data.confirmedTransportationCarbonKg is float)
+                        && data.confirmedTransportationCarbonKg >= 0))
                    && data.carbonScope == "completed_segments_only"
                    && data.carbonVersion == "prototype-uk-ghg-2026-v1"
+                   && data.reachedCount is int
+                   && data.reachedCount >= 0
+                   && data.skippedCount is int
+                   && data.skippedCount >= 0
+                   && data.destinationOutcomes is list
                    && data.segments is list
+                   && (data.scoreCompleteness != "no_completed_transport" || (
+                        data.transportationEcoScore == null
+                        && data.finalEcoScore == null
+                        && data.ecoScore == null
+                        && data.confirmedTransportationCarbonKg == null
+                        && data.segments.size() == 0
+                      ))
+                   && (data.scoreCompleteness == "no_completed_transport" || (
+                        isReportScore(data.transportationEcoScore)
+                        && isReportScore(data.finalEcoScore)
+                      ))
                    && data.status == "Completed"
                    && data.visibility == "private"
                    && data.publishedAt == null
@@ -237,8 +259,9 @@ service cloud.firestore {
 
           allow create: if validFinishReportPayload(tripId);
 
-          allow update: if (isLegacyReportStub() && validFinishReportPayload(tripId))
-                        || validEcoReportPublish();
+          allow update: if isLegacyReportStub()
+                          ? validFinishReportPayload(tripId)
+                          : validEcoReportPublish();
 
           allow delete: if false;
         }
@@ -605,10 +628,14 @@ service cloud.firestore {
       }
 
       function validItineraryFinishUpdate() {
+        return exists(ownerLockPath())
+               && validItineraryFinishUpdateForSession(get(ownerLockPath()).data.sessionId);
+      }
+
+      function validItineraryFinishUpdateForSession(sessionId) {
         let before = resource.data;
         let after = request.resource.data;
         let lockPath = ownerLockPath();
-        let sessionId = get(lockPath).data.sessionId;
         let sessionPath = /databases/$(database)/documents/tripSessions/$(sessionId);
         let reportPath = /databases/$(database)/documents/users/$(request.auth.uid)/travelHistory/$(itineraryId)/ecoReport/report;
 
@@ -747,16 +774,21 @@ service cloud.firestore {
     }
 
     function validTripSessionCancel() {
+      return request.resource.data.status == "cancelled"
+             && validTripSessionCancelBody();
+    }
+
+    function validTripSessionCancelBody() {
       let before = resource.data;
       let after = request.resource.data;
       let lockPath = activeLockPath(request.auth.uid);
 
-      return isSignedIn()
+      return after.status == "cancelled"
+             && isSignedIn()
              && before.userId == request.auth.uid
              && after.userId == before.userId
              && after.itineraryId == before.itineraryId
              && before.status == "active"
-             && after.status == "cancelled"
              && after.completedAt == null
              && after.cancelledAt == request.time
              && after.updatedAt == request.time
@@ -772,6 +804,21 @@ service cloud.firestore {
 
     function completedSegmentPath(sessionId, segmentId) {
       return /databases/$(database)/documents/tripSessions/$(sessionId)/completedSegments/$(segmentId);
+    }
+
+    function skippedSegmentPath(sessionId, segmentId) {
+      return /databases/$(database)/documents/tripSessions/$(sessionId)/skippedSegments/$(segmentId);
+    }
+
+    function afterSessionAdvanced(sessionPath, fromIndex, itineraryId, completedSegmentId) {
+      return existsAfter(sessionPath)
+             && getAfter(sessionPath).data.currentSegmentIndex == fromIndex + 1
+             && getAfter(sessionPath).data.status == "active"
+             && getAfter(sessionPath).data.userId == request.auth.uid
+             && getAfter(sessionPath).data.itineraryId == itineraryId
+             && getAfter(sessionPath).data.completedAt == null
+             && (completedSegmentId == ""
+                 || getAfter(sessionPath).data.get("latestCompletedSegmentId", "") == completedSegmentId);
     }
 
     function completedSegmentCreateKeys() {
@@ -812,26 +859,21 @@ service cloud.firestore {
       return value == null || isScore(value);
     }
 
-    function ownedTripSession(sessionId) {
-      return isSignedIn()
-             && exists(tripSessionPath(sessionId))
-             && get(tripSessionPath(sessionId)).data.userId == request.auth.uid;
-    }
-
-    function validTripSessionProgress(sessionId) {
+    function completedOutcomeMatches(sessionId, completedPath, completedId, lockPath) {
       let before = resource.data;
       let after = request.resource.data;
-      let lockPath = activeLockPath(request.auth.uid);
-      let completedId = after.latestCompletedSegmentId;
-      let completedPath = completedSegmentPath(sessionId, completedId);
 
-      return isSignedIn()
-             && before.userId == request.auth.uid
+      return !existsAfter(skippedSegmentPath(sessionId, completedId))
+             && after.diff(before).affectedKeys().hasAny(["latestCompletedSegmentId"])
+             && after.diff(before).affectedKeys().hasOnly([
+                  "currentSegmentIndex",
+                  "updatedAt",
+                  "latestCompletedSegmentId"
+                ])
              && after.userId == before.userId
              && after.itineraryId == before.itineraryId
              && after.itineraryTitle == before.itineraryTitle
              && before.status == "active"
-             && after.status == "active"
              && after.completedAt == null
              && after.cancelledAt == before.cancelledAt
              && after.cancellationReason == before.cancellationReason
@@ -839,17 +881,7 @@ service cloud.firestore {
              && after.totalSegments == before.totalSegments
              && after.startedAt == before.startedAt
              && after.updatedAt == request.time
-             && after.currentSegmentIndex is int
-             && before.currentSegmentIndex is int
-             && after.currentSegmentIndex == before.currentSegmentIndex + 1
              && after.currentSegmentIndex <= before.totalSegments
-             && isNonEmptyString(completedId)
-             && completedId == "segment-" + string(before.currentSegmentIndex)
-             && after.diff(before).affectedKeys().hasOnly([
-                  "currentSegmentIndex",
-                  "updatedAt",
-                  "latestCompletedSegmentId"
-                ])
              && exists(lockPath)
              && get(lockPath).data.userId == request.auth.uid
              && get(lockPath).data.sessionId == sessionId
@@ -862,7 +894,160 @@ service cloud.firestore {
              && getAfter(completedPath).data.sessionId == sessionId
              && getAfter(completedPath).data.itineraryId == before.itineraryId
              && getAfter(completedPath).data.segmentIndex == before.currentSegmentIndex
-             && getAfter(completedPath).data.segmentId == completedId;
+             && getAfter(completedPath).data.segmentId == completedId
+             && get(lockPath).data.itineraryId == before.itineraryId;
+    }
+
+    function isCompleteStyleProgress() {
+      return request.resource.data.keys().hasAny(["latestCompletedSegmentId"])
+             && (!resource.data.keys().hasAny(["latestCompletedSegmentId"])
+                 || request.resource.data.latestCompletedSegmentId
+                    != resource.data.latestCompletedSegmentId);
+    }
+
+    function ownedTripSession(sessionId) {
+      return isSignedIn()
+             && exists(tripSessionPath(sessionId))
+             && get(tripSessionPath(sessionId)).data.userId == request.auth.uid;
+    }
+
+    function validTripSessionProgress(sessionId) {
+      return isCompleteStyleProgress()
+             && validTripSessionProgressBody(sessionId);
+    }
+
+    function validTripSessionProgressBody(sessionId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let lockPath = activeLockPath(request.auth.uid);
+      let completedId = after.get("latestCompletedSegmentId", "");
+      let completedPath = completedSegmentPath(sessionId, completedId);
+
+      return isSignedIn()
+             && after.status == "active"
+             && before.userId == request.auth.uid
+             && after.currentSegmentIndex is int
+             && before.currentSegmentIndex is int
+             && after.currentSegmentIndex == before.currentSegmentIndex + 1
+             && isNonEmptyString(completedId)
+             && completedId == "segment-" + string(before.currentSegmentIndex)
+             && existsAfter(completedPath)
+             && completedOutcomeMatches(sessionId, completedPath, completedId, lockPath);
+    }
+
+    function skippedSegmentCreateKeys() {
+      return [
+        "userId",
+        "itineraryId",
+        "sessionId",
+        "segmentId",
+        "segmentIndex",
+        "destinationId",
+        "destinationName",
+        "outcome",
+        "reason",
+        "skippedAt",
+        "version"
+      ];
+    }
+
+    function skippedOutcomeMatches(sessionId, skippedPath, skippedId, lockPath) {
+      let before = resource.data;
+      let after = request.resource.data;
+
+      return !existsAfter(completedSegmentPath(sessionId, skippedId))
+             && after.diff(before).affectedKeys().hasOnly([
+                  "currentSegmentIndex",
+                  "updatedAt"
+                ])
+             && before.userId == request.auth.uid
+             && after.userId == before.userId
+             && after.itineraryId == before.itineraryId
+             && after.itineraryTitle == before.itineraryTitle
+             && before.status == "active"
+             && after.completedAt == null
+             && after.cancelledAt == before.cancelledAt
+             && after.cancellationReason == before.cancellationReason
+             && after.version == before.version
+             && after.totalSegments == before.totalSegments
+             && after.startedAt == before.startedAt
+             && after.updatedAt == request.time
+             && after.currentSegmentIndex <= before.totalSegments
+             && exists(lockPath)
+             && get(lockPath).data.userId == request.auth.uid
+             && get(lockPath).data.sessionId == sessionId
+             && get(lockPath).data.itineraryId == before.itineraryId
+             && get(lockPath).data.status == "active"
+             && existsAfter(lockPath)
+             && getAfter(lockPath).data.sessionId == sessionId
+             && getAfter(lockPath).data.itineraryId == before.itineraryId
+             && getAfter(lockPath).data.status == "active"
+             && existsAfter(skippedPath)
+             && getAfter(skippedPath).data.userId == request.auth.uid
+             && getAfter(skippedPath).data.sessionId == sessionId
+             && getAfter(skippedPath).data.itineraryId == before.itineraryId
+             && getAfter(skippedPath).data.segmentIndex == before.currentSegmentIndex
+             && getAfter(skippedPath).data.segmentId == skippedId
+             && getAfter(skippedPath).data.outcome == "skipped"
+             && getAfter(skippedPath).data.reason == "user_confirmed";
+    }
+
+    function validTripSessionSkipProgress(sessionId) {
+      return existsAfter(skippedSegmentPath(
+               sessionId,
+               "segment-" + string(resource.data.currentSegmentIndex)
+             ))
+             && validTripSessionSkipProgressBody(sessionId);
+    }
+
+    function validTripSessionSkipProgressBody(sessionId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let lockPath = activeLockPath(request.auth.uid);
+      let skippedId = "segment-" + string(before.currentSegmentIndex);
+      let skippedPath = skippedSegmentPath(sessionId, skippedId);
+
+      return isSignedIn()
+             && after.status == "active"
+             && after.currentSegmentIndex is int
+             && before.currentSegmentIndex is int
+             && after.currentSegmentIndex == before.currentSegmentIndex + 1
+             && skippedOutcomeMatches(sessionId, skippedPath, skippedId, lockPath);
+    }
+
+    function validSkippedSegmentCreate(sessionId, segmentId) {
+      let data = request.resource.data;
+      let sessionPath = tripSessionPath(sessionId);
+      let lockPath = activeLockPath(request.auth.uid);
+
+      return isSignedIn()
+             && exists(sessionPath)
+             && get(sessionPath).data.userId == request.auth.uid
+             && get(sessionPath).data.status == "active"
+             && data.segmentIndex is int
+             && !existsAfter(completedSegmentPath(sessionId, segmentId))
+             && afterSessionAdvanced(sessionPath, data.segmentIndex, data.get("itineraryId", ""), "")
+             && data.keys().hasAll(skippedSegmentCreateKeys())
+             && data.keys().hasOnly(skippedSegmentCreateKeys())
+             && data.userId is string
+             && data.userId == request.auth.uid
+             && data.sessionId == sessionId
+             && data.itineraryId == get(sessionPath).data.itineraryId
+             && data.segmentId == segmentId
+             && data.segmentIndex == get(sessionPath).data.currentSegmentIndex
+             && segmentId == "segment-" + string(data.segmentIndex)
+             && isNonEmptyString(data.destinationId)
+             && isNonEmptyString(data.destinationName)
+             && data.outcome == "skipped"
+             && data.reason == "user_confirmed"
+             && data.skippedAt == request.time
+             && data.version is int
+             && data.version == 1
+             && exists(lockPath)
+             && get(lockPath).data.userId == request.auth.uid
+             && get(lockPath).data.sessionId == sessionId
+             && get(lockPath).data.itineraryId == data.itineraryId
+             && existsAfter(lockPath);
     }
 
     function validCompletedSegmentCreate(sessionId, segmentId) {
@@ -873,6 +1058,9 @@ service cloud.firestore {
              && exists(sessionPath)
              && get(sessionPath).data.userId == request.auth.uid
              && get(sessionPath).data.status == "active"
+             && !existsAfter(skippedSegmentPath(sessionId, segmentId))
+             && data.segmentIndex is int
+             && afterSessionAdvanced(sessionPath, data.segmentIndex, data.get("itineraryId", ""), segmentId)
              && data.keys().hasAll(completedSegmentCreateKeys())
              && data.keys().hasOnly(completedSegmentCreateKeys())
              && data.userId is string
@@ -880,7 +1068,6 @@ service cloud.firestore {
              && data.sessionId == sessionId
              && data.itineraryId == get(sessionPath).data.itineraryId
              && data.segmentId == segmentId
-             && data.segmentIndex is int
              && data.segmentIndex == get(sessionPath).data.currentSegmentIndex
              && segmentId == "segment-" + string(data.segmentIndex)
              && isNonEmptyString(data.originName)
@@ -895,14 +1082,7 @@ service cloud.firestore {
              && data.carbonVersion == "prototype-uk-ghg-2026-v1"
              && data.completedAt == request.time
              && data.version is int
-             && data.version == 1
-             && existsAfter(sessionPath)
-             && getAfter(sessionPath).data.userId == request.auth.uid
-             && getAfter(sessionPath).data.status == "active"
-             && getAfter(sessionPath).data.currentSegmentIndex == data.segmentIndex + 1
-             && getAfter(sessionPath).data.latestCompletedSegmentId == segmentId
-             && getAfter(sessionPath).data.itineraryId == data.itineraryId
-             && getAfter(sessionPath).data.completedAt == null;
+             && data.version == 1;
     }
 
     function lockCreateKeys() {
@@ -941,9 +1121,16 @@ service cloud.firestore {
     // Finish cannot enumerate completedSegments/segment-0..n-1 here:
     // Firestore rules have no loop over a dynamic totalSegments count.
     // Sequential progress pairing plus currentSegmentIndex == totalSegments
-    // is the rule-side guarantee; the client transaction still reads every
-    // expected completion document before writing.
+    // is the rule-side guarantee. Finish cannot enumerate completedSegments
+    // or skippedSegments for a dynamic totalSegments count. The client
+    // transaction still reads every expected outcome document before writing.
+    // Rules do not validate arbitrary destination aggregates.
     function validTripSessionComplete(sessionId) {
+      return request.resource.data.status == "completed"
+             && validTripSessionCompleteBody(sessionId);
+    }
+
+    function validTripSessionCompleteBody(sessionId) {
       let before = resource.data;
       let after = request.resource.data;
       let lockPath = activeLockPath(request.auth.uid);
@@ -951,12 +1138,12 @@ service cloud.firestore {
       let reportPath = ecoReportPath(request.auth.uid, itineraryId);
 
       return isSignedIn()
+             && after.status == "completed"
              && before.userId == request.auth.uid
              && after.userId == before.userId
              && after.itineraryId == before.itineraryId
              && after.itineraryTitle == before.itineraryTitle
              && before.status == "active"
-             && after.status == "completed"
              && after.currentSegmentIndex == before.totalSegments
              && after.totalSegments == before.totalSegments
              && after.totalSegments > 0
@@ -1030,23 +1217,51 @@ service cloud.firestore {
 
       allow create: if validTripSessionCreate(sessionId);
 
-      allow update: if validTripSessionCancel()
-                    || validTripSessionProgress(sessionId)
-                    || validTripSessionComplete(sessionId);
+      allow update: if request.resource.data.status == "cancelled"
+                      ? validTripSessionCancel()
+                      : request.resource.data.status == "completed"
+                        ? validTripSessionComplete(sessionId)
+                        : request.resource.data.status == "active"
+                          ? (isCompleteStyleProgress()
+                               ? validTripSessionProgress(sessionId)
+                               : (existsAfter(skippedSegmentPath(
+                                    sessionId,
+                                    "segment-" + string(resource.data.currentSegmentIndex)
+                                  ))
+                                   ? validTripSessionSkipProgress(sessionId)
+                                   : false))
+                          : false;
 
       allow delete: if false;
 
       match /completedSegments/{segmentId} {
 
-        allow get: if ownedTripSession(sessionId)
-                   && resource.data.userId == request.auth.uid
-                   && resource.data.sessionId == sessionId;
+        allow get: if ownedTripSession(sessionId);
 
         allow list: if ownedTripSession(sessionId)
                     && resource.data.userId == request.auth.uid
                     && resource.data.sessionId == sessionId;
 
-        allow create: if validCompletedSegmentCreate(sessionId, segmentId);
+        allow create: if existsAfter(skippedSegmentPath(sessionId, segmentId))
+                        ? false
+                        : validCompletedSegmentCreate(sessionId, segmentId);
+
+        allow update: if false;
+
+        allow delete: if false;
+      }
+
+      match /skippedSegments/{segmentId} {
+
+        allow get: if ownedTripSession(sessionId);
+
+        allow list: if ownedTripSession(sessionId)
+                    && resource.data.userId == request.auth.uid
+                    && resource.data.sessionId == sessionId;
+
+        allow create: if existsAfter(completedSegmentPath(sessionId, segmentId))
+                        ? false
+                        : validSkippedSegmentCreate(sessionId, segmentId);
 
         allow update: if false;
 

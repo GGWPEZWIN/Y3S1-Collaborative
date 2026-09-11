@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { leaveNavigationPreview } from "./leaveNavigation.js";
+import { leaveNavigationPreview, leaveNavigationToTransport } from "./leaveNavigation.js";
 import {
   buildCompletedSegmentSnapshot,
   planSegmentCompletion,
@@ -58,6 +58,18 @@ function snapshotFor(index) {
     rankingScore: 82,
   });
 }
+
+test("Back to Transport keeps the same currentSegmentIndex and destination", () => {
+  const result = leaveNavigationToTransport({
+    currentSegmentIndex: 1,
+    destination,
+  });
+  assert.equal(result.currentSegmentIndex, 1);
+  assert.equal(result.destination, destination);
+  assert.equal(result.requestsRoutes, false);
+  assert.equal(result.completes, false);
+  assert.equal(result.skips, false);
+});
 
 test("Back/X keeps the same currentSegmentIndex and destination", () => {
   const result = leaveNavigationPreview({

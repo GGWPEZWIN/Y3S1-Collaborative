@@ -1,5 +1,5 @@
 import { REPORT_SOURCE, SCORE_COMPLETENESS, VISIBILITY_PUBLIC } from "./constants.js";
-import { EQUAL_FORMULA_COPY, TRANSPORT_ONLY_FORMULA_COPY } from "./completionSummaryView.js";
+import { formulaExplanationFor, SKIPPED_TRAVEL_CARBON_COPY } from "./completionSummaryView.js";
 
 export function isModule2Report(report) {
   return Boolean(report && report.source === REPORT_SOURCE);
@@ -32,6 +32,23 @@ function cloneSegments(segments) {
   }));
 }
 
+function cloneOutcomes(outcomes, destinationNames) {
+  if (Array.isArray(outcomes) && outcomes.length > 0) {
+    return outcomes.map((entry) => ({
+      segmentIndex: entry?.segmentIndex,
+      destinationId: entry?.destinationId || null,
+      destinationName: entry?.destinationName || null,
+      outcome: entry?.outcome || "reached",
+    }));
+  }
+  return destinationNames.map((name, index) => ({
+    segmentIndex: index,
+    destinationId: null,
+    destinationName: name,
+    outcome: "reached",
+  }));
+}
+
 export function buildCompletedReportView(report, itineraryId) {
   if (!isModule2Report(report) || isStaleReport(report, itineraryId)) {
     return null;
@@ -39,7 +56,19 @@ export function buildCompletedReportView(report, itineraryId) {
 
   const destinationNames = cloneNames(report.destinationNames);
   const segments = cloneSegments(report.segments);
+  const destinationOutcomes = cloneOutcomes(report.destinationOutcomes, destinationNames);
   const isPublic = report.visibility === VISIBILITY_PUBLIC;
+  const reachedCount = Number.isInteger(report.reachedCount)
+    ? report.reachedCount
+    : segments.length;
+  const skippedCount = Number.isInteger(report.skippedCount)
+    ? report.skippedCount
+    : Math.max(0, destinationOutcomes.filter((entry) => entry.outcome === "skipped").length);
+  const noCompletedTravel =
+    report.scoreCompleteness === SCORE_COMPLETENESS.NO_COMPLETED_TRANSPORT ||
+    (segments.length === 0 &&
+      report.transportationEcoScore == null &&
+      report.finalEcoScore == null);
 
   return {
     title:
@@ -54,13 +83,16 @@ export function buildCompletedReportView(report, itineraryId) {
     originName: typeof report.originName === "string" ? report.originName : null,
     destinationNames,
     destinationCount: destinationNames.length,
+    reachedCount,
+    skippedCount,
+    destinationOutcomes,
     segments,
     completedAt: report.completedAt ?? null,
     scoreCompleteness: report.scoreCompleteness,
-    formulaExplanation:
-      report.scoreCompleteness === SCORE_COMPLETENESS.TRANSPORT_ONLY
-        ? TRANSPORT_ONLY_FORMULA_COPY
-        : EQUAL_FORMULA_COPY,
+    scoreCoveragePolicy: report.scoreCoveragePolicy || null,
+    formulaExplanation: formulaExplanationFor(report.scoreCompleteness),
+    carbonExplanation: SKIPPED_TRAVEL_CARBON_COPY,
+    noCompletedTravel,
   };
 }
 

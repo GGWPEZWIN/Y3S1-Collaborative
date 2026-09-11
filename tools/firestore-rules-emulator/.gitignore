@@ -1,0 +1,7 @@
+firestore.rules
+.firebase/
+.emulator-cache/
+.config/
+firebase-debug.log
+firestore-debug.log
+*.log

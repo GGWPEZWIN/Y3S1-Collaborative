@@ -343,6 +343,44 @@ function getItineraryLocation(
  * ============================================================
  */
 
+const MODULE2_REPORT_SOURCE = "module2_finish_trip";
+
+function ecoReportRef(uid, itineraryId) {
+  return doc(
+    db,
+    "users",
+    uid,
+    "travelHistory",
+    itineraryId,
+    "ecoReport",
+    "report"
+  );
+}
+
+function isModule2HistoryRecord(data) {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  return (
+    data.finalEcoScore != null ||
+    data.confirmedTransportationCarbonKg != null ||
+    data.transportationEcoScore != null ||
+    data.carbonScope != null
+  );
+}
+
+async function hasModule2EcoReport(uid, itineraryId) {
+  const reportSnapshot = await getDoc(
+    ecoReportRef(uid, itineraryId)
+  );
+
+  return (
+    reportSnapshot.exists() &&
+    reportSnapshot.data()?.source === MODULE2_REPORT_SOURCE
+  );
+}
+
 function getNumber(...values) {
   for (
     const value of values
@@ -427,8 +465,26 @@ export async function syncTravelHistoryFromItinerary(
       historyRef
     );
 
+  const preserveModule2 =
+    isModule2HistoryRecord(
+      existingSnapshot.data()
+    ) ||
+    await hasModule2EcoReport(
+      firebaseUser.uid,
+      itineraryId
+    );
+
   if (status !== "Completed") {
-    if (existingSnapshot.exists()) {
+    /*
+     * Incoming rule: Planning / Active trips are not kept in
+     * Travel History. Module 2 Finish records are an exception:
+     * deleting the parent would drop final scores / carbon and
+     * orphan the private eco report.
+     */
+    if (
+      existingSnapshot.exists() &&
+      !preserveModule2
+    ) {
       await deleteDoc(historyRef);
     }
 
@@ -533,10 +589,6 @@ export async function syncTravelHistoryFromItinerary(
         itinerary
       ),
 
-    ecoScore,
-
-    carbonKg,
-
     badgesEarned,
 
     status,
@@ -566,6 +618,11 @@ export async function syncTravelHistoryFromItinerary(
   payload.completed = true;
 
   payload.isCompleted = true;
+
+  if (!preserveModule2) {
+    payload.ecoScore = ecoScore;
+    payload.carbonKg = carbonKg;
+  }
 
   if (!existingSnapshot.exists()) {
     payload.completedAt = serverTimestamp();

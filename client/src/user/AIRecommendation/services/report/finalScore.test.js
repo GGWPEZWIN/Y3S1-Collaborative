@@ -8,6 +8,26 @@ import {
   readPlanEcoScore,
 } from "./finalScore.js";
 
+test("P=89 with completed scores [100, 72] and one skipped stop blends to 88", () => {
+  const completions = [
+    { prototypeEcoScore: 100 },
+    { prototypeEcoScore: 72 },
+  ];
+  const result = calculateFinishScores({ planEcoScore: 89, completions });
+  assert.equal(result.ok, true);
+  assert.equal(result.transportationEcoScore, 86);
+  assert.equal(result.finalEcoScore, 88);
+});
+
+test("all skipped travel leaves transport and final scores null", () => {
+  const result = calculateFinishScores({ planEcoScore: 89, completions: [] });
+  assert.equal(result.ok, true);
+  assert.equal(result.planEcoScore, 89);
+  assert.equal(result.transportationEcoScore, null);
+  assert.equal(result.finalEcoScore, null);
+  assert.equal(result.scoreCompleteness, SCORE_COMPLETENESS.NO_COMPLETED_TRANSPORT);
+});
+
 test("P=89 and transport scores [100, 72, 55] blend to 82", () => {
   const completions = [
     { prototypeEcoScore: 100 },

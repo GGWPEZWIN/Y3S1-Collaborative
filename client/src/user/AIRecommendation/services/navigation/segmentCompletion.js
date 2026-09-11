@@ -4,6 +4,7 @@ import {
   COMPLETED_SEGMENT_VERSION,
   completedSegmentDocumentId,
 } from "./constants.js";
+import { existingSkipMatches } from "./segmentSkip.js";
 
 export const SEGMENT_COMPLETION_ERROR = {
   AUTH_REQUIRED: "AUTH_REQUIRED",
@@ -14,6 +15,7 @@ export const SEGMENT_COMPLETION_ERROR = {
   SEGMENT_SKIP: "SEGMENT_SKIP",
   ALL_SEGMENTS_DONE: "ALL_SEGMENTS_DONE",
   INVALID_SNAPSHOT: "INVALID_SNAPSHOT",
+  OUTCOME_CONFLICT: "OUTCOME_CONFLICT",
   UNAVAILABLE: "UNAVAILABLE",
 };
 
@@ -124,6 +126,7 @@ export function planSegmentCompletion({
   session,
   expectedSegmentIndex,
   existingCompletion = null,
+  existingSkip = null,
   snapshot,
 } = {}) {
   if (!user?.uid) {
@@ -169,6 +172,19 @@ export function planSegmentCompletion({
 
   if (existingCompletion && !matchingExisting) {
     return { type: "reject", code: SEGMENT_COMPLETION_ERROR.SESSION_MISMATCH };
+  }
+
+  if (existingSkip) {
+    const matchingSkip = existingSkipMatches({
+      existingSkip,
+      user,
+      session,
+      expectedSegmentIndex,
+    });
+    if (!matchingSkip) {
+      return { type: "reject", code: SEGMENT_COMPLETION_ERROR.SESSION_MISMATCH };
+    }
+    return { type: "reject", code: SEGMENT_COMPLETION_ERROR.OUTCOME_CONFLICT };
   }
 
   if (expectedSegmentIndex !== session.currentSegmentIndex) {

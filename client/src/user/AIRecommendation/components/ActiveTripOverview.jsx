@@ -1,4 +1,5 @@
 import TripMap from "./TripMap";
+import TripActionRow from "./TripActionRow";
 import { routeStopKind } from "../services/navigation/segmentOrigin.js";
 
 const LOCATION_MESSAGES = {
@@ -29,7 +30,8 @@ function formatOptionalNumber(value) {
 function progressClass(kind) {
   if (kind === "CURRENT") return "m2-order-item m2-order-item--start";
   if (kind === "NEXT DESTINATION") return "m2-order-item m2-order-item--next";
-  if (kind === "COMPLETED") return "m2-order-item m2-order-item--done";
+  if (kind === "REACHED" || kind === "COMPLETED") return "m2-order-item m2-order-item--done";
+  if (kind === "SKIPPED") return "m2-order-item m2-order-item--skipped";
   return "m2-order-item";
 }
 
@@ -37,10 +39,12 @@ export default function ActiveTripOverview({
   itinerary,
   originName,
   originIsDevice = false,
+  originSource = "itinerary",
   nextDestinationName,
   segmentNumber,
   totalSegments,
   currentStopIndex = 0,
+  outcomesByIndex = null,
   firstSegmentDistance,
   firstSegmentEta,
   locationStatus = "idle",
@@ -52,6 +56,7 @@ export default function ActiveTripOverview({
   confirmingCancel = false,
   cancelError = null,
   isCancelling = false,
+  actionsDisabled = false,
   onGo,
   goDisabled = false,
   goDisabledReason = null,
@@ -101,9 +106,11 @@ export default function ActiveTripOverview({
           <h3>Current origin</h3>
           <p className="m2-metric-value">{originName}</p>
           <p className="m2-muted">
-            {originIsDevice
+            {originSource === "device"
               ? "Using your current location for this unfinished segment only."
-              : "Using the saved itinerary origin."}
+              : originSource === "reached"
+                ? "Using the last reached destination as the origin."
+                : "Using the saved starting location."}
           </p>
         </article>
         <article className="m2-card m2-metric-card">
@@ -170,7 +177,7 @@ export default function ActiveTripOverview({
           <h3>Saved route</h3>
           <p className="m2-muted">
             Saved start → destination 1 → destination 2 → final destination.
-            Completed destinations stay in the saved order.
+            Reached and skipped destinations stay in the saved order.
           </p>
           <ol className="m2-order" style={{ marginTop: 16 }}>
             {stops.map((stop, index) => {
@@ -179,6 +186,7 @@ export default function ActiveTripOverview({
                 currentSegmentIndex: currentStopIndex,
                 totalSegments,
                 isStart: index === 0,
+                outcomesByIndex,
               });
               return (
                 <li key={stop.id || `${stop.name}-${index}`} className={progressClass(kind)}>
@@ -226,7 +234,9 @@ export default function ActiveTripOverview({
         ) : (
           <>
             <p className="m2-metric-value">{formatCarbonKg(transportCarbonKg)}</p>
-            <p className="m2-muted">Sum of confirmed completed segments only.</p>
+            <p className="m2-muted">
+              Sum of confirmed completed travel only. Skipped travel is excluded.
+            </p>
           </>
         )}
       </article>
@@ -248,52 +258,56 @@ export default function ActiveTripOverview({
         </p>
       ) : null}
 
-      <div className="m2-overview-cta">
-        <button
-          type="button"
-          className="m2-btn m2-btn--go"
-          onClick={onGo}
-          disabled={goDisabled || isCancelling}
-        >
-          GO
-        </button>
-        {cancelError ? (
-          <p className="m2-status m2-status--error" role="alert">
-            {cancelError}
-          </p>
-        ) : null}
-        <div className="m2-actions m2-actions--cancel">
-          {confirmingCancel ? (
-            <>
-              <button
-                type="button"
-                className="m2-btn m2-btn--danger"
-                onClick={onConfirmCancel}
-                disabled={isCancelling}
-              >
-                {isCancelling ? "Cancelling…" : "Confirm Cancel"}
-              </button>
-              <button
-                type="button"
-                className="m2-btn m2-btn--secondary"
-                onClick={onKeepTrip}
-                disabled={isCancelling}
-              >
-                Keep Trip
-              </button>
-            </>
+      {cancelError ? (
+        <p className="m2-status m2-status--error" role="alert">
+          {cancelError}
+        </p>
+      ) : null}
+
+      <TripActionRow
+        left={
+          confirmingCancel ? (
+            <button
+              type="button"
+              className="m2-btn m2-btn--danger"
+              onClick={onConfirmCancel}
+              disabled={isCancelling || actionsDisabled}
+            >
+              {isCancelling ? "Cancelling…" : "Confirm Cancel"}
+            </button>
           ) : (
             <button
               type="button"
               className="m2-btn m2-btn--danger m2-btn--secondary-danger"
               onClick={onRequestCancel}
-              disabled={isCancelling}
+              disabled={isCancelling || actionsDisabled}
             >
               Cancel Trip
             </button>
-          )}
-        </div>
-      </div>
+          )
+        }
+        right={
+          confirmingCancel ? (
+            <button
+              type="button"
+              className="m2-btn m2-btn--secondary"
+              onClick={onKeepTrip}
+              disabled={isCancelling || actionsDisabled}
+            >
+              Keep Trip
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="m2-btn"
+              onClick={onGo}
+              disabled={goDisabled || isCancelling || actionsDisabled}
+            >
+              GO
+            </button>
+          )
+        }
+      />
     </section>
   );
 }

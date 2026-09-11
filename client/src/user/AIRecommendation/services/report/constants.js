@@ -11,7 +11,12 @@ export const VISIBILITY_PUBLIC = "public";
 export const SCORE_COMPLETENESS = {
   PLAN_AND_TRANSPORT: "plan_and_transport",
   TRANSPORT_ONLY: "transport_only",
+  NO_COMPLETED_TRANSPORT: "no_completed_transport",
 };
+
+// Only completedSegments transportation records enter T, F, and carbon.
+// Skipped destinations are excluded from numerator, denominator, and carbon.
+export const SCORE_COVERAGE_POLICY = "completed_transport_only";
 
 export const REPORT_FIELD_KEYS = [
   "userId",
@@ -29,10 +34,14 @@ export const REPORT_FIELD_KEYS = [
   "finalEcoScore",
   "ecoScore",
   "scoreCompleteness",
+  "scoreCoveragePolicy",
   "scoreFormulaVersion",
   "confirmedTransportationCarbonKg",
   "carbonScope",
   "carbonVersion",
+  "reachedCount",
+  "skippedCount",
+  "destinationOutcomes",
   "segments",
   "status",
   "visibility",
@@ -42,6 +51,13 @@ export const REPORT_FIELD_KEYS = [
   "createdAt",
   "updatedAt",
   "completedAt",
+];
+
+export const DESTINATION_OUTCOME_KEYS = [
+  "segmentIndex",
+  "destinationId",
+  "destinationName",
+  "outcome",
 ];
 
 export const SEGMENT_SNAPSHOT_KEYS = [

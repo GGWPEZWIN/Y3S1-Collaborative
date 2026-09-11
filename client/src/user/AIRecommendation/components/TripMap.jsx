@@ -73,6 +73,19 @@ function polylineColor(travelMode) {
   return "#16a34a";
 }
 
+function destinationPin(outcome) {
+  if (outcome === "skipped") {
+    return { background: "#6b7280", borderColor: "#4b5563" };
+  }
+  if (outcome === "reached") {
+    return { background: "#16a34a", borderColor: "#15803d" };
+  }
+  if (outcome === "next") {
+    return { background: "#2563eb", borderColor: "#1d4ed8" };
+  }
+  return { background: "#86efac", borderColor: "#166534" };
+}
+
 function polylineLabel(travelMode) {
   if (travelMode === "TRANSIT") return "Public transit (blue)";
   if (travelMode === "DRIVE") return "Driving (orange)";
@@ -193,8 +206,7 @@ export default function TripMap({
             position,
             title: destination.name || `Destination ${number}`,
             pin: {
-              background: "#16a34a",
-              borderColor: "#15803d",
+              ...destinationPin(destination.outcome),
               glyphText: String(number),
             },
           })
