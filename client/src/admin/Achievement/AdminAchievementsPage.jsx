@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+
 
 import {
   Plus,
@@ -58,7 +58,6 @@ const EMPTY_FORM = {
   title: "",
   description: "",
   category: "Eco Travel",
-  points: 100,
   ruleType: "trips_completed",
   ruleTarget: 1,
   ruleUnit: "trips",
@@ -76,8 +75,9 @@ const CATEGORY_RULE_MAP = {
   "Carbon Saving": ["carbon_saved"],
   Community: ["challenges_completed"],
   Challenges: ["challenges_completed"],
-  Milestones: ["trips_completed", "eco_score"],
+  Milestones: ["trips_completed", "eco_score", "itinerary_saved"],
   Special: [
+    "user_registered",
     "trips_completed",
     "eco_score",
     "challenges_completed",
@@ -276,7 +276,6 @@ export default function AdminAchievementsPage() {
       title: achievement.title || "",
       description: achievement.description || "",
       category,
-      points: achievement.points ?? 100,
       ruleType: existingRule?.value || "trips_completed",
       ruleTarget: achievement.ruleTarget ?? 1,
       ruleUnit:
@@ -374,7 +373,6 @@ export default function AdminAchievementsPage() {
         title: form.title,
         description: form.description,
         category: form.category,
-        points: Number(form.points) || 0,
         ruleType: form.ruleType,
         ruleTarget:
           Number(form.ruleTarget) || 1,
@@ -668,14 +666,6 @@ export default function AdminAchievementsPage() {
                       )}
                     </div>
 
-                    <div
-                      style={
-                        styles.pointsText
-                      }
-                    >
-                      +{achievement.points || 0}{" "}
-                      points
-                    </div>
                   </div>
 
                   {/* ACTIONS */}
@@ -975,21 +965,6 @@ export default function AdminAchievementsPage() {
                 </div>
               </div>
 
-              {/* POINTS */}
-
-              <label style={styles.label}>
-                Reward Points
-
-                <input
-                  type="number"
-                  name="points"
-                  min="0"
-                  value={form.points}
-                  onChange={handleChange}
-                  style={styles.input}
-                />
-              </label>
-
               {/* ICON */}
 
               <div style={styles.iconSection}>
@@ -1246,6 +1221,12 @@ function getRuleText(achievement) {
   switch (
     achievement.ruleType
   ) {
+    case "user_registered":
+      return "Register a GreenTrip account";
+
+    case "itinerary_saved":
+      return "Save your first itinerary";
+
     case "trips_completed":
       if (target === 1) {
         return "Complete your first trip";
@@ -1436,13 +1417,6 @@ const styles = {
     border: "1px solid #f3f4f6",
     color: "#6b7280",
     fontSize: 11.5,
-  },
-
-  pointsText: {
-    marginTop: 6,
-    color: "#111827",
-    fontSize: 11.5,
-    fontWeight: 800,
   },
 
   actions: {

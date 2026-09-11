@@ -1054,6 +1054,21 @@ export async function acceptChallengeTeamInvite(
       const inviteData =
         inviteSnap.data();
 
+      if (inviteData.teamId !== invite.teamId) {
+        throw new Error(
+          "This invitation is linked to a different team."
+        );
+      }
+
+      if (
+        !Array.isArray(team.invitedFriendIds) ||
+        !team.invitedFriendIds.includes(uid)
+      ) {
+        throw new Error(
+          "You are not listed as an invited member of this team."
+        );
+      }
+
       if (
         inviteData.toUid !== uid
       ) {
@@ -2058,7 +2073,9 @@ export function listenToDiscoverableChallengeTeams(callback) {
   return onSnapshot(
     query(
       collection(db, TEAM_COLLECTION),
-      where("status", "==", TEAM_STATUS.WAITING)
+      where("status", "==", TEAM_STATUS.WAITING),
+      where("isDiscoverable", "==", true),
+      where("challengeMode", "==", CHALLENGE_MODE.TEAM)
     ),
     (snap) => {
       const teams = snap.docs

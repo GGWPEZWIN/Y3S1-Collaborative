@@ -4,6 +4,7 @@ import {
   getDoc,
   getDocs,
   setDoc,
+  deleteDoc,
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
@@ -394,7 +395,22 @@ export async function syncTravelHistoryFromItinerary(
     "Planning";
 
   /*
-   * users/{uid}/travelHistory/{itineraryId}
+   * ==========================================================
+   * TRAVEL HISTORY RULE
+   * ==========================================================
+   *
+   * Travel History must contain ONLY completed trips.
+   *
+   * Planning / Active:
+   *   - revoke/remove any existing history record
+   *
+   * Completed:
+   *   - create/update the history record
+   *
+   * This also protects against an old history record remaining
+   * when a user changes a completed itinerary back to Planning
+   * or Active.
+   * ==========================================================
    */
 
   const historyRef =
@@ -410,6 +426,14 @@ export async function syncTravelHistoryFromItinerary(
     await getDoc(
       historyRef
     );
+
+  if (status !== "Completed") {
+    if (existingSnapshot.exists()) {
+      await deleteDoc(historyRef);
+    }
+
+    return null;
+  }
 
   /*
    * IMPORTANT:
@@ -534,25 +558,17 @@ export async function syncTravelHistoryFromItinerary(
 
   /*
    * Completed status fields.
+   *
+   * This function only creates/updates Travel History for
+   * Completed itineraries.
    */
 
-  if (
-    status === "Completed"
-  ) {
-    payload.completed =
-      true;
+  payload.completed = true;
 
-    payload.isCompleted =
-      true;
+  payload.isCompleted = true;
 
-    payload.completedAt =
-      serverTimestamp();
-  } else {
-    payload.completed =
-      false;
-
-    payload.isCompleted =
-      false;
+  if (!existingSnapshot.exists()) {
+    payload.completedAt = serverTimestamp();
   }
 
   /*

@@ -71,6 +71,7 @@ export default function ChatRoom({ chatId, onNavigate }) {
   const [chatError, setChatError] = useState("");
   const [messageMenuId, setMessageMenuId] = useState(null);
   const [hoverMessageId, setHoverMessageId] = useState(null);
+  const messageHoverTimerRef = useRef(null);
 
   // Media is previewed first. Nothing is uploaded/sent until the user
   // explicitly presses Send, similar to WhatsApp.
@@ -406,13 +407,51 @@ export default function ChatRoom({ chatId, onNavigate }) {
 
   const handleCopyMessage = async (msg) => {
     setMessageMenuId(null);
-    const copyText = msg.text || (msg.type === "image" ? "Photo" : msg.type === "video" ? "Video" : "");
+
+    // Text is copied as text. For media, copy the shared media URL when
+    // available so the Copy action still works for images and videos.
+    const copyText =
+      msg.text ||
+      msg.imageUrl ||
+      msg.videoUrl ||
+      msg.mediaUrl ||
+      (msg.type === "image"
+        ? "Photo"
+        : msg.type === "video"
+        ? "Video"
+        : msg.type === "audio" || msg.type === "voice"
+        ? "Voice message"
+        : "");
+
     if (!copyText) return;
+
     try {
       await navigator.clipboard.writeText(copyText);
     } catch (err) {
       reportError(new Error("Could not copy the message."));
     }
+  };
+
+  const handleMessageMouseEnter = (messageId) => {
+    if (messageHoverTimerRef.current) {
+      clearTimeout(messageHoverTimerRef.current);
+      messageHoverTimerRef.current = null;
+    }
+    setHoverMessageId(messageId);
+  };
+
+  const handleMessageMouseLeave = () => {
+    if (messageHoverTimerRef.current) {
+      clearTimeout(messageHoverTimerRef.current);
+    }
+
+    messageHoverTimerRef.current = setTimeout(() => {
+      setHoverMessageId(null);
+      if (!messageMenuId) {
+        setMessageMenuId(null);
+      }
+      messageHoverTimerRef.current = null;
+    }, 140);
   };
 
   const handleSelectOne = (messageId) => {
@@ -933,7 +972,7 @@ export default function ChatRoom({ chatId, onNavigate }) {
 
                 <div
                   style={{ ...styles.messageWrap, alignItems: isMe ? "flex-end" : "flex-start" }}
-                  onMouseEnter={() => setHoverMessageId(msg.id)}
+                  onMouseEnter={() => handleMessageMouseEnter(msg.id)}
                 >
                   {isGroup && !isMe && !isDeletedForEveryone && (
                     <div style={styles.bubbleSender}>{msg.senderName}</div>

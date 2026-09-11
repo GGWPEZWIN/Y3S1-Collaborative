@@ -37,6 +37,10 @@ import {
   updateItineraryStatus,
 } from "../../../firebase/itineraryService";
 
+import {
+  syncTravelHistoryFromItinerary,
+} from "../../../firebase/travelHistoryService";
+
 /*
  * ============================================================
  * STATUS PILL
@@ -799,6 +803,33 @@ function SavedItineraryView({
           nextStatus
         );
 
+        /*
+         * ======================================================
+         * TRAVEL HISTORY SYNC
+         * ======================================================
+         *
+         * ONLY Completed itineraries belong in Travel History.
+         *
+         * Completed:
+         *   -> create/update Travel History
+         *
+         * Planning / Active:
+         *   -> revoke/delete Travel History
+         *
+         * syncTravelHistoryFromItinerary() enforces this rule
+         * as well, so the rule is not dependent only on this UI.
+         */
+
+        await syncTravelHistoryFromItinerary(
+          {
+            ...doc,
+            id,
+            itineraryId: id,
+            status: nextStatus,
+          },
+          nextStatus
+        );
+
         setCurrentStatus(
           nextStatus
         );
@@ -1017,9 +1048,9 @@ function SavedItineraryView({
               }
             >
               Update your trip progress.
-              Completing a trip will
-              update Travel History and
-              automatically check achievements.
+              Completing a trip will add it to Travel History.
+              Changing it back to Planning or Active will
+              remove it from Travel History.
             </p>
           </div>
 
@@ -1158,11 +1189,9 @@ function SavedItineraryView({
             />
 
             <span>
-              This trip is completed.
-              Your Travel History has
-              been updated and your
-              achievements have been
-              checked automatically.
+              This trip is completed and is now in Travel History.
+              If you change the status back to Planning or Active,
+              the Travel History record will be removed.
             </span>
           </div>
         )}
