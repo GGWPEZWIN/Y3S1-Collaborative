@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   subscribeActiveTripLock,
   subscribeCompletedSegments,
+  subscribeSkippedSegments,
   subscribeTripSession,
 } from "../../../firebase/tripSessionService";
 
@@ -35,6 +36,7 @@ export default function useActiveTripSession(currentItineraryId = null) {
   const [warning, setWarning] = useState(null);
   const [session, setSession] = useState(null);
   const [completedSegments, setCompletedSegments] = useState([]);
+  const [skippedSegments, setSkippedSegments] = useState([]);
 
   useEffect(() => {
     const unsubscribe = subscribeActiveTripLock((nextLock, nextWarning) => {
@@ -64,6 +66,15 @@ export default function useActiveTripSession(currentItineraryId = null) {
     });
   }, [sessionId]);
 
+  useEffect(() => {
+    if (!sessionId) {
+      return undefined;
+    }
+    return subscribeSkippedSegments(sessionId, (records) => {
+      setSkippedSegments(Array.isArray(records) ? records : []);
+    });
+  }, [sessionId]);
+
   if (lock === undefined) {
     return {
       status: ACTIVE_TRIP_STATUS.LOADING,
@@ -71,6 +82,7 @@ export default function useActiveTripSession(currentItineraryId = null) {
       session: null,
       currentSegmentIndex: 0,
       completedSegments: [],
+      skippedSegments: [],
       warning: null,
     };
   }
@@ -83,6 +95,7 @@ export default function useActiveTripSession(currentItineraryId = null) {
     session: visibleSession,
     currentSegmentIndex: readSegmentIndex(visibleSession),
     completedSegments: sessionId ? completedSegments : [],
+    skippedSegments: sessionId ? skippedSegments : [],
     warning,
   };
 }

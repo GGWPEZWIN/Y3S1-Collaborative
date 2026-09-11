@@ -5,6 +5,7 @@ import {
   formatMetersAsKilometres,
   formatSecondsAsMinutes,
 } from "../services/formatMeasurement.js";
+import TripActionRow from "./TripActionRow";
 
 const OPTION_TRAVEL_MODE = {
   walking: "WALK",
@@ -239,15 +240,7 @@ export default function TransportationComparison({
         </details>
       ) : null}
 
-      <div className="m2-actions m2-compare-actions">
-        <button
-          type="button"
-          className="m2-btn"
-          onClick={onStartNavigation}
-          disabled={!canStartNavigation || isLoading}
-        >
-          Start Navigation
-        </button>
+      <div className="m2-compare-refresh">
         <button
           type="button"
           className="m2-btn m2-btn--secondary"
@@ -256,15 +249,30 @@ export default function TransportationComparison({
         >
           {isLoading ? "Refreshing…" : "Refresh Live Comparison"}
         </button>
-        <button
-          type="button"
-          className="m2-btn m2-btn--secondary"
-          onClick={onBack}
-          disabled={isLoading}
-        >
-          Back to Route Overview
-        </button>
       </div>
+
+      <TripActionRow
+        left={
+          <button
+            type="button"
+            className="m2-btn m2-btn--secondary"
+            onClick={onBack}
+            disabled={isLoading}
+          >
+            Back to Route Overview
+          </button>
+        }
+        right={
+          <button
+            type="button"
+            className="m2-btn"
+            onClick={onStartNavigation}
+            disabled={!canStartNavigation || isLoading}
+          >
+            Start Navigation
+          </button>
+        }
+      />
     </section>
   );
 }

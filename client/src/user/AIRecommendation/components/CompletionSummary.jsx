@@ -1,4 +1,5 @@
 import { formatCarbonKg, formatScore } from "../services/report/reportDisplay.js";
+import TripActionRow from "./TripActionRow";
 
 export default function CompletionSummary({
   summary,
@@ -13,24 +14,35 @@ export default function CompletionSummary({
   onKeepTrip,
 }) {
   const title = summary?.title || "Green trip";
+  const headingTitle = summary?.headingTitle || "Trip ready to finish";
+  const carbonValue = summary?.noCompletedTravel
+    ? "No completed travel recorded"
+    : formatCarbonKg(summary?.confirmedTransportationCarbonKg);
+  const transportValue = summary?.noCompletedTravel
+    ? "No completed travel recorded"
+    : formatScore(summary?.transportationEcoScore);
+  const finalValue = summary?.noCompletedTravel
+    ? "No completed travel recorded"
+    : formatScore(summary?.finalEcoScore);
 
   return (
     <section className="m2-overview m2-complete" aria-label="Completion summary">
       <header className="m2-overview-hero m2-success-hero">
-        <p className="m2-chip">Trip complete</p>
-        <h1 className="m2-overview-title">All destinations reached</h1>
+        <p className="m2-chip">{summary?.headingChip || "Trip summary"}</p>
+        <h1 className="m2-overview-title">{headingTitle}</h1>
         <div className="m2-overview-heading">
           <h2 className="m2-overview-itinerary">{title}</h2>
           <span className="m2-badge">Ready to finish</span>
         </div>
         <p className="m2-overview-segment">
-          {summary?.destinationCount || 0} saved destinations completed
+          {summary?.headingSubtitle ||
+            `${summary?.reachedCount || 0} reached · ${summary?.skippedCount || 0} skipped · ${summary?.destinationCount || 0} planned`}
         </p>
       </header>
 
       <article className="m2-card m2-score-card" aria-labelledby="m2-final-preview-title">
         <h3 id="m2-final-preview-title">Final Trip Eco-Score preview</h3>
-        <p className="m2-score-hero">{formatScore(summary?.finalEcoScore)}</p>
+        <p className="m2-score-hero">{finalValue}</p>
         <p className="m2-muted">{summary?.formulaExplanation}</p>
       </article>
 
@@ -42,15 +54,13 @@ export default function CompletionSummary({
         </article>
         <article className="m2-card m2-metric-card">
           <h3>Transportation Eco-Score</h3>
-          <p className="m2-metric-value">{formatScore(summary?.transportationEcoScore)}</p>
-          <p className="m2-muted">Average of completed segment scores.</p>
+          <p className="m2-metric-value">{transportValue}</p>
+          <p className="m2-muted">Average of completed travel scores only. Skipped stops are excluded.</p>
         </article>
         <article className="m2-card m2-metric-card">
-          <h3>Confirmed transportation carbon</h3>
-          <p className="m2-metric-value">
-            {formatCarbonKg(summary?.confirmedTransportationCarbonKg)}
-          </p>
-          <p className="m2-muted">Sum of confirmed completed segments only.</p>
+          <h3>Recorded completed transportation carbon</h3>
+          <p className="m2-metric-value">{carbonValue}</p>
+          <p className="m2-muted">{summary?.carbonExplanation}</p>
         </article>
       </div>
 
@@ -60,7 +70,13 @@ export default function CompletionSummary({
           {(summary?.stops || []).map((stop, index) => (
             <li
               key={stop.id || `${stop.name}-${index}`}
-              className="m2-order-item m2-order-item--done"
+              className={
+                stop.kind === "SKIPPED"
+                  ? "m2-order-item m2-order-item--skipped"
+                  : stop.kind === "START"
+                    ? "m2-order-item m2-order-item--start"
+                    : "m2-order-item m2-order-item--done"
+              }
             >
               <span className="m2-order-index" aria-hidden="true">
                 {index + 1}
@@ -87,35 +103,17 @@ export default function CompletionSummary({
         ) : null}
       </div>
 
-      <div className="m2-overview-cta">
-        <button
-          type="button"
-          className="m2-btn m2-btn--go"
-          onClick={onFinish}
-          disabled={finishDisabled || isCancelling}
-        >
-          Finish Trip
-        </button>
-        <div className="m2-actions m2-actions--cancel">
-          {confirmingCancel ? (
-            <>
-              <button
-                type="button"
-                className="m2-btn m2-btn--danger"
-                onClick={onConfirmCancel}
-                disabled={isCancelling || finishDisabled}
-              >
-                {isCancelling ? "Cancelling…" : "Confirm Cancel"}
-              </button>
-              <button
-                type="button"
-                className="m2-btn m2-btn--secondary"
-                onClick={onKeepTrip}
-                disabled={isCancelling || finishDisabled}
-              >
-                Keep Trip
-              </button>
-            </>
+      <TripActionRow
+        left={
+          confirmingCancel ? (
+            <button
+              type="button"
+              className="m2-btn m2-btn--danger"
+              onClick={onConfirmCancel}
+              disabled={isCancelling || finishDisabled}
+            >
+              {isCancelling ? "Cancelling…" : "Confirm Cancel"}
+            </button>
           ) : (
             <button
               type="button"
@@ -125,9 +123,30 @@ export default function CompletionSummary({
             >
               Cancel Trip
             </button>
-          )}
-        </div>
-      </div>
+          )
+        }
+        right={
+          confirmingCancel ? (
+            <button
+              type="button"
+              className="m2-btn m2-btn--secondary"
+              onClick={onKeepTrip}
+              disabled={isCancelling || finishDisabled}
+            >
+              Keep Trip
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="m2-btn"
+              onClick={onFinish}
+              disabled={finishDisabled || isCancelling}
+            >
+              Finish Trip
+            </button>
+          )
+        }
+      />
     </section>
   );
 }

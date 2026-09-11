@@ -11,7 +11,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "./config";
 import { buildOrderedSegments } from "../user/AIRecommendation/services/itinerary/buildRouteSegments.js";
 import { normalizeModule1Itinerary } from "../user/AIRecommendation/services/itinerary/normalizeItinerary.js";
-import { completedSegmentDocumentId } from "../user/AIRecommendation/services/navigation/constants.js";
+import { completedSegmentDocumentId, skippedSegmentDocumentId } from "../user/AIRecommendation/services/navigation/constants.js";
 import {
   ALLOWED_ROUTE_SOURCE,
   buildCompletedSegmentSnapshot,
@@ -19,6 +19,13 @@ import {
   planSegmentCompletion,
   SEGMENT_COMPLETION_ERROR,
 } from "../user/AIRecommendation/services/navigation/segmentCompletion.js";
+import {
+  buildSkippedSegmentSnapshot,
+  normalizeSkippedSegmentRecords,
+  planSegmentSkip,
+  SEGMENT_SKIP_ERROR,
+} from "../user/AIRecommendation/services/navigation/segmentSkip.js";
+import { liveDestinationForSegment } from "../user/AIRecommendation/services/navigation/segmentOrigin.js";
 import { REPORT_DOCUMENT_ID } from "../user/AIRecommendation/services/report/constants.js";
 import { FINISH_TRIP_ERROR, planFinishTrip } from "../user/AIRecommendation/services/report/finishTripPlan.js";
 import { buildEcoReportSnapshot } from "../user/AIRecommendation/services/report/reportSnapshot.js";
@@ -36,6 +43,7 @@ import { buildEcoReportSnapshot } from "../user/AIRecommendation/services/report
  * Module 2 owns:
  *   tripSessions/{sessionId}     — activation history (kept on cancel/complete)
  *   tripSessions/{sessionId}/completedSegments/{segmentId}
+ *   tripSessions/{sessionId}/skippedSegments/{segmentId}
  *   activeTripLocks/{uid}        — deterministic one-active-trip lock
  *   users/{uid}/travelHistory/{itineraryId}/ecoReport/report
  * ============================================================
@@ -45,6 +53,7 @@ const ITINERARIES = "itineraries";
 const TRIP_SESSIONS = "tripSessions";
 const ACTIVE_LOCKS = "activeTripLocks";
 const COMPLETED_SEGMENTS = "completedSegments";
+const SKIPPED_SEGMENTS = "skippedSegments";
 const USERS = "users";
 const TRAVEL_HISTORY = "travelHistory";
 const ECO_REPORT = "ecoReport";
@@ -65,6 +74,8 @@ export const TRIP_SESSION_ERROR = {
   ALL_SEGMENTS_DONE: "ALL_SEGMENTS_DONE",
   SEGMENTS_INCOMPLETE: "SEGMENTS_INCOMPLETE",
   INVALID_SNAPSHOT: "INVALID_SNAPSHOT",
+  OUTCOME_CONFLICT: "OUTCOME_CONFLICT",
+  DESTINATION_MISMATCH: "DESTINATION_MISMATCH",
   REPORT_CONFLICT: "REPORT_CONFLICT",
   REPORT_INCONSISTENT: "REPORT_INCONSISTENT",
   UNAVAILABLE: "UNAVAILABLE",
@@ -182,6 +193,22 @@ function asCompletedSegment(segmentId, data) {
     source: data.source,
     carbonVersion: data.carbonVersion,
     completedAt: data.completedAt ?? null,
+    version: data.version ?? 1,
+  };
+}
+
+function asSkippedSegment(segmentId, data) {
+  return {
+    userId: data.userId,
+    itineraryId: data.itineraryId,
+    sessionId: data.sessionId,
+    segmentId: data.segmentId || segmentId,
+    segmentIndex: data.segmentIndex,
+    destinationId: data.destinationId,
+    destinationName: data.destinationName,
+    outcome: data.outcome,
+    reason: data.reason,
+    skippedAt: data.skippedAt ?? null,
     version: data.version ?? 1,
   };
 }
@@ -304,6 +331,31 @@ export function subscribeCompletedSegments(sessionId, onNext) {
       onNext(
         normalizeCompletedSegmentRecords(
           snap.docs.map((docSnap) => asCompletedSegment(docSnap.id, docSnap.data()))
+        )
+      );
+    },
+    () => {
+      onNext([]);
+    }
+  );
+}
+
+/**
+ * Live skipped-segment records. Missing or unreadable collections are none skipped.
+ */
+export function subscribeSkippedSegments(sessionId, onNext) {
+  const id = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (!id) {
+    onNext([]);
+    return () => {};
+  }
+
+  return onSnapshot(
+    collection(db, TRIP_SESSIONS, id, SKIPPED_SEGMENTS),
+    (snap) => {
+      onNext(
+        normalizeSkippedSegmentRecords(
+          snap.docs.map((docSnap) => asSkippedSegment(docSnap.id, docSnap.data()))
         )
       );
     },
@@ -516,9 +568,20 @@ export async function completeCurrentSegment({
         COMPLETED_SEGMENTS,
         segmentId
       );
+      const skipRef = doc(
+        db,
+        TRIP_SESSIONS,
+        session.sessionId,
+        SKIPPED_SEGMENTS,
+        segmentId
+      );
       const existingSnap = await transaction.get(completionRef);
+      const existingSkipSnap = await transaction.get(skipRef);
       const existingCompletion = existingSnap.exists()
         ? asCompletedSegment(existingSnap.id, existingSnap.data())
+        : null;
+      const existingSkip = existingSkipSnap.exists()
+        ? asSkippedSegment(existingSkipSnap.id, existingSkipSnap.data())
         : null;
 
       const snapshot = buildCompletedSegmentSnapshot({
@@ -538,6 +601,7 @@ export async function completeCurrentSegment({
         session,
         expectedSegmentIndex,
         existingCompletion,
+        existingSkip,
         snapshot,
       });
 
@@ -547,6 +611,8 @@ export async function completeCurrentSegment({
           sessionId: session.sessionId,
           currentSegmentIndex: plan.session.currentSegmentIndex,
           allDestinationsReached:
+            plan.session.currentSegmentIndex >= plan.session.totalSegments,
+          allDestinationsResolved:
             plan.session.currentSegmentIndex >= plan.session.totalSegments,
         };
       }
@@ -591,6 +657,154 @@ export async function completeCurrentSegment({
         currentSegmentIndex: plan.sessionUpdate.currentSegmentIndex,
         allDestinationsReached:
           plan.sessionUpdate.currentSegmentIndex >= session.totalSegments,
+        allDestinationsResolved:
+          plan.sessionUpdate.currentSegmentIndex >= session.totalSegments,
+      };
+    });
+  } catch (error) {
+    throw mapFirebaseFailure(error);
+  }
+}
+
+/**
+ * Skips the current unresolved destination after user confirmation.
+ * Creates tripSessions/{sessionId}/skippedSegments/{segmentId} and
+ * increments currentSegmentIndex by one in the same transaction.
+ * Does not finish the trip, release the lock, or store transport metrics.
+ */
+export async function skipCurrentDestination({
+  expectedSegmentIndex,
+  destinationId,
+  destinationName,
+}) {
+  const user = await getLoggedInUser();
+
+  try {
+    return await runTransaction(db, async (transaction) => {
+      const lockRef = doc(db, ACTIVE_LOCKS, user.uid);
+      const lockSnap = await transaction.get(lockRef);
+      if (!lockSnap.exists()) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.SESSION_MISMATCH);
+      }
+
+      const lock = asLock(lockSnap.data());
+      if (lock.userId !== user.uid) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.UNAUTHORIZED);
+      }
+
+      const sessionRef = doc(db, TRIP_SESSIONS, lock.sessionId);
+      const sessionSnap = await transaction.get(sessionRef);
+      if (!sessionSnap.exists()) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.SESSION_MISMATCH);
+      }
+
+      const session = asSession(sessionSnap.id, sessionSnap.data());
+      if (lock.itineraryId !== session.itineraryId) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.SESSION_MISMATCH);
+      }
+      if (session.userId !== user.uid) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.UNAUTHORIZED);
+      }
+
+      const itineraryRef = doc(db, ITINERARIES, session.itineraryId);
+      const itinerarySnap = await transaction.get(itineraryRef);
+      const { segments } = assertOwnedRouteableItinerary(
+        itinerarySnap,
+        user.uid
+      );
+
+      const savedDestination = liveDestinationForSegment(segments, expectedSegmentIndex);
+      const segmentId = skippedSegmentDocumentId(expectedSegmentIndex);
+      if (!segmentId) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.SEGMENT_NOT_CURRENT);
+      }
+
+      const completionRef = doc(
+        db,
+        TRIP_SESSIONS,
+        session.sessionId,
+        COMPLETED_SEGMENTS,
+        segmentId
+      );
+      const skipRef = doc(
+        db,
+        TRIP_SESSIONS,
+        session.sessionId,
+        SKIPPED_SEGMENTS,
+        segmentId
+      );
+      const existingCompletionSnap = await transaction.get(completionRef);
+      const existingSkipSnap = await transaction.get(skipRef);
+      const existingCompletion = existingCompletionSnap.exists()
+        ? asCompletedSegment(existingCompletionSnap.id, existingCompletionSnap.data())
+        : null;
+      const existingSkip = existingSkipSnap.exists()
+        ? asSkippedSegment(existingSkipSnap.id, existingSkipSnap.data())
+        : null;
+
+      const snapshot = buildSkippedSegmentSnapshot({
+        userId: user.uid,
+        itineraryId: session.itineraryId,
+        sessionId: session.sessionId,
+        segmentIndex: expectedSegmentIndex,
+        destinationId,
+        destinationName,
+      });
+
+      const plan = planSegmentSkip({
+        user,
+        lock,
+        session,
+        expectedSegmentIndex,
+        existingSkip,
+        existingCompletion,
+        snapshot,
+        currentDestination: savedDestination,
+      });
+
+      if (plan.type === "idempotent") {
+        return {
+          alreadySkipped: true,
+          sessionId: session.sessionId,
+          currentSegmentIndex: plan.session.currentSegmentIndex,
+          allDestinationsResolved:
+            plan.session.currentSegmentIndex >= plan.session.totalSegments,
+        };
+      }
+
+      if (plan.type !== "commit") {
+        const code =
+          SEGMENT_SKIP_ERROR[plan.code] ||
+          TRIP_SESSION_ERROR[plan.code] ||
+          plan.code ||
+          TRIP_SESSION_ERROR.UNAVAILABLE;
+        throw new TripSessionError(code);
+      }
+
+      transaction.set(skipRef, {
+        userId: plan.skip.userId,
+        itineraryId: plan.skip.itineraryId,
+        sessionId: plan.skip.sessionId,
+        segmentId: plan.skip.segmentId,
+        segmentIndex: plan.skip.segmentIndex,
+        destinationId: plan.skip.destinationId,
+        destinationName: plan.skip.destinationName,
+        outcome: plan.skip.outcome,
+        reason: plan.skip.reason,
+        skippedAt: serverTimestamp(),
+        version: plan.skip.version,
+      });
+      transaction.update(sessionRef, {
+        currentSegmentIndex: plan.sessionUpdate.currentSegmentIndex,
+        updatedAt: serverTimestamp(),
+      });
+
+      return {
+        alreadySkipped: false,
+        sessionId: session.sessionId,
+        currentSegmentIndex: plan.sessionUpdate.currentSegmentIndex,
+        allDestinationsResolved:
+          plan.sessionUpdate.currentSegmentIndex >= session.totalSegments,
       };
     });
   } catch (error) {
@@ -621,10 +835,10 @@ function throwFinishPlanError(plan) {
 }
 
 /**
- * Completes the signed-in user's trip after every saved hop has a completion
- * record. One transaction writes session completion, itinerary completion
- * flags, travel-history metadata, the private Eco Report, and lock deletion.
- * Does not call Google Routes or change rewards/achievements.
+ * Completes the signed-in user's trip after every saved hop has a reached
+ * or skipped outcome. One transaction writes session completion, itinerary
+ * completion flags, travel-history metadata, the private Eco Report, and
+ * lock deletion. Does not call Google Routes or change rewards/achievements.
  */
 export async function finishTripSession(sessionId) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
@@ -663,11 +877,13 @@ export async function finishTripSession(sessionId) {
       const existingReport = asExistingReport(reportSnap);
 
       const completions = [];
+      const skips = [];
       if (session.status === "active" && Number.isInteger(session.totalSegments) && session.totalSegments > 0) {
         for (let index = 0; index < session.totalSegments; index += 1) {
           const segmentId = completedSegmentDocumentId(index);
           if (!segmentId) {
             completions.push(null);
+            skips.push(null);
             continue;
           }
           const completionRef = doc(
@@ -677,10 +893,23 @@ export async function finishTripSession(sessionId) {
             COMPLETED_SEGMENTS,
             segmentId
           );
+          const skipRef = doc(
+            db,
+            TRIP_SESSIONS,
+            session.sessionId,
+            SKIPPED_SEGMENTS,
+            segmentId
+          );
           const completionSnap = await transaction.get(completionRef);
+          const skipSnap = await transaction.get(skipRef);
           completions.push(
             completionSnap.exists()
               ? asCompletedSegment(completionSnap.id, completionSnap.data())
+              : null
+          );
+          skips.push(
+            skipSnap.exists()
+              ? asSkippedSegment(skipSnap.id, skipSnap.data())
               : null
           );
         }
@@ -692,6 +921,7 @@ export async function finishTripSession(sessionId) {
         session,
         itinerary,
         completions,
+        skips,
         existingReport,
       });
 

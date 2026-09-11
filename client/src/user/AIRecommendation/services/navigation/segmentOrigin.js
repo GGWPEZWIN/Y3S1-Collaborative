@@ -64,15 +64,21 @@ export function savedOriginForSegment(itinerary, segments, segmentIndex) {
   };
 }
 
-export function routeStopKind({ stopIndex, currentSegmentIndex, totalSegments, isStart }) {
-  if (currentSegmentIndex >= totalSegments) {
-    return isStart ? "START" : "COMPLETED";
-  }
+export function routeStopKind({
+  stopIndex,
+  currentSegmentIndex,
+  totalSegments,
+  isStart,
+  outcomesByIndex = null,
+}) {
   if (isStart) {
     return currentSegmentIndex === 0 ? "CURRENT" : "START";
   }
   const destinationIndex = stopIndex - 1;
-  if (destinationIndex < currentSegmentIndex) return "COMPLETED";
+  const outcome = outcomesByIndex?.[destinationIndex] || null;
+  if (outcome === "reached") return "REACHED";
+  if (outcome === "skipped") return "SKIPPED";
+  if (currentSegmentIndex >= totalSegments) return "REACHED";
   if (destinationIndex === currentSegmentIndex) return "NEXT DESTINATION";
   return "UPCOMING";
 }

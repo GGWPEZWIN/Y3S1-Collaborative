@@ -69,6 +69,17 @@ export function calculateFinalTripScore({ planEcoScore, transportationEcoScore }
 }
 
 export function calculateFinishScores({ planEcoScore, completions } = {}) {
+  if (!Array.isArray(completions) || completions.length === 0) {
+    return {
+      ok: true,
+      planEcoScore: readPlanEcoScore(planEcoScore),
+      transportationEcoScore: null,
+      finalEcoScore: null,
+      scoreCompleteness: SCORE_COMPLETENESS.NO_COMPLETED_TRANSPORT,
+      scoreFormulaVersion: SCORE_FORMULA_VERSION,
+    };
+  }
+
   const transport = calculateTransportationEcoScore(completions);
   if (!transport.ok) {
     return {

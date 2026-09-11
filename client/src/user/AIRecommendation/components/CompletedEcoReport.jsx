@@ -28,14 +28,18 @@ export default function CompletedEcoReport({
           </span>
         </div>
         <p className="m2-overview-segment">
-          {reportView?.destinationCount || 0} destinations ·{" "}
-          {formatCompletionDate(reportView?.completedAt)}
+          {reportView?.reachedCount || 0} reached · {reportView?.skippedCount || 0} skipped ·{" "}
+          {reportView?.destinationCount || 0} planned · {formatCompletionDate(reportView?.completedAt)}
         </p>
       </header>
 
       <article className="m2-card m2-score-card" aria-labelledby="m2-final-score-title">
         <h3 id="m2-final-score-title">Final Trip Eco-Score</h3>
-        <p className="m2-score-hero">{formatScore(reportView?.finalEcoScore)}</p>
+        <p className="m2-score-hero">
+          {reportView?.noCompletedTravel
+            ? "No completed travel recorded"
+            : formatScore(reportView?.finalEcoScore)}
+        </p>
         <p className="m2-muted">{reportView?.formulaExplanation}</p>
       </article>
 
@@ -46,22 +50,57 @@ export default function CompletedEcoReport({
         </article>
         <article className="m2-card m2-metric-card">
           <h3>Transportation Eco-Score</h3>
-          <p className="m2-metric-value">{formatScore(reportView?.transportationEcoScore)}</p>
+          <p className="m2-metric-value">
+            {reportView?.noCompletedTravel
+              ? "No completed travel recorded"
+              : formatScore(reportView?.transportationEcoScore)}
+          </p>
         </article>
         <article className="m2-card m2-metric-card">
-          <h3>Confirmed transportation carbon</h3>
+          <h3>Recorded completed transportation carbon</h3>
           <p className="m2-metric-value">
-            {formatCarbonKg(reportView?.confirmedTransportationCarbonKg)}
+            {reportView?.noCompletedTravel
+              ? "No completed travel recorded"
+              : formatCarbonKg(reportView?.confirmedTransportationCarbonKg)}
           </p>
+          <p className="m2-muted">{reportView?.carbonExplanation}</p>
         </article>
       </div>
 
       <article className="m2-card" aria-label="Completed route">
-        <h3>Completed route</h3>
+        <h3>Saved route</h3>
         <p className="m2-muted">
           {reportView?.originName || "Unavailable"}
           {(reportView?.destinationNames || []).map((name) => ` → ${name}`).join("")}
         </p>
+        {(reportView?.destinationOutcomes || []).length > 0 ? (
+          <ol className="m2-order" style={{ marginTop: 16 }}>
+            {(reportView.destinationOutcomes || []).map((entry, index) => (
+              <li
+                key={`${entry.segmentIndex}-${index}`}
+                className={
+                  entry.outcome === "skipped"
+                    ? "m2-order-item m2-order-item--skipped"
+                    : "m2-order-item m2-order-item--done"
+                }
+              >
+                <span className="m2-order-index" aria-hidden="true">
+                  {index + 1}
+                </span>
+                <div>
+                  <div>{entry.destinationName || "Unavailable"}</div>
+                  <div className="m2-chip">
+                    {entry.outcome === "skipped" ? "SKIPPED" : "REACHED"}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+        <h3 style={{ marginTop: 20 }}>Completed travel</h3>
+        {reportView?.noCompletedTravel || (reportView?.segments || []).length === 0 ? (
+          <p className="m2-muted">No completed travel recorded.</p>
+        ) : (
         <ol className="m2-segment-list">
           {(reportView?.segments || []).map((segment, index) => (
             <li key={`${segment.segmentIndex}-${index}`} className="m2-segment-item">
@@ -93,6 +132,7 @@ export default function CompletedEcoReport({
             </li>
           ))}
         </ol>
+        )}
       </article>
 
       <div className="m2-live" aria-live="polite">

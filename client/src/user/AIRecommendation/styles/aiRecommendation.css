@@ -984,6 +984,95 @@
   text-align: center;
 }
 
+.m2-action-row {
+  width: 100%;
+  margin-top: 16px;
+}
+
+.m2-action-row__buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+  align-items: stretch;
+}
+
+.m2-action-row__slot {
+  min-width: 0;
+  display: flex;
+}
+
+.m2-action-row__slot .m2-btn {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 16px;
+  font-size: 14px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1.2;
+  white-space: normal;
+}
+
+.m2-action-row__slot .m2-btn--go {
+  width: 100%;
+  max-width: none;
+  padding: 12px 16px;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+
+.m2-action-helper {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #4b5563;
+  line-height: 1.4;
+}
+
+.m2-order-item--skipped {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.m2-compare-refresh {
+  margin: 16px 0 0;
+}
+
+.m2-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 40;
+}
+
+.m2-dialog {
+  background: #fff;
+  border: 1px solid #bbf7d0;
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 440px;
+  width: 100%;
+  box-shadow: 0 20px 40px rgba(21, 128, 61, 0.12);
+}
+
+.m2-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 22px;
+  color: #14532d;
+}
+
+@media (max-width: 900px) {
+  .m2-action-row__buttons {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .m2-loader,
   .m2-loading-mode {

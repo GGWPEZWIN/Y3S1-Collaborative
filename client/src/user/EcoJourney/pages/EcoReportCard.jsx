@@ -399,7 +399,9 @@ function ReportListCard({
             </div>
             <div style={styles.statBox}>
               <div style={styles.statLabel}>Destinations</div>
-              <div style={styles.statValue}>{view.destinationCount}</div>
+              <div style={styles.statValue}>
+                {view.reachedCount} reached · {view.skippedCount} skipped
+              </div>
             </div>
             <div style={styles.statBox}>
               <div style={styles.statLabel}>Visibility</div>

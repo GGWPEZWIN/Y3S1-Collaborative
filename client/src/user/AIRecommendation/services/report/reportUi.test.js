@@ -107,6 +107,7 @@ test("completion summary keeps Module 1 route order and missing plan score", () 
   assert.equal(withPlan.finalEcoScore, 88);
   assert.equal(withPlan.confirmedTransportationCarbonKg, 1.32);
   assert.equal(withPlan.canFinish, true);
+  assert.equal(withPlan.headingTitle, "All destinations reached");
   assert.equal(Object.prototype.hasOwnProperty.call(withPlan, "foodWaste"), false);
   assert.equal(
     buildCompletionSummary({
@@ -130,11 +131,53 @@ test("completion summary keeps Module 1 route order and missing plan score", () 
   assert.match(missingPlan.formulaExplanation, /planning Eco-Score was not available/i);
 });
 
+test("mixed and all-skipped summaries stay finishable with accurate copy", () => {
+  const mixed = buildCompletionSummary({
+    itinerary: itinerary(),
+    session: session(),
+    lock: { sessionId: "session-1", itineraryId: "itin-1" },
+    completions: [completions()[0]],
+    skips: [{
+      segmentIndex: 1,
+      destinationId: "d2",
+      destinationName: "Penang",
+      outcome: "skipped",
+      reason: "user_confirmed",
+    }],
+  });
+  assert.equal(mixed.canFinish, true);
+  assert.equal(mixed.reachedCount, 1);
+  assert.equal(mixed.skippedCount, 1);
+  assert.equal(mixed.headingTitle, "Trip ready to finish");
+  assert.notEqual(mixed.headingTitle, "All destinations reached");
+  assert.equal(mixed.confirmedTransportationCarbonKg, 1.32);
+
+  const allSkipped = buildCompletionSummary({
+    itinerary: itinerary(),
+    session: session(),
+    lock: { sessionId: "session-1", itineraryId: "itin-1" },
+    completions: [],
+    skips: [
+      { segmentIndex: 0, destinationName: "Batu Caves", outcome: "skipped" },
+      { segmentIndex: 1, destinationName: "Penang", outcome: "skipped" },
+    ],
+  });
+  assert.equal(allSkipped.canFinish, true);
+  assert.equal(allSkipped.noCompletedTravel, true);
+  assert.equal(allSkipped.finalEcoScore, null);
+  assert.equal(allSkipped.headingTitle, "Trip summary");
+  assert.notEqual(allSkipped.headingTitle, "All destinations reached");
+  assert.match(allSkipped.headingSubtitle, /No destinations were reached/);
+  assert.match(allSkipped.formulaExplanation, /No completed travel recorded/);
+});
+
 test("private and public report views and stale itinerary reports", () => {
   const privateView = buildCompletedReportView(module2Report(), "itin-1");
   assert.equal(privateView.visibility, "private");
   assert.equal(privateView.isPublic, false);
-  assert.deepEqual(privateView.destinationNames, ["Batu Caves", "Penang"]);
+  assert.equal(privateView.destinationCount, 2);
+  assert.equal(privateView.reachedCount, 2);
+  assert.equal(privateView.skippedCount, 0);
   assert.equal(viewContainsFoodWaste(privateView), false);
 
   const publicView = buildCompletedReportView(

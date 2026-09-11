@@ -76,7 +76,9 @@ test("report snapshot keeps route order and allow-listed fields only", () => {
   assert.equal(Object.prototype.hasOwnProperty.call(snapshot, "badgesEarned"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(snapshot.segments[0], "encodedPolyline"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(snapshot.segments[0], "latitude"), false);
-  assert.equal(JSON.stringify(records[0].encodedPolyline), JSON.stringify("should-not-copy"));
+  assert.equal(snapshot.reachedCount, 2);
+  assert.equal(snapshot.skippedCount, 0);
+  assert.equal(snapshot.scoreCoveragePolicy, "completed_transport_only");
 });
 
 test("legacy fabricated fields are not inherited", () => {
@@ -121,4 +123,35 @@ test("report builder does not mutate completions or itinerary", () => {
   });
   assert.equal(JSON.stringify(frozenRecords), beforeRecords);
   assert.equal(JSON.stringify(itinerary), beforeItinerary);
+});
+
+test("all-skipped snapshot keeps plan score and null transport values", () => {
+  const itinerary = {
+    title: "Green Weekend",
+    startLocation: { name: "Airport" },
+    destinations: [{ name: "Penang" }, { name: "Cameron Highlands" }],
+  };
+  const scores = calculateFinishScores({ planEcoScore: 89, completions: [] });
+  const carbon = aggregateConfirmedTransportationCarbon([], 0);
+  const snapshot = buildEcoReportSnapshot({
+    userId: "user-1",
+    itineraryId: "itin-1",
+    sessionId: "session-1",
+    tripName: "Green Weekend",
+    itinerary,
+    completions: [],
+    destinationOutcomes: [
+      { segmentIndex: 0, destinationId: "d1", destinationName: "Penang", outcome: "skipped" },
+      { segmentIndex: 1, destinationId: "d2", destinationName: "Cameron Highlands", outcome: "skipped" },
+    ],
+    scores,
+    carbon,
+  });
+  assert.equal(snapshot.planEcoScore, 89);
+  assert.equal(snapshot.transportationEcoScore, null);
+  assert.equal(snapshot.finalEcoScore, null);
+  assert.equal(snapshot.confirmedTransportationCarbonKg, null);
+  assert.equal(snapshot.reachedCount, 0);
+  assert.equal(snapshot.skippedCount, 2);
+  assert.equal(snapshot.segments.length, 0);
 });

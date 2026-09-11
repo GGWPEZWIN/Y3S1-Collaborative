@@ -13,8 +13,10 @@ export const RECOMMENDATION_SURFACE = {
 };
 
 export const FINISH_ERROR_MESSAGE = {
-  SEGMENTS_INCOMPLETE: "Complete every destination before finishing your trip.",
-  SEGMENT_SKIP: "Complete every destination before finishing your trip.",
+  SEGMENTS_INCOMPLETE: "Resolve every destination before finishing your trip.",
+  SEGMENT_SKIP: "Resolve every destination before finishing your trip.",
+  OUTCOME_CONFLICT: "This destination already has a different outcome. Please try again.",
+  INVALID_SNAPSHOT: "A completed travel record could not be verified. Please try again.",
   UNAUTHORIZED: "You do not have access to finish this trip.",
   AUTH_REQUIRED: "You do not have access to finish this trip.",
   REPORT_CONFLICT: "A different completed report already exists for this itinerary.",

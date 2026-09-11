@@ -1,6 +1,7 @@
 import { aggregateConfirmedTransportationCarbon } from "./confirmedCarbon.js";
 import { SCORE_COMPLETENESS } from "./constants.js";
 import { calculateFinishScores } from "./finalScore.js";
+import { DESTINATION_OUTCOME } from "../navigation/progressOutcomes.js";
 
 export const EQUAL_FORMULA_COPY =
   "Final Eco-Score combines the itinerary planning score and completed transportation score equally.";
@@ -8,7 +9,45 @@ export const EQUAL_FORMULA_COPY =
 export const TRANSPORT_ONLY_FORMULA_COPY =
   "A planning Eco-Score was not available, so the Final Eco-Score uses the completed transportation score.";
 
-export function buildRouteStops(itinerary) {
+export const NO_COMPLETED_TRANSPORT_COPY =
+  "No completed travel recorded. Skipped travel is not included in transportation carbon or Eco-Score.";
+
+export const SKIPPED_TRAVEL_CARBON_COPY =
+  "Carbon is recorded completed transportation only. Skipped travel is excluded.";
+
+export function formulaExplanationFor(scoreCompleteness) {
+  if (scoreCompleteness === SCORE_COMPLETENESS.NO_COMPLETED_TRANSPORT) {
+    return NO_COMPLETED_TRANSPORT_COPY;
+  }
+  if (scoreCompleteness === SCORE_COMPLETENESS.TRANSPORT_ONLY) {
+    return TRANSPORT_ONLY_FORMULA_COPY;
+  }
+  return EQUAL_FORMULA_COPY;
+}
+
+export function summaryHeading({ reachedCount, skippedCount, plannedCount }) {
+  if (plannedCount > 0 && reachedCount === 0) {
+    return {
+      chip: "Trip summary",
+      title: "Trip summary",
+      subtitle: "No destinations were reached",
+    };
+  }
+  if (skippedCount > 0) {
+    return {
+      chip: "Trip summary",
+      title: "Trip ready to finish",
+      subtitle: `${reachedCount} reached · ${skippedCount} skipped · ${plannedCount} planned`,
+    };
+  }
+  return {
+    chip: "Trip complete",
+    title: "All destinations reached",
+    subtitle: `${plannedCount} saved destinations completed`,
+  };
+}
+
+export function buildRouteStops(itinerary, outcomesByIndex = null) {
   const stops = [];
   const startName =
     typeof itinerary?.startLocation?.name === "string"
@@ -27,10 +66,14 @@ export function buildRouteStops(itinerary) {
   destinations.forEach((destination, index) => {
     const name = typeof destination?.name === "string" ? destination.name : null;
     if (!name) return;
+    const outcome = outcomesByIndex?.[index] || null;
+    let kind = "REACHED";
+    if (outcome === DESTINATION_OUTCOME.SKIPPED) kind = "SKIPPED";
+    else if (outcome === DESTINATION_OUTCOME.REACHED) kind = "REACHED";
     stops.push({
       id: destination.destinationId || `destination-${index}`,
       name,
-      kind: "COMPLETED",
+      kind,
     });
   });
   return stops;
@@ -41,6 +84,7 @@ export function buildCompletionSummary({
   session = null,
   lock = null,
   completions = [],
+  skips = [],
   finishing = false,
 } = {}) {
   const title =
@@ -50,14 +94,29 @@ export function buildCompletionSummary({
   const destinations = Array.isArray(itinerary?.destinations)
     ? itinerary.destinations
     : [];
-  const stops = buildRouteStops(itinerary);
+  const completedRecords = Array.isArray(completions)
+    ? completions.filter(Boolean)
+    : [];
+  const skipRecords = Array.isArray(skips) ? skips.filter(Boolean) : [];
+  const outcomesByIndex = {};
+  completedRecords.forEach((record) => {
+    if (Number.isInteger(record.segmentIndex)) {
+      outcomesByIndex[record.segmentIndex] = DESTINATION_OUTCOME.REACHED;
+    }
+  });
+  skipRecords.forEach((record) => {
+    if (Number.isInteger(record.segmentIndex)) {
+      outcomesByIndex[record.segmentIndex] = DESTINATION_OUTCOME.SKIPPED;
+    }
+  });
+  const stops = buildRouteStops(itinerary, outcomesByIndex);
   const scores = calculateFinishScores({
     planEcoScore: itinerary?.ecoScore,
-    completions,
+    completions: completedRecords,
   });
   const carbon = aggregateConfirmedTransportationCarbon(
-    completions,
-    session?.totalSegments
+    completedRecords,
+    completedRecords.length
   );
   const sessionActive = session?.status === "active";
   const lockMatches = Boolean(
@@ -73,22 +132,30 @@ export function buildCompletionSummary({
       session.totalSegments > 0 &&
       session.currentSegmentIndex === session.totalSegments
   );
+  const plannedCount = destinations.length || session?.totalSegments || 0;
+  const reachedCount = completedRecords.length;
+  const skippedCount = skipRecords.length;
+  const heading = summaryHeading({ reachedCount, skippedCount, plannedCount });
 
   return {
     title,
-    destinationCount: destinations.length,
+    headingTitle: heading.title,
+    headingChip: heading.chip,
+    headingSubtitle: heading.subtitle,
+    destinationCount: plannedCount,
+    reachedCount,
+    skippedCount,
     stops,
     planEcoScore: scores.planEcoScore,
     transportationEcoScore: scores.ok ? scores.transportationEcoScore : null,
     finalEcoScore: scores.ok ? scores.finalEcoScore : null,
     scoreCompleteness: scores.scoreCompleteness,
-    formulaExplanation:
-      scores.scoreCompleteness === SCORE_COMPLETENESS.TRANSPORT_ONLY
-        ? TRANSPORT_ONLY_FORMULA_COPY
-        : EQUAL_FORMULA_COPY,
+    formulaExplanation: formulaExplanationFor(scores.scoreCompleteness),
+    carbonExplanation: SKIPPED_TRAVEL_CARBON_COPY,
     confirmedTransportationCarbonKg: carbon.ok
       ? carbon.confirmedTransportationCarbonKg
       : null,
+    noCompletedTravel: scores.scoreCompleteness === SCORE_COMPLETENESS.NO_COMPLETED_TRANSPORT,
     scoresOk: scores.ok,
     carbonOk: carbon.ok,
     canFinish:

@@ -3,6 +3,12 @@ import test from "node:test";
 import { CARBON_SCOPE } from "./constants.js";
 import { aggregateConfirmedTransportationCarbon } from "./confirmedCarbon.js";
 
+test("zero completed records yield null carbon, not zero", () => {
+  const result = aggregateConfirmedTransportationCarbon([], 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.confirmedTransportationCarbonKg, null);
+});
+
 test("walking carbon 0 is confirmed and included", () => {
   const completions = [
     { carbonKgCo2e: 0 },

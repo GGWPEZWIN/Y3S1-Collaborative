@@ -1,4 +1,6 @@
-import { completedSegmentDocumentId } from "../navigation/constants.js";
+import { completedSegmentDocumentId, skippedSegmentDocumentId } from "../navigation/constants.js";
+import { SKIP_OUTCOME, SKIP_REASON_USER_CONFIRMED } from "../navigation/constants.js";
+import { DESTINATION_OUTCOME } from "../navigation/progressOutcomes.js";
 import { aggregateConfirmedTransportationCarbon } from "./confirmedCarbon.js";
 import { REPORT_SOURCE } from "./constants.js";
 import { calculateFinishScores, isValidScore } from "./finalScore.js";
@@ -15,6 +17,7 @@ export const FINISH_TRIP_ERROR = {
   INVALID_SNAPSHOT: "INVALID_SNAPSHOT",
   REPORT_CONFLICT: "REPORT_CONFLICT",
   REPORT_INCONSISTENT: "REPORT_INCONSISTENT",
+  OUTCOME_CONFLICT: "OUTCOME_CONFLICT",
 };
 
 const TRAVEL_MODES = new Set(["WALK", "TRANSIT", "DRIVE"]);
@@ -51,6 +54,14 @@ function reportMatchesSession(report, user, session) {
       report.itineraryId === session.itineraryId &&
       report.tripId === session.itineraryId
   );
+}
+
+export function recordAtIndex(records, index) {
+  if (!Array.isArray(records) || !Number.isInteger(index) || index < 0) return null;
+  const positional = records[index];
+  if (positional && positional.segmentIndex === index) return positional;
+  const found = records.find((record) => record && record.segmentIndex === index);
+  return found || null;
 }
 
 export function alignExpectedCompletions(records, totalSegments) {
@@ -95,15 +106,81 @@ export function validateCompletionRecord(record, { user, session, expectedIndex 
   return true;
 }
 
-function validateAlignedCompletions(records, { user, session }) {
-  const ordered = alignExpectedCompletions(records, session.totalSegments);
-  if (!ordered) return { ok: false, code: FINISH_TRIP_ERROR.SEGMENTS_INCOMPLETE };
-  for (let index = 0; index < ordered.length; index += 1) {
-    if (!validateCompletionRecord(ordered[index], { user, session, expectedIndex: index })) {
-      return { ok: false, code: FINISH_TRIP_ERROR.INVALID_SNAPSHOT };
+export function validateSkipRecord(record, { user, session, expectedIndex }) {
+  const expectedId = skippedSegmentDocumentId(expectedIndex);
+  if (!record || !user?.uid || !session || !expectedId) return false;
+  if (record.userId !== user.uid) return false;
+  if (record.sessionId !== session.sessionId) return false;
+  if (record.itineraryId !== session.itineraryId) return false;
+  if (record.segmentIndex !== expectedIndex) return false;
+  if (record.segmentId !== expectedId) return false;
+  if (!requiredName(record.destinationId) || !requiredName(record.destinationName)) return false;
+  if (record.outcome !== SKIP_OUTCOME) return false;
+  if (record.reason !== SKIP_REASON_USER_CONFIRMED) return false;
+  return true;
+}
+
+function destinationOutcomeEntry(index, itinerary, completion, skip) {
+  const dest = Array.isArray(itinerary?.destinations) ? itinerary.destinations[index] : null;
+  const destinationId =
+    requiredName(dest?.destinationId) ||
+    requiredName(skip?.destinationId) ||
+    `destination-${index}`;
+  const destinationName =
+    requiredName(dest?.name) ||
+    requiredName(skip?.destinationName) ||
+    requiredName(completion?.destinationName);
+  return {
+    segmentIndex: index,
+    destinationId,
+    destinationName,
+    outcome: completion ? DESTINATION_OUTCOME.REACHED : DESTINATION_OUTCOME.SKIPPED,
+  };
+}
+
+export function alignExpectedOutcomes({ completions = [], skips = [], totalSegments, user, session, itinerary } = {}) {
+  if (!Number.isInteger(totalSegments) || totalSegments < 1) {
+    return { ok: false, code: FINISH_TRIP_ERROR.SEGMENTS_INCOMPLETE };
+  }
+
+  const reached = [];
+  const skipped = [];
+  const destinationOutcomes = [];
+
+  for (let index = 0; index < totalSegments; index += 1) {
+    const completion = recordAtIndex(completions, index);
+    const skip = recordAtIndex(skips, index);
+    if (completion && skip) {
+      return { ok: false, code: FINISH_TRIP_ERROR.OUTCOME_CONFLICT };
+    }
+    if (!completion && !skip) {
+      return { ok: false, code: FINISH_TRIP_ERROR.SEGMENTS_INCOMPLETE };
+    }
+    if (completion) {
+      if (!validateCompletionRecord(completion, { user, session, expectedIndex: index })) {
+        return { ok: false, code: FINISH_TRIP_ERROR.INVALID_SNAPSHOT };
+      }
+      reached.push(completion);
+      destinationOutcomes.push(destinationOutcomeEntry(index, itinerary, completion, null));
+    } else {
+      if (!validateSkipRecord(skip, { user, session, expectedIndex: index })) {
+        return { ok: false, code: FINISH_TRIP_ERROR.INVALID_SNAPSHOT };
+      }
+      skipped.push(skip);
+      destinationOutcomes.push(destinationOutcomeEntry(index, itinerary, null, skip));
     }
   }
-  return { ok: true, records: ordered };
+
+  if (destinationOutcomes.some((entry) => !requiredName(entry.destinationName))) {
+    return { ok: false, code: FINISH_TRIP_ERROR.INVALID_SNAPSHOT };
+  }
+
+  return {
+    ok: true,
+    completions: reached,
+    skips: skipped,
+    destinationOutcomes,
+  };
 }
 
 export function planFinishTrip({
@@ -112,6 +189,7 @@ export function planFinishTrip({
   session,
   itinerary = null,
   completions = [],
+  skips = [],
   existingReport = null,
 } = {}) {
   if (!user?.uid) return reject(FINISH_TRIP_ERROR.AUTH_REQUIRED);
@@ -162,18 +240,25 @@ export function planFinishTrip({
     return reject(FINISH_TRIP_ERROR.SEGMENTS_INCOMPLETE);
   }
 
-  const aligned = validateAlignedCompletions(completions, { user, session });
+  const aligned = alignExpectedOutcomes({
+    completions,
+    skips,
+    totalSegments: session.totalSegments,
+    user,
+    session,
+    itinerary,
+  });
   if (!aligned.ok) return reject(aligned.code);
 
   const scores = calculateFinishScores({
     planEcoScore: itinerary.ecoScore,
-    completions: aligned.records,
+    completions: aligned.completions,
   });
   if (!scores.ok) return reject(FINISH_TRIP_ERROR.INVALID_SNAPSHOT);
 
   const carbon = aggregateConfirmedTransportationCarbon(
-    aligned.records,
-    session.totalSegments
+    aligned.completions,
+    aligned.completions.length
   );
   if (!carbon.ok) return reject(FINISH_TRIP_ERROR.INVALID_SNAPSHOT);
 
@@ -188,7 +273,9 @@ export function planFinishTrip({
     type: "commit",
     scores,
     carbon,
-    completions: aligned.records,
+    completions: aligned.completions,
+    skips: aligned.skips,
+    destinationOutcomes: aligned.destinationOutcomes,
     historyUpdate: {
       status: "Completed",
       completed: true,
@@ -205,7 +292,8 @@ export function planFinishTrip({
       sessionId: session.sessionId,
       tripName: requiredName(session.itineraryTitle) || requiredName(itinerary.title),
       itinerary,
-      completions: aligned.records,
+      completions: aligned.completions,
+      destinationOutcomes: aligned.destinationOutcomes,
       scores,
       carbon,
     },

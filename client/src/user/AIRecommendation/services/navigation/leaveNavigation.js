@@ -11,6 +11,23 @@ export function originFromGpsFix(fix) {
 }
 
 /**
+ * Back to Transport keeps the same unresolved destination and origin.
+ * It does not complete, skip, change destination, or request Routes.
+ */
+export function leaveNavigationToTransport({
+  currentSegmentIndex,
+  destination,
+} = {}) {
+  return {
+    currentSegmentIndex,
+    destination,
+    requestsRoutes: false,
+    completes: false,
+    skips: false,
+  };
+}
+
+/**
  * Leaving Navigation Preview never completes a segment or calls Routes.
  * A valid latest GPS fix becomes the in-memory origin for the same unfinished segment.
  */

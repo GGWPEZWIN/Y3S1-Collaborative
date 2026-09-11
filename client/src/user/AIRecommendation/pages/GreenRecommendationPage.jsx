@@ -4,6 +4,7 @@ import {
   cancelActiveTripSession,
   completeCurrentSegment,
   finishTripSession,
+  skipCurrentDestination,
   startTripSession,
 } from "../../../firebase/tripSessionService";
 import { publishEcoReport } from "../../../firebase/ecoReportService";
@@ -29,12 +30,24 @@ import {
   evaluateNavigationFix,
 } from "../services/navigation/detection.js";
 import { isValidGpsFix } from "../services/navigation/coordinates.js";
-import { leaveNavigationPreview } from "../services/navigation/leaveNavigation.js";
+import { leaveNavigationToTransport } from "../services/navigation/leaveNavigation.js";
 import { sumCompletedTransportCarbon } from "../services/navigation/segmentCompletion.js";
+import { liveDestinationForSegment } from "../services/navigation/segmentOrigin.js";
 import {
-  liveDestinationForSegment,
-  savedOriginForSegment,
-} from "../services/navigation/segmentOrigin.js";
+  originAfterSkip,
+  reconstructRoutingOrigin,
+  savedStartOrigin,
+} from "../services/navigation/routingOrigin.js";
+import { createArrivalLatch } from "../services/navigation/arrivalLatch.js";
+import {
+  resolveArrivalPersistenceStart,
+  resolveGpsArrivalWithSkipDialog,
+  resolveSkipConfirmAgainstArrival,
+} from "../services/navigation/arrivalSkipOrchestration.js";
+import {
+  buildProgressOutcomes,
+  outcomesBySegmentIndex,
+} from "../services/navigation/progressOutcomes.js";
 import { rankGreenRoutes } from "../services/sustainability/greenRouteRanker";
 import {
   buildCompletedReportView,
@@ -60,6 +73,7 @@ import FinishingTrip from "../components/FinishingTrip";
 import NavigationPreview from "../components/NavigationPreview";
 import NoActiveTrip from "../components/NoActiveTrip";
 import SavedItineraryPreview from "../components/SavedItineraryPreview";
+import SkipDestinationDialog from "../components/SkipDestinationDialog";
 import TransportationComparison from "../components/TransportationComparison";
 import TripActivationPanel from "../components/TripActivationPanel";
 import TripFlowStepper from "../components/TripFlowStepper";
@@ -86,18 +100,30 @@ const CANCEL_MESSAGES = {
 
 const COMPLETE_ERROR =
   "The destination could not be saved. Please try again.";
+const SKIP_ERROR =
+  "This destination could not be skipped. Please try again.";
+const SKIP_STALE_ERROR =
+  "This destination is no longer current. Please try again.";
 
-function mapDestinationsForMap(itinerary) {
+function mapDestinationsForMap(itinerary, progress = null) {
   if (!itinerary?.destinations) return [];
   return itinerary.destinations
     .filter((destination) => destination.routeable)
-    .map((destination, index) => ({
-      destinationId: destination.destinationId,
-      name: destination.name,
-      latitude: destination.latitude,
-      longitude: destination.longitude,
-      plannedOrder: destination.order ?? index + 1,
-    }));
+    .map((destination, index) => {
+      const item = progress?.items?.[index];
+      let outcome = "upcoming";
+      if (item?.kind === "REACHED") outcome = "reached";
+      else if (item?.kind === "SKIPPED") outcome = "skipped";
+      else if (item?.kind === "NEXT DESTINATION") outcome = "next";
+      return {
+        destinationId: destination.destinationId,
+        name: destination.name,
+        latitude: destination.latitude,
+        longitude: destination.longitude,
+        plannedOrder: destination.order ?? index + 1,
+        outcome,
+      };
+    });
 }
 
 function mapStartForMap(itinerary) {
@@ -161,15 +187,27 @@ export default function GreenRecommendationPage({
   const [selectedRankingScore, setSelectedRankingScore] = useState(null);
   const [completeError, setCompleteError] = useState(null);
   const [completing, setCompleting] = useState(false);
+  const [arrivalSaved, setArrivalSaved] = useState(false);
+  const [arrivalAckPending, setArrivalAckPending] = useState(false);
+  const [latchedDestinationName, setLatchedDestinationName] = useState(null);
+  const [skipDialogOpen, setSkipDialogOpen] = useState(false);
+  const [skipDialogDestination, setSkipDialogDestination] = useState(null);
+  const [skipping, setSkipping] = useState(false);
+  const [skipError, setSkipError] = useState(null);
   const [finishStatus, setFinishStatus] = useState("idle");
   const [finishError, setFinishError] = useState(null);
   const [localReport, setLocalReport] = useState(null);
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState(null);
   const completingRef = useRef(false);
+  const skippingRef = useRef(false);
   const finishingRef = useRef(false);
   const publishingRef = useRef(false);
   const streaksRef = useRef(emptyNavigationStreaks());
+  const arrivalLatchRef = useRef(null);
+  const arrivalSavedRef = useRef(false);
+  const skipGuardRef = useRef(null);
+  const arrivalResultRef = useRef(null);
   const navigationGuardRef = useRef({
     sessionId: "",
     currentSegmentIndex: 0,
@@ -190,6 +228,13 @@ export default function GreenRecommendationPage({
     setIsDeviated(false);
     setSelectedRankingScore(null);
     setCompleteError(null);
+    setArrivalSaved(false);
+    setArrivalAckPending(false);
+    setLatchedDestinationName(null);
+    setSkipDialogOpen(false);
+    setSkipDialogDestination(null);
+    setSkipping(false);
+    setSkipError(null);
     setFinishStatus("idle");
     setFinishError(null);
     setLocalReport(null);
@@ -223,17 +268,25 @@ export default function GreenRecommendationPage({
     tripSession.session?.totalSegments ||
     context.segments.length ||
     1;
-  const allDestinationsReached =
+  const progress = buildProgressOutcomes({
+    totalSegments,
+    currentSegmentIndex,
+    completions: tripSession.completedSegments,
+    skips: tripSession.skippedSegments,
+  });
+  const outcomesByIndex = outcomesBySegmentIndex(progress);
+  const allDestinationsResolved =
     thisTripActive && totalSegments > 0 && currentSegmentIndex >= totalSegments;
   const firstLiveDestination = liveDestinationForSegment(
     context.segments,
     currentSegmentIndex
   );
-  const savedOrigin = savedOriginForSegment(
-    context.itinerary,
-    context.segments,
-    currentSegmentIndex
-  );
+  const reconstructedOrigin = reconstructRoutingOrigin({
+    itinerary: context.itinerary,
+    segments: context.segments,
+    completions: tripSession.completedSegments,
+    currentSegmentIndex,
+  });
 
   const {
     location,
@@ -246,14 +299,15 @@ export default function GreenRecommendationPage({
   });
 
   const effectiveOrigin = segmentOriginOverride ||
-    (location.source === "device" ? location : savedOrigin);
+    (location.source === "device" ? location : reconstructedOrigin);
 
   const routingContextKey = `${contextKey}:${thisTripActive ? "active" : "inactive"}:${currentSegmentIndex}`;
   const sessionId = tripSession.lock?.sessionId || "";
   const gpsWatchEnabled =
     thisTripActive &&
-    !allDestinationsReached &&
+    !allDestinationsResolved &&
     !finishing &&
+    !arrivalAckPending &&
     (flowScreen === TRIP_FLOW.NAV ||
       flowScreen === TRIP_FLOW.DESTINATION_REACHED);
   const {
@@ -275,8 +329,9 @@ export default function GreenRecommendationPage({
       setIsDeviated(false);
       setSelectedRankingScore(null);
       if (
-        !allDestinationsReached &&
+        !allDestinationsResolved &&
         !finishing &&
+        !arrivalAckPending &&
         flowScreen !== TRIP_FLOW.OVERVIEW &&
         flowScreen !== TRIP_FLOW.DESTINATION_REACHED
       ) {
@@ -295,7 +350,7 @@ export default function GreenRecommendationPage({
   const canRequestCurrentSegment =
     thisTripActive &&
     !isDemo &&
-    !allDestinationsReached &&
+    !allDestinationsResolved &&
     context.status === ITINERARY_LOAD_STATUS.SUCCESS &&
     Boolean(firstLiveDestination) &&
     originHasCoords &&
@@ -346,7 +401,7 @@ export default function GreenRecommendationPage({
   ]);
 
   useEffect(() => {
-    if (flowScreen !== TRIP_FLOW.NAV || allDestinationsReached) return;
+    if (flowScreen !== TRIP_FLOW.NAV || allDestinationsResolved) return;
     if (!gpsLastFix || !navRoute) return;
     const result = evaluateNavigationFix({
       fix: gpsLastFix,
@@ -356,8 +411,39 @@ export default function GreenRecommendationPage({
     });
     streaksRef.current = result.streaks;
     if (result.arrived) {
-      setIsDeviated(false);
-      setFlowScreen(TRIP_FLOW.DESTINATION_REACHED);
+      const arrivalPlan = resolveGpsArrivalWithSkipDialog({
+        arrived: true,
+        skipInFlight: skippingRef.current,
+        hasLatch: Boolean(arrivalLatchRef.current),
+      });
+      if (arrivalPlan.ignoreArrival) return;
+      if (arrivalPlan.closeSkipDialog) {
+        setSkipDialogOpen(false);
+        skipGuardRef.current = null;
+        setSkipDialogDestination(null);
+        setSkipError(null);
+      }
+      if (arrivalPlan.createLatch) {
+        const latch = createArrivalLatch({
+          sessionId,
+          segmentIndex: currentSegmentIndex,
+          destinationId: firstLiveDestination?.destinationId,
+          route: navRoute,
+          rankingScore: selectedRankingScore,
+        });
+        if (latch) {
+          arrivalLatchRef.current = latch;
+          arrivalSavedRef.current = false;
+          arrivalResultRef.current = null;
+          setLatchedDestinationName(firstLiveDestination?.name || null);
+          setArrivalSaved(false);
+          setArrivalAckPending(true);
+        }
+      }
+      if (arrivalPlan.showReached) {
+        setIsDeviated(false);
+        setFlowScreen(TRIP_FLOW.DESTINATION_REACHED);
+      }
       return;
     }
     if (result.deviated) {
@@ -369,12 +455,31 @@ export default function GreenRecommendationPage({
     navRoute,
     polylinePoints,
     firstLiveDestination,
-    allDestinationsReached,
+    allDestinationsResolved,
+    sessionId,
+    currentSegmentIndex,
+    selectedRankingScore,
   ]);
+
+  useEffect(() => {
+    streaksRef.current = emptyNavigationStreaks();
+    if (arrivalSavedRef.current) return;
+    const latch = arrivalLatchRef.current;
+    if (
+      latch &&
+      (latch.sessionId !== sessionId ||
+        latch.segmentIndex !== currentSegmentIndex ||
+        latch.destinationId !== (firstLiveDestination?.destinationId || null))
+    ) {
+      arrivalLatchRef.current = null;
+      setArrivalAckPending(false);
+      setLatchedDestinationName(null);
+    }
+  }, [sessionId, currentSegmentIndex, firstLiveDestination?.destinationId]);
 
   if (
     thisTripActive &&
-    !allDestinationsReached &&
+    !allDestinationsResolved &&
     flowScreen === TRIP_FLOW.NAV &&
     !hasSuccessfulSelection &&
     !navRoute
@@ -425,6 +530,8 @@ export default function GreenRecommendationPage({
     recalculateRoute.reset();
   }
 
+  const outcomeBusy = completing || skipping || arrivalAckPending;
+
   function goDisabledReason() {
     if (!originHasCoords) return "This segment needs a usable origin before GO.";
     if (!firstLiveDestination) {
@@ -434,7 +541,7 @@ export default function GreenRecommendationPage({
   }
 
   async function handleGo() {
-    if (finishing || allDestinationsReached) return;
+    if (finishing || allDestinationsResolved) return;
     if (!canRequestCurrentSegment) return;
     if (liveComparisonStatus === "loading") return;
     if (
@@ -452,7 +559,7 @@ export default function GreenRecommendationPage({
   }
 
   async function handleRefreshComparison() {
-    if (finishing || allDestinationsReached) return;
+    if (finishing || allDestinationsResolved) return;
     if (!canRequestCurrentSegment) return;
     if (liveComparisonStatus === "loading") return;
     setSelectedMode(null);
@@ -464,24 +571,133 @@ export default function GreenRecommendationPage({
     );
   }
 
-  function handleBackToOverview() {
-    if (finishing || allDestinationsReached) return;
-    const result = leaveNavigationPreview({
+  function handleBackToTransport() {
+    if (finishing || completingRef.current || skippingRef.current || arrivalAckPending) {
+      return;
+    }
+    leaveNavigationToTransport({
       currentSegmentIndex,
       destination: firstLiveDestination,
-      lastValidFix: gpsLastFix,
-      previousOrigin: effectiveOrigin,
     });
-    if (result.usedGpsOrigin && result.originChanged) {
-      setSegmentOriginOverride(result.nextOrigin);
+    setSkipDialogOpen(false);
+    skipGuardRef.current = null;
+    setSkipDialogDestination(null);
+    setSkipError(null);
+    streaksRef.current = emptyNavigationStreaks();
+    resetGpsWatch();
+    setNavRoute(null);
+    setIsDeviated(false);
+    setCompleteError(null);
+    setFlowScreen(TRIP_FLOW.COMPARE);
+  }
+
+  function handleOpenSkipDialog() {
+    if (finishing || completingRef.current || skippingRef.current || arrivalAckPending) {
+      return;
     }
-    setOriginNotice(result.message);
-    resetNavigationState();
-    setFlowScreen(TRIP_FLOW.OVERVIEW);
+    if (!firstLiveDestination) return;
+    skipGuardRef.current = {
+      sessionId,
+      currentSegmentIndex,
+      destinationId: firstLiveDestination.destinationId,
+      destinationName: firstLiveDestination.name,
+      isFinal: currentSegmentIndex === totalSegments - 1,
+    };
+    setSkipDialogDestination({
+      name: firstLiveDestination.name,
+      isFinal: currentSegmentIndex === totalSegments - 1,
+    });
+    setSkipError(null);
+    setSkipDialogOpen(true);
+  }
+
+  function handleKeepNavigating() {
+    if (skippingRef.current) return;
+    skipGuardRef.current = null;
+    setSkipDialogOpen(false);
+    setSkipDialogDestination(null);
+  }
+
+  async function handleConfirmSkip() {
+    const guard = skipGuardRef.current;
+    if (!guard) return;
+    if (
+      !resolveSkipConfirmAgainstArrival({
+        skipInFlight: skippingRef.current,
+        completing: completingRef.current,
+        arrivalLatch: arrivalLatchRef.current,
+        arrivalSaved: arrivalSavedRef.current,
+      }).confirmSkip
+    ) {
+      return;
+    }
+    if (
+      guard.sessionId !== sessionId ||
+      guard.currentSegmentIndex !== currentSegmentIndex ||
+      guard.destinationId !== firstLiveDestination?.destinationId
+    ) {
+      skipGuardRef.current = null;
+      setSkipDialogOpen(false);
+      setSkipDialogDestination(null);
+      setSkipError(SKIP_STALE_ERROR);
+      return;
+    }
+    skippingRef.current = true;
+    setSkipping(true);
+    setSkipError(null);
+    try {
+      const result = await skipCurrentDestination({
+        expectedSegmentIndex: guard.currentSegmentIndex,
+        destinationId: guard.destinationId,
+        destinationName: guard.destinationName,
+      });
+      skipGuardRef.current = null;
+      setSkipDialogOpen(false);
+      setSkipDialogDestination(null);
+      setSkipping(false);
+      skippingRef.current = false;
+      const nextOriginPlan = originAfterSkip({
+        lastValidFix: gpsLastFix,
+        reconstructedOrigin: reconstructRoutingOrigin({
+          itinerary: context.itinerary,
+          segments: context.segments,
+          completions: tripSession.completedSegments,
+          currentSegmentIndex: result.currentSegmentIndex,
+        }),
+      });
+      const retainedOrigin =
+        !nextOriginPlan.usedGps &&
+        segmentOriginOverride &&
+        isRouteableCoordinate(
+          segmentOriginOverride.latitude,
+          segmentOriginOverride.longitude
+        )
+          ? segmentOriginOverride
+          : nextOriginPlan.origin;
+      setSegmentOriginOverride(retainedOrigin);
+      setOriginNotice(
+        nextOriginPlan.usedGps
+          ? `${guard.destinationName} was skipped. Routing continues from your current location.`
+          : retainedOrigin?.source === "reached"
+            ? `${guard.destinationName} was skipped. Routing continues from ${retainedOrigin.label}.`
+            : `${guard.destinationName} was skipped. Using the saved starting location. You can request your current location.`
+      );
+      setSelectedMode(null);
+      resetNavigationState();
+      setFlowScreen(
+        result.allDestinationsResolved
+          ? TRIP_FLOW.COMPLETION_SUMMARY
+          : TRIP_FLOW.OVERVIEW
+      );
+    } catch {
+      skippingRef.current = false;
+      setSkipping(false);
+      setSkipError(SKIP_ERROR);
+    }
   }
 
   function handleStartNavigation() {
-    if (finishing || allDestinationsReached) return;
+    if (finishing || allDestinationsResolved) return;
     if (!hasSuccessfulSelection) return;
     setNavRoute(selectedEntry.route);
     setIsDeviated(false);
@@ -494,7 +710,7 @@ export default function GreenRecommendationPage({
   }
 
   async function handleRecalculate() {
-    if (finishing || allDestinationsReached) return;
+    if (finishing || allDestinationsResolved) return;
     if (!isValidGpsFix(gpsLastFix) || !firstLiveDestination || !selectedTravelMode) {
       return;
     }
@@ -531,37 +747,77 @@ export default function GreenRecommendationPage({
   }
 
   async function handleCompleteDestination() {
-    if (finishing || allDestinationsReached) return;
-    if (completingRef.current || completing) return;
-    if (!navRoute || !firstLiveDestination) return;
+    if (finishing) return;
+    if (completingRef.current || skippingRef.current) return;
+    const latch = arrivalLatchRef.current;
+    if (!latch || arrivalSavedRef.current) return;
+    if (latch.sessionId !== sessionId) return;
     completingRef.current = true;
     setCompleting(true);
     setCompleteError(null);
-    const names = currentSegmentNames(context.segments, currentSegmentIndex);
+    const names = currentSegmentNames(context.segments, latch.segmentIndex);
     try {
       const result = await completeCurrentSegment({
-        expectedSegmentIndex: currentSegmentIndex,
+        expectedSegmentIndex: latch.segmentIndex,
         originName: names.originName || startLocationName,
-        destinationName: names.destinationName || firstLiveDestination.name,
-        route: navRoute,
-        rankingScore: selectedRankingScore,
+        destinationName:
+          names.destinationName || latchedDestinationName || firstLiveDestination?.name,
+        route: latch.route,
+        rankingScore: latch.rankingScore,
       });
-      setSegmentOriginOverride(null);
-      setOriginNotice(null);
-      restoreSavedOrigin();
+      arrivalSavedRef.current = true;
+      arrivalResultRef.current = result;
+      setArrivalSaved(true);
+      setArrivalAckPending(true);
+      setCompleting(false);
+      completingRef.current = false;
       setSelectedMode(null);
-      resetNavigationState();
-      setFlowScreen(
-        result.allDestinationsReached
-          ? TRIP_FLOW.COMPLETION_SUMMARY
-          : TRIP_FLOW.OVERVIEW
-      );
+      streaksRef.current = emptyNavigationStreaks();
     } catch {
       setCompleteError(COMPLETE_ERROR);
       completingRef.current = false;
       setCompleting(false);
     }
   }
+
+  function handleAcknowledgeArrival() {
+    if (!arrivalSavedRef.current) return;
+    const result = arrivalResultRef.current;
+    arrivalLatchRef.current = null;
+    arrivalResultRef.current = null;
+    arrivalSavedRef.current = false;
+    setArrivalAckPending(false);
+    setArrivalSaved(false);
+    setLatchedDestinationName(null);
+    setSegmentOriginOverride(null);
+    setOriginNotice(null);
+    restoreSavedOrigin();
+    resetNavigationState();
+    setFlowScreen(
+      result?.allDestinationsResolved
+        ? TRIP_FLOW.COMPLETION_SUMMARY
+        : TRIP_FLOW.OVERVIEW
+    );
+  }
+
+  useEffect(() => {
+    if (flowScreen !== TRIP_FLOW.DESTINATION_REACHED) return;
+    const latch = arrivalLatchRef.current;
+    if (
+      !resolveArrivalPersistenceStart({
+        reachedScreen: true,
+        latch,
+        alreadySaving: completingRef.current,
+        alreadySaved: arrivalSavedRef.current,
+        skipInFlight: skippingRef.current,
+      }).startSave
+    ) {
+      return;
+    }
+    void handleCompleteDestination();
+    // Arrival save is latched through refs so Strict Mode cannot double-write.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flowScreen, sessionId, currentSegmentIndex, latchedDestinationName]);
 
   async function handleStartTrip() {
     if (isDemo || !requestedId) return;
@@ -580,7 +836,9 @@ export default function GreenRecommendationPage({
   }
 
   async function handleConfirmCancel() {
-    if (finishing) return;
+    if (finishing || completingRef.current || skippingRef.current || arrivalAckPending) {
+      return;
+    }
     setTripAction({ status: "cancelling", error: null });
     try {
       await cancelActiveTripSession();
@@ -610,6 +868,7 @@ export default function GreenRecommendationPage({
     session: tripSession.session,
     lock: tripSession.lock,
     completions: tripSession.completedSegments,
+    skips: tripSession.skippedSegments,
     finishing,
   });
 
@@ -623,7 +882,7 @@ export default function GreenRecommendationPage({
     finishing,
     hasCompletedReport: Boolean(completedReportView),
     tripStatus: tripSession.status,
-    allDestinationsReached,
+    allDestinationsReached: allDestinationsResolved && !arrivalAckPending,
     hasItineraryId: Boolean(requestedId),
     itineraryReady: isReady,
     itineraryUnavailable: isLoadError,
@@ -802,29 +1061,32 @@ export default function GreenRecommendationPage({
                 itinerary={context.itinerary}
                 originName={startLocationName}
                 originIsDevice={effectiveOrigin.source === "device"}
+                originSource={effectiveOrigin.source}
                 nextDestinationName={
                   firstLiveDestination?.name || "Next destination unavailable"
                 }
                 segmentNumber={currentSegmentIndex + 1}
                 totalSegments={totalSegments}
                 currentStopIndex={currentSegmentIndex}
+                outcomesByIndex={outcomesByIndex}
                 firstSegmentDistance={segmentDistance}
                 firstSegmentEta={segmentEta}
                 locationStatus={locationStatus}
                 onUseCurrentLocation={requestCurrentLocation}
                 onUseSavedStart={() => {
-                  setSegmentOriginOverride(null);
+                  setSegmentOriginOverride(savedStartOrigin(context.itinerary));
                   setOriginNotice(null);
                   restoreSavedOrigin();
                 }}
                 locationLoading={locationStatus === "loading"}
                 startLocation={mapStartLocation}
-                destinations={mapDestinationsForMap(context.itinerary)}
+                destinations={mapDestinationsForMap(context.itinerary, progress)}
                 confirmingCancel={confirmingCancel}
                 cancelError={CANCEL_MESSAGES[tripAction.error] || null}
                 isCancelling={tripAction.status === "cancelling"}
+                actionsDisabled={outcomeBusy}
                 onGo={handleGo}
-                goDisabled={!canRequestCurrentSegment}
+                goDisabled={!canRequestCurrentSegment || outcomeBusy}
                 goDisabledReason={goDisabledReason()}
                 originNotice={originNotice}
                 transportCarbonKg={carbonSummary.kg}
@@ -876,7 +1138,7 @@ export default function GreenRecommendationPage({
                       }
                     : mapStartLocation || effectiveOrigin
                 }
-                destinations={mapDestinationsForMap(context.itinerary)}
+                destinations={mapDestinationsForMap(context.itinerary, progress)}
                 liveOriginName={startLocationName}
                 liveDestinationName={
                   firstLiveDestination?.name || "Next destination"
@@ -892,14 +1154,18 @@ export default function GreenRecommendationPage({
                 recalculateError={recalculateRoute.errorCode}
                 canRecalculate={isValidGpsFix(gpsLastFix)}
                 onRecalculate={handleRecalculate}
-                onBackToOverview={handleBackToOverview}
+                onBackToTransport={handleBackToTransport}
+                onNextNavigation={handleOpenSkipDialog}
+                actionsDisabled={outcomeBusy}
               />
             ) : null}
 
             {flowScreen === TRIP_FLOW.DESTINATION_REACHED ? (
               <DestinationReached
                 destinationName={
-                  firstLiveDestination?.name || "Current destination"
+                  latchedDestinationName ||
+                  firstLiveDestination?.name ||
+                  "Current destination"
                 }
                 originName={startLocationName}
                 travelModeLabel={
@@ -907,10 +1173,22 @@ export default function GreenRecommendationPage({
                 }
                 completing={completing}
                 completeError={completeError}
-                onComplete={handleCompleteDestination}
-                onBackToOverview={handleBackToOverview}
+                saved={arrivalSaved}
+                onRetry={handleCompleteDestination}
+                onAcknowledge={handleAcknowledgeArrival}
+                actionsDisabled={skipping}
               />
             ) : null}
+
+            <SkipDestinationDialog
+              open={skipDialogOpen}
+              destinationName={skipDialogDestination?.name}
+              isFinalDestination={Boolean(skipDialogDestination?.isFinal)}
+              confirming={skipping}
+              error={skipError}
+              onKeepNavigating={handleKeepNavigating}
+              onSkipDestination={handleConfirmSkip}
+            />
           </>
         ) : null}
       </div>
