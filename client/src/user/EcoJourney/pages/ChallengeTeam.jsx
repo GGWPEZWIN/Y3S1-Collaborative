@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+// The modern JSX transform does not need the React import:
+// import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   CalendarDays,
@@ -9,7 +11,7 @@ import {
   MapPin,
   MessageCircle,
   Search,
-  Target,
+  // Target, 
   Trophy,
   UserPlus,
   Users,
@@ -169,58 +171,69 @@ function Avatar({ member, size = 42 }) {
   );
 }
 
-function ChallengeCard({ challenge, selected, onSelect }) {
-  const requirementType = challenge.requirementType || "photo";
-
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(challenge)}
-      style={{
-        ...styles.challengeCard,
-        borderColor: selected ? "#16a34a" : "#e5e7eb",
-        boxShadow: selected ? "0 0 0 2px #bbf7d0" : "none",
-      }}
-    >
-      <div style={styles.challengeCardTop}>
-        <div style={styles.challengeIcon}>
-          <Trophy size={20} />
-        </div>
-
-        {selected && <CheckCircle2 size={22} color="#16a34a" />}
-      </div>
-
-      <div style={styles.challengeTitle}>{challenge.title}</div>
-
-      <div style={styles.challengeDescription}>
-        {challenge.description}
-      </div>
-
-      <div style={styles.challengeMeta}>
-        <span style={styles.metaItem}>
-          <Target size={14} />
-          {challenge.target} {challenge.unit}
-        </span>
-
-        {challenge.category && (
-          <span style={styles.categoryPill}>{challenge.category}</span>
-        )}
-      </div>
-
-      <div style={styles.requirementPill}>
-        {getRequirementIcon(requirementType, 14)}
-        {getRequirementLabel(requirementType)}
-      </div>
-
-      {challenge.endDate && (
-        <div style={styles.challengeDate}>
-          <CalendarDays size={14} />
-          Ends {formatDate(challenge.endDate)}
-        </div>
-      )}
-    </button>
-  );
-}
+/*
+ * SUPERSEDED BY ChallengeSelection.
+ *
+ * Kept for reference. Nothing renders this, and its styles
+ * (challengeCard, challengeCardTop, challengeIcon, challengeTitle,
+ * challengeDescription, challengeMeta, metaItem, categoryPill,
+ * challengeDate, challengeGrid) are commented out at the bottom
+ * of the styles object. Restoring this component means restoring
+ * those keys and the Target import too.
+ *
+ * function ChallengeCard({ challenge, selected, onSelect }) {
+ *   const requirementType = challenge.requirementType || "photo";
+ *
+ *   return (
+ *     <button
+ *       type="button"
+ *       onClick={() => onSelect(challenge)}
+ *       style={{
+ *         ...styles.challengeCard,
+ *         borderColor: selected ? "#16a34a" : "#e5e7eb",
+ *         boxShadow: selected ? "0 0 0 2px #bbf7d0" : "none",
+ *       }}
+ *     >
+ *       <div style={styles.challengeCardTop}>
+ *         <div style={styles.challengeIcon}>
+ *           <Trophy size={20} />
+ *         </div>
+ *
+ *         {selected && <CheckCircle2 size={22} color="#16a34a" />}
+ *       </div>
+ *
+ *       <div style={styles.challengeTitle}>{challenge.title}</div>
+ *
+ *       <div style={styles.challengeDescription}>
+ *         {challenge.description}
+ *       </div>
+ *
+ *       <div style={styles.challengeMeta}>
+ *         <span style={styles.metaItem}>
+ *           <Target size={14} />
+ *           {challenge.target} {challenge.unit}
+ *         </span>
+ *
+ *         {challenge.category && (
+ *           <span style={styles.categoryPill}>{challenge.category}</span>
+ *         )}
+ *       </div>
+ *
+ *       <div style={styles.requirementPill}>
+ *         {getRequirementIcon(requirementType, 14)}
+ *         {getRequirementLabel(requirementType)}
+ *       </div>
+ *
+ *       {challenge.endDate && (
+ *         <div style={styles.challengeDate}>
+ *           <CalendarDays size={14} />
+ *           Ends {formatDate(challenge.endDate)}
+ *         </div>
+ *       )}
+ *     </button>
+ *   );
+ * }
+ */
 
 function RequirementButton({ team, currentMember, onSubmit }) {
   const fileRef = useRef(null);
@@ -349,7 +362,7 @@ function RequirementButton({ team, currentMember, onSubmit }) {
             onClick={() => fileRef.current?.click()}
           >
             <Camera size={16} />
-            {busy ? "Uploading proof…" : "Take / Upload Photo"}
+            {busy ? "Uploading proof..." : "Take / Upload Photo"}
           </button>
         </>
       ) : (
@@ -360,7 +373,7 @@ function RequirementButton({ team, currentMember, onSubmit }) {
           onClick={handleLocation}
         >
           <MapPin size={16} />
-          {locationBusy ? "Checking Location…" : "Verify My Location"}
+          {locationBusy ? "Checking Location..." : "Verify My Location"}
         </button>
       )}
     </div>
@@ -400,9 +413,10 @@ function TeamCard({
 
   const isCreator = team.createdBy === currentUid;
 
-  const invitedCount = Array.isArray(team.invitedFriendIds)
-    ? team.invitedFriendIds.length
-    : 0;
+  // Unused: the UI counts accepted members, not sent invitations.
+  // const invitedCount = Array.isArray(team.invitedFriendIds)
+  //   ? team.invitedFriendIds.length
+  //   : 0;
 
   /*
    * IMPORTANT:
@@ -962,15 +976,21 @@ export default function ChallengeTeam({
     useState(null);
 
   const [teamName, setTeamName] = useState("");
-  const [teamState, setTeamState] = useState("");
+
+  // null = the user has not touched the dropdown yet, so the
+  // profile state is used. "" = the user explicitly cleared it.
+  // Derived below instead of synced in an effect.
+  const [teamState, setTeamState] = useState(null);
 
   const [selectedFriends, setSelectedFriends] =
     useState([]);
 
   const [friendSearch, setFriendSearch] = useState("");
 
-  const [showCreate, setShowCreate] =
-    useState(false);
+  // Dead state: the Create panel renders off tab === "Create",
+  // so this was set in three places and never read. Every
+  // setShowCreate call site below is commented out to match.
+  // const [showCreate, setShowCreate] = useState(false);
 
   const [
     showChallengeSelection,
@@ -980,11 +1000,23 @@ export default function ChallengeTeam({
   const [teamSearch, setTeamSearch] = useState("");
   const [stateFilter, setStateFilter] = useState("");
 
-  const [loading, setLoading] = useState(true);
+  // Removed: setLoading(false) ran synchronously in the effect
+  // body (cascading-render error) and never ran at all on the
+  // signed-out path, so the page hung on "Loading...". userLoading
+  // already covers auth and the listeners fill their own arrays.
+  // const [loading, setLoading] = useState(true);
+
   const [saving, setSaving] = useState(false);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  // ============================================================
+  // SUBSCRIPTIONS
+  // ============================================================
+  // No loading state here: the listeners populate their arrays
+  // as data arrives, and userLoading already covers auth.
+  // ============================================================
 
   useEffect(() => {
     if (!authUser?.uid) return undefined;
@@ -1027,7 +1059,7 @@ export default function ChallengeTeam({
       ),
     ];
 
-    setLoading(false);
+    // setLoading(false);
 
     return () =>
       unsubs.forEach(
@@ -1035,25 +1067,41 @@ export default function ChallengeTeam({
       );
   }, [authUser?.uid]);
 
+  // ============================================================
+  // DEADLINE CHECKS
+  // ============================================================
+  // Keyed on the ids of unfinished teams, not on the teams array
+  // itself. checkChallengeTeamDeadline writes to the team doc,
+  // which re-emits from the listener: depending on the array
+  // identity would loop.
+  // ============================================================
+
+  const pendingDeadlineIds = useMemo(
+    () =>
+      teams
+        .filter(
+          (team) =>
+            team.id &&
+            team.status !== TEAM_STATUS.COMPLETED &&
+            team.status !== TEAM_STATUS.ENDED
+        )
+        .map((team) => team.id)
+        .sort()
+        .join(","),
+    [teams]
+  );
+
   useEffect(() => {
-    if (!teams.length) return undefined;
+    if (!pendingDeadlineIds) return undefined;
 
     let cancelled = false;
 
     (async () => {
-      for (const team of teams) {
-        if (
-          cancelled ||
-          team.status === TEAM_STATUS.COMPLETED ||
-          team.status === TEAM_STATUS.ENDED
-        ) {
-          continue;
-        }
+      for (const teamId of pendingDeadlineIds.split(",")) {
+        if (cancelled) return;
 
         try {
-          await checkChallengeTeamDeadline(
-            team.id
-          );
+          await checkChallengeTeamDeadline(teamId);
         } catch (deadlineError) {
           console.warn(
             "Challenge deadline check failed:",
@@ -1066,18 +1114,37 @@ export default function ChallengeTeam({
     return () => {
       cancelled = true;
     };
-  }, [teams]);
+  }, [pendingDeadlineIds]);
 
-  useEffect(() => {
-    const detected = getProfileState(
-      profile,
-      authUser
-    );
+  // ============================================================
+  // TEAM STATE
+  // ============================================================
+  // Derived, not synced. The previous version called
+  // setTeamState inside an effect body, which is a cascading
+  // render: React re-rendered once for the effect and again for
+  // the state write. Depending on teamState also meant clearing
+  // the dropdown immediately rewrote the profile value back.
+  //
+  // Previously:
+  // const statePrefilled = useRef(false);
+  //
+  // useEffect(() => {
+  //   if (statePrefilled.current) return;
+  //   const detected = getProfileState(profile, authUser);
+  //   if (detected) {
+  //     setTeamState(detected);
+  //     statePrefilled.current = true;
+  //   }
+  // }, [profile, authUser]);
+  // ============================================================
 
-    if (detected && !teamState) {
-      setTeamState(detected);
-    }
-  }, [profile, authUser, teamState]);
+  const detectedState = getProfileState(
+    profile,
+    authUser
+  );
+
+  const effectiveTeamState =
+    teamState === null ? detectedState : teamState;
 
   const filteredDiscoverableTeams = useMemo(() => {
     const q = teamSearch.trim().toLowerCase();
@@ -1163,6 +1230,14 @@ export default function ChallengeTeam({
     return map;
   }, [myJoinRequests]);
 
+  const pendingJoinRequests = useMemo(
+    () =>
+      myJoinRequests.filter(
+        (request) => request.status === "pending"
+      ),
+    [myJoinRequests]
+  );
+
   const filteredFriends = useMemo(() => {
     const q = friendSearch.trim().toLowerCase();
 
@@ -1189,14 +1264,13 @@ export default function ChallengeTeam({
   function resetCreateForm() {
     setTeamName("");
 
-    setTeamState(
-      getProfileState(profile, authUser)
-    );
+    // Back to null so the profile state is picked up again.
+    setTeamState(null);
 
     setSelectedFriends([]);
     setSelectedChallenge(null);
     setFriendSearch("");
-    setShowCreate(false);
+    // setShowCreate(false);
     setShowChallengeSelection(false);
     setCreateMode(CHALLENGE_MODE.TEAM);
   }
@@ -1215,7 +1289,7 @@ export default function ChallengeTeam({
       return;
     }
 
-    if (!teamState) {
+    if (!effectiveTeamState) {
       setError(
         "Select the Malaysia state for your team."
       );
@@ -1247,7 +1321,7 @@ export default function ChallengeTeam({
       await createChallengeTeam({
         challenge: selectedChallenge,
         teamName,
-        teamState,
+        teamState: effectiveTeamState,
         invitedFriends: selectedFriends,
         mode: createMode,
       });
@@ -1467,7 +1541,7 @@ export default function ChallengeTeam({
       await startChallengeTeam(team.id);
 
       setSuccess(
-        "Challenge started! Each accepted member must complete the required proof."
+        "Challenge started. Each accepted member must complete the required proof."
       );
     } catch (err) {
       console.error(err);
@@ -1499,7 +1573,7 @@ export default function ChallengeTeam({
 
       setSuccess(
         result.teamCompleted
-          ? "Everyone completed the requirement! The team challenge is completed."
+          ? "Everyone completed the requirement. The team challenge is completed."
           : "Your requirement is verified. Waiting for the remaining team members."
       );
     } catch (err) {
@@ -1556,7 +1630,7 @@ export default function ChallengeTeam({
     );
   }
 
-  if (userLoading || loading) {
+  if (userLoading /* || loading */) {
     return (
       <Layout
         active="community"
@@ -1564,7 +1638,36 @@ export default function ChallengeTeam({
         onNavigate={onNavigate}
       >
         <div style={styles.loading}>
-          Loading Challenge Teams…
+          Loading Challenge Teams...
+        </div>
+      </Layout>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <Layout
+        active="community"
+        onNavigate={onNavigate}
+      >
+        <div style={styles.loading}>
+          <div style={styles.signedOutBox}>
+            <Users size={30} />
+
+            <strong>You're not logged in</strong>
+
+            <span>
+              Log in to create a challenge team or join one.
+            </span>
+
+            <button
+              type="button"
+              style={styles.btnFilled}
+              onClick={() => onNavigate?.("/login")}
+            >
+              Go to Login
+            </button>
+          </div>
         </div>
       </Layout>
     );
@@ -1871,7 +1974,8 @@ export default function ChallengeTeam({
                     CHALLENGE_MODE.TEAM
                   );
 
-                  setShowCreate(true);
+                  // setShowCreate(true);
+
                   setShowChallengeSelection(
                     false
                   );
@@ -2004,7 +2108,7 @@ export default function ChallengeTeam({
                   style={styles.btnFilled}
                   onClick={() => {
                     setTab("Create");
-                    setShowCreate(true);
+                    // setShowCreate(true);
                     setCreateMode(
                       CHALLENGE_MODE.TEAM
                     );
@@ -2065,10 +2169,7 @@ export default function ChallengeTeam({
               </div>
             </div>
 
-            {myJoinRequests.filter(
-              (request) =>
-                request.status === "pending"
-            ).length > 0 && (
+            {pendingJoinRequests.length > 0 && (
               <div
                 style={
                   styles.myRequestBox
@@ -2078,49 +2179,43 @@ export default function ChallengeTeam({
                   My Join Requests
                 </div>
 
-                {myJoinRequests
-                  .filter(
-                    (request) =>
-                      request.status ===
-                      "pending"
-                  )
-                  .map((request) => (
-                    <div
-                      key={request.id}
-                      style={
-                        styles.myRequestRow
-                      }
-                    >
-                      <div>
-                        <strong>
-                          {request.teamName}
-                        </strong>
+                {pendingJoinRequests.map((request) => (
+                  <div
+                    key={request.id}
+                    style={
+                      styles.myRequestRow
+                    }
+                  >
+                    <div>
+                      <strong>
+                        {request.teamName}
+                      </strong>
 
-                        <div
-                          style={
-                            styles.pendingInviteMeta
-                          }
-                        >
-                          Waiting for approval ·
-                          expires after 12 hours
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
+                      <div
                         style={
-                          styles.cancelInviteBtn
-                        }
-                        onClick={() =>
-                          handleCancelJoinRequest(
-                            request
-                          )
+                          styles.pendingInviteMeta
                         }
                       >
-                        Cancel Request
-                      </button>
+                        Waiting for approval, expires after
+                        12 hours
+                      </div>
                     </div>
-                  ))}
+
+                    <button
+                      type="button"
+                      style={
+                        styles.cancelInviteBtn
+                      }
+                      onClick={() =>
+                        handleCancelJoinRequest(
+                          request
+                        )
+                      }
+                    >
+                      Cancel Request
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -2460,9 +2555,10 @@ export default function ChallengeTeam({
                   selectedChallenge={
                     selectedChallenge
                   }
-                  onSelect={
-                    setSelectedChallenge
-                  }
+                  onSelect={(challenge) => {
+                    setSelectedChallenge(challenge);
+                    setShowChallengeSelection(false);
+                  }}
                   onBack={() =>
                     setShowChallengeSelection(
                       false
@@ -2505,7 +2601,7 @@ export default function ChallengeTeam({
                   </div>
 
                   <select
-                    value={teamState}
+                    value={effectiveTeamState}
                     onChange={(event) =>
                       setTeamState(
                         event.target.value
@@ -2741,7 +2837,7 @@ export default function ChallengeTeam({
                       }
                     >
                       {saving
-                        ? "Creating…"
+                        ? "Creating..."
                         : createMode ===
                           CHALLENGE_MODE.PARTNER
                         ? "Send Partner Invitation"
@@ -2783,10 +2879,11 @@ const styles = {
 
   stateSelect: {
     width: "100%",
+    boxSizing: "border-box",
     border: "1px solid #d1d5db",
     borderRadius: 11,
     background: "#fff",
-    padding: "0 12px",
+    padding: "11px 12px",
     fontSize: 14,
     color: "#374151",
     outline: "none",
@@ -2954,34 +3051,6 @@ const styles = {
     cursor: "pointer",
   },
 
-  findBtn: {
-    display: "flex",
-    alignItems: "center",
-    gap: 7,
-    background: "#16a34a",
-    color: "#fff",
-    border: "none",
-    borderRadius: 10,
-    padding: "10px 16px",
-    fontSize: 14,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-
-  smallFindBtn: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    background: "#fff",
-    color: "#166534",
-    border: "1px solid #bbf7d0",
-    borderRadius: 9,
-    padding: "8px 12px",
-    fontSize: 13,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-
   myTeamsIntro: {
     display: "flex",
     alignItems: "center",
@@ -2995,8 +3064,18 @@ const styles = {
     border: "1px solid #fecaca",
     color: "#b91c1c",
     borderRadius: 12,
-    padding: "11px 14px",
-    marginBottom: 16,
+    padding: "12px 16px",
+    position: "fixed",
+    left: "50%",
+    bottom: 24,
+    transform: "translateX(-50%)",
+    zIndex: 99999,
+    width: "min(560px, calc(100vw - 32px))",
+    boxSizing: "border-box",
+    boxShadow: "0 8px 24px rgba(0, 0, 0, 0.12)",
+    fontSize: 14,
+    lineHeight: 1.45,
+    fontWeight: 600,
   },
 
   success: {
@@ -3223,11 +3302,6 @@ const styles = {
     alignItems: "center",
     gap: 8,
     flexShrink: 0,
-  },
-
-  inviteActionsSmall: {
-    display: "flex",
-    gap: 8,
   },
 
   btnFilledSmall: {
@@ -3752,6 +3826,15 @@ const styles = {
     padding: 30,
   },
 
+  signedOutBox: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 10,
+    color: "#6b7280",
+    textAlign: "center",
+  },
+
   createPanel: {
     background: "#fff",
     border: "1px solid #e5e7eb",
@@ -3794,83 +3877,6 @@ const styles = {
     margin: "20px 0 12px",
   },
 
-  optionalText: {
-    color: "#9ca3af",
-    fontWeight: 500,
-    fontSize: 12,
-  },
-
-  challengeGrid: {
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(2, minmax(0, 1fr))",
-    gap: 14,
-  },
-
-  challengeCard: {
-    textAlign: "left",
-    background: "#fff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 15,
-    padding: 17,
-    cursor: "pointer",
-  },
-
-  challengeCardTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-
-  challengeIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 11,
-    background: "#f0fdf4",
-    color: "#16a34a",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  challengeTitle: {
-    color: "#111827",
-    fontWeight: 750,
-    fontSize: 16,
-  },
-
-  challengeDescription: {
-    color: "#6b7280",
-    fontSize: 13.5,
-    lineHeight: 1.5,
-    marginTop: 6,
-    minHeight: 42,
-  },
-
-  challengeMeta: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 13,
-    fontSize: 12.5,
-    color: "#374151",
-    flexWrap: "wrap",
-  },
-
-  metaItem: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 4,
-  },
-
-  categoryPill: {
-    background: "#f3f4f6",
-    borderRadius: 999,
-    padding: "4px 9px",
-    fontWeight: 600,
-  },
-
   requirementPill: {
     display: "inline-flex",
     alignItems: "center",
@@ -3881,15 +3887,6 @@ const styles = {
     padding: "5px 9px",
     fontSize: 12,
     fontWeight: 700,
-  },
-
-  challengeDate: {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    marginTop: 9,
-    color: "#9ca3af",
-    fontSize: 12.5,
   },
 
   modeSelector: {
@@ -4120,4 +4117,132 @@ const styles = {
     background: "#fff",
     flex: 1,
   },
+
+  // ==========================================================
+  // UNUSED STYLE KEYS
+  // ==========================================================
+  // Kept for reference. Nothing references these: findBtn and
+  // smallFindBtn were replaced by btnFilled, optionalText and
+  // inviteActionsSmall were never wired up, and the challenge*
+  // group belongs to the commented-out ChallengeCard near the
+  // top of this file. Uncomment a key before using it again.
+  // ==========================================================
+
+  // findBtn: {
+  //   display: "flex",
+  //   alignItems: "center",
+  //   gap: 7,
+  //   background: "#16a34a",
+  //   color: "#fff",
+  //   border: "none",
+  //   borderRadius: 10,
+  //   padding: "10px 16px",
+  //   fontSize: 14,
+  //   fontWeight: 700,
+  //   cursor: "pointer",
+  // },
+
+  // smallFindBtn: {
+  //   display: "inline-flex",
+  //   alignItems: "center",
+  //   gap: 6,
+  //   background: "#fff",
+  //   color: "#166534",
+  //   border: "1px solid #bbf7d0",
+  //   borderRadius: 9,
+  //   padding: "8px 12px",
+  //   fontSize: 13,
+  //   fontWeight: 700,
+  //   cursor: "pointer",
+  // },
+
+  // optionalText: {
+  //   color: "#9ca3af",
+  //   fontWeight: 500,
+  //   fontSize: 12,
+  // },
+
+  // inviteActionsSmall: {
+  //   display: "flex",
+  //   gap: 8,
+  // },
+
+  // challengeGrid: {
+  //   display: "grid",
+  //   gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  //   gap: 14,
+  // },
+
+  // challengeCard: {
+  //   textAlign: "left",
+  //   background: "#fff",
+  //   border: "1px solid #e5e7eb",
+  //   borderRadius: 15,
+  //   padding: 17,
+  //   cursor: "pointer",
+  // },
+
+  // challengeCardTop: {
+  //   display: "flex",
+  //   justifyContent: "space-between",
+  //   alignItems: "center",
+  //   marginBottom: 12,
+  // },
+
+  // challengeIcon: {
+  //   width: 38,
+  //   height: 38,
+  //   borderRadius: 11,
+  //   background: "#f0fdf4",
+  //   color: "#16a34a",
+  //   display: "flex",
+  //   alignItems: "center",
+  //   justifyContent: "center",
+  // },
+
+  // challengeTitle: {
+  //   color: "#111827",
+  //   fontWeight: 750,
+  //   fontSize: 16,
+  // },
+
+  // challengeDescription: {
+  //   color: "#6b7280",
+  //   fontSize: 13.5,
+  //   lineHeight: 1.5,
+  //   marginTop: 6,
+  //   minHeight: 42,
+  // },
+
+  // challengeMeta: {
+  //   display: "flex",
+  //   alignItems: "center",
+  //   gap: 10,
+  //   marginTop: 13,
+  //   fontSize: 12.5,
+  //   color: "#374151",
+  //   flexWrap: "wrap",
+  // },
+
+  // metaItem: {
+  //   display: "inline-flex",
+  //   alignItems: "center",
+  //   gap: 4,
+  // },
+
+  // categoryPill: {
+  //   background: "#f3f4f6",
+  //   borderRadius: 999,
+  //   padding: "4px 9px",
+  //   fontWeight: 600,
+  // },
+
+  // challengeDate: {
+  //   display: "flex",
+  //   alignItems: "center",
+  //   gap: 5,
+  //   marginTop: 9,
+  //   color: "#9ca3af",
+  //   fontSize: 12.5,
+  // },
 };
