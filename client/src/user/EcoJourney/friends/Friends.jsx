@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { ArrowLeft, Search, UserPlus, Check, X, MessageCircle, Trash2, Users, MoreVertical } from "lucide-react";
 import Layout from "../../../shared/components/Layout";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
@@ -15,6 +15,9 @@ import {
 } from "../../../firebase/friendService";
 import { createOrGetDirectChat } from "../../../firebase/chatService";
 
+const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const NON_ALPHA_FILTERS = ["0-9", "#"];
+
 export default function Friends({ onNavigate }) {
   const { authUser, profile, loading } = useCurrentUser();
 
@@ -24,6 +27,10 @@ export default function Friends({ onNavigate }) {
 
   const [searchEmail, setSearchEmail] = useState("");
   const [searchResults, setSearchResults] = useState([]);
+
+  // Search/filter for the friends already in My Friends.
+  const [friendSearch, setFriendSearch] = useState("");
+  const [friendLetter, setFriendLetter] = useState("all");
   const [searchStatus, setSearchStatus] = useState("");
   const [searching, setSearching] = useState(false);
   const [actionBusy, setActionBusy] = useState("");
@@ -164,6 +171,37 @@ export default function Friends({ onNavigate }) {
       setActionBusy("");
     }
   };
+
+  const filteredFriends = useMemo(() => {
+    const search = friendSearch.trim().toLowerCase();
+
+    return [...friends]
+      .filter((friend) => {
+        if (!search) return true;
+
+        const name = (friend.name || "").toLowerCase();
+        const email = (friend.email || "").toLowerCase();
+
+        return name.includes(search) || email.includes(search);
+      })
+      .filter((friend) => {
+        if (friendLetter === "all") return true;
+
+        const name = (friend.name || "").trim();
+        const firstChar = name.charAt(0);
+
+        if (friendLetter === "0-9") {
+          return /^[0-9]/.test(firstChar);
+        }
+
+        if (friendLetter === "#") {
+          return !/^[A-Za-z0-9]/.test(firstChar);
+        }
+
+        return firstChar.toUpperCase() === friendLetter;
+      })
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  }, [friends, friendSearch, friendLetter]);
 
   if (loading) {
     return (
@@ -324,14 +362,104 @@ export default function Friends({ onNavigate }) {
 
         {/* Friends list */}
         <div style={styles.card}>
-          <h2 style={styles.cardTitle}>
-            <Users size={18} />
-            <span>My Friends ({friends.length})</span>
-          </h2>
+          <div style={styles.friendsListHeader}>
+            <h2 style={{ ...styles.cardTitle, marginBottom: 0 }}>
+              <Users size={18} />
+              <span>My Friends ({friends.length})</span>
+            </h2>
+            <span style={styles.friendsResultCount}>
+              {filteredFriends.length} shown
+            </span>
+          </div>
+
+          {friends.length > 0 && (
+            <>
+              {/* Search existing friends */}
+              <div style={styles.friendSearchBox}>
+                <Search size={18} color="#9ca3af" />
+                <input
+                  type="text"
+                  value={friendSearch}
+                  onChange={(e) => setFriendSearch(e.target.value)}
+                  placeholder="Search my friends by name or email"
+                  style={styles.friendSearchInput}
+                />
+                {friendSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setFriendSearch("")}
+                    style={styles.friendSearchClear}
+                    aria-label="Clear friend search"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+
+              {/* Alphabet filter moved from ChatList to Friends */}
+              <div style={styles.friendFilterRow}>
+                <button
+                  type="button"
+                  onClick={() => setFriendLetter("all")}
+                  style={
+                    friendLetter === "all"
+                      ? styles.friendFilterActive
+                      : styles.friendFilterButton
+                  }
+                >
+                  All
+                </button>
+
+                {ALPHABET.map((letter) => (
+                  <button
+                    key={letter}
+                    type="button"
+                    onClick={() => setFriendLetter(letter)}
+                    style={
+                      friendLetter === letter
+                        ? styles.friendFilterActive
+                        : styles.friendFilterButton
+                    }
+                  >
+                    {letter}
+                  </button>
+                ))}
+
+                {NON_ALPHA_FILTERS.map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    onClick={() => setFriendLetter(filter)}
+                    style={
+                      friendLetter === filter
+                        ? styles.friendFilterActive
+                        : styles.friendFilterButton
+                    }
+                    title={
+                      filter === "0-9"
+                        ? "Names beginning with a number"
+                        : "Names beginning with a symbol or non-Latin character"
+                    }
+                  >
+                    {filter}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
           {friends.length === 0 ? (
-            <p style={styles.emptyText}>No friends yet — search for someone above to get started.</p>
+            <p style={styles.emptyText}>
+              No friends yet — search for someone above to get started.
+            </p>
+          ) : filteredFriends.length === 0 ? (
+            <div style={styles.noFriendMatch}>
+              <Search size={25} color="#94a3b8" />
+              <strong>No friends found</strong>
+              <span>Try another name, email, or letter.</span>
+            </div>
           ) : (
-            friends.map((friend) => (
+            filteredFriends.map((friend) => (
               <div key={friend.uid} style={styles.requestRow}>
                 <div style={styles.resultInfo}>
                   <ProfileAvatar
@@ -339,10 +467,13 @@ export default function Friends({ onNavigate }) {
                     name={friend.name}
                   />
                   <div>
-                    <div style={styles.resultName}>{friend.name || "Unnamed traveler"}</div>
+                    <div style={styles.resultName}>
+                      {friend.name || "Unnamed traveler"}
+                    </div>
                     <div style={styles.resultEmail}>{friend.email}</div>
                   </div>
                 </div>
+
                 <div style={{ ...styles.requestActions, position: "relative" }}>
                   <button
                     type="button"
@@ -354,11 +485,12 @@ export default function Friends({ onNavigate }) {
                     <MessageCircle size={16} />
                   </button>
 
-                  {/* Settings menu — Remove Friend now lives in here instead of a bare row button */}
                   <button
                     type="button"
                     onClick={() =>
-                      setOpenSettingsFor((prev) => (prev === friend.uid ? null : friend.uid))
+                      setOpenSettingsFor((prev) =>
+                        prev === friend.uid ? null : friend.uid
+                      )
                     }
                     style={styles.settingsBtn}
                     title="Friend settings"
@@ -640,6 +772,95 @@ const styles = {
     fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
+  },
+  friendsListHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 16,
+  },
+  friendsResultCount: {
+    color: "#94a3b8",
+    fontSize: 12.5,
+    fontWeight: 600,
+  },
+  friendSearchBox: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    border: "1px solid #e5e7eb",
+    borderRadius: 12,
+    padding: "10px 12px",
+    background: "#f9fafb",
+    marginBottom: 12,
+  },
+  friendSearchInput: {
+    flex: 1,
+    minWidth: 0,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    fontSize: 14,
+    color: "#111827",
+  },
+  friendSearchClear: {
+    width: 28,
+    height: 28,
+    border: "none",
+    borderRadius: 8,
+    background: "#e5e7eb",
+    color: "#64748b",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  friendFilterRow: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6,
+    marginBottom: 16,
+  },
+  friendFilterButton: {
+    minWidth: 30,
+    height: 30,
+    padding: "0 7px",
+    border: "1px solid #dbe1e8",
+    borderRadius: 8,
+    background: "#fff",
+    color: "#64748b",
+    fontSize: 11.5,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  friendFilterActive: {
+    minWidth: 30,
+    height: 30,
+    padding: "0 7px",
+    border: "1px solid #16a34a",
+    borderRadius: 8,
+    background: "#16a34a",
+    color: "#fff",
+    fontSize: 11.5,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  noFriendMatch: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    padding: "30px 18px",
+    color: "#64748b",
+    textAlign: "center",
+    border: "1px dashed #dbe1e8",
+    borderRadius: 12,
+    background: "#f8fafc",
+    marginTop: 4,
   },
   emptyText: { fontSize: 13.5, color: "#9ca3af", margin: 0 },
 };

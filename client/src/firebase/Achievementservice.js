@@ -66,6 +66,16 @@ export const RULE_OPTIONS = [
     label: "Reduce Waste",
     unit: "kg",
   },
+  {
+    value: "user_registered",
+    label: "Register an Account",
+    unit: "registration",
+  },
+  {
+    value: "itinerary_saved",
+    label: "Save an Itinerary",
+    unit: "itinerary",
+  },
 ];
 
 export const DEFAULT_ICON_OPTIONS = [
@@ -92,15 +102,19 @@ export const getRandomDefaultIcon = () => {
 // ============================================================
 //
 // IMPORTANT:
+//
 // The achievement catalogue is GLOBAL.
 //
-// ALL admins read the SAME top-level `achievements` collection.
+// ALL admins read the SAME top-level `achievements`
+// collection.
+//
 // Do NOT filter by createdBy.
 //
 // `createdBy` is only audit metadata.
 // It is NOT ownership.
 //
-// Firestore Security Rules decide who is allowed to read/write.
+// Admins manage the catalogue.
+// Users earn the achievements.
 // ============================================================
 
 export const listenToAchievements = (callback) => {
@@ -205,8 +219,9 @@ export const getAchievement = async (
     achievementId
   );
 
-  const snapshot =
-    await getDoc(achievementRef);
+  const snapshot = await getDoc(
+    achievementRef
+  );
 
   if (!snapshot.exists()) {
     return null;
@@ -303,7 +318,6 @@ export const createAchievement = async ({
   title,
   description,
   category,
-  points,
   ruleType,
   ruleTarget,
   ruleUnit,
@@ -323,9 +337,6 @@ export const createAchievement = async ({
 
     category:
       category || "Eco Travel",
-
-    points:
-      Number(points) || 0,
 
     ruleType:
       ruleType || "trips_completed",
@@ -350,9 +361,9 @@ export const createAchievement = async ({
         ? "published"
         : "draft",
 
-    // IMPORTANT:
-    // This records who created it for audit purposes.
-    // It does NOT restrict other admins from seeing/editing it.
+    // Audit information only.
+    // This does NOT make the achievement belong
+    // to the admin who created it.
     createdBy:
       createdBy || null,
 
@@ -363,14 +374,13 @@ export const createAchievement = async ({
       serverTimestamp(),
   };
 
-  const result =
-    await addDoc(
-      collection(
-        db,
-        ACHIEVEMENTS_COLLECTION
-      ),
-      data
-    );
+  const result = await addDoc(
+    collection(
+      db,
+      ACHIEVEMENTS_COLLECTION
+    ),
+    data
+  );
 
   return result.id;
 };
@@ -385,7 +395,6 @@ export const updateAchievement = async (
     title,
     description,
     category,
-    points,
     ruleType,
     ruleTarget,
     ruleUnit,
@@ -400,12 +409,11 @@ export const updateAchievement = async (
     );
   }
 
-  const achievementRef =
-    doc(
-      db,
-      ACHIEVEMENTS_COLLECTION,
-      achievementId
-    );
+  const achievementRef = doc(
+    db,
+    ACHIEVEMENTS_COLLECTION,
+    achievementId
+  );
 
   await updateDoc(
     achievementRef,
@@ -420,9 +428,6 @@ export const updateAchievement = async (
 
       category:
         category || "Eco Travel",
-
-      points:
-        Number(points) || 0,
 
       ruleType:
         ruleType ||
@@ -467,12 +472,11 @@ export const publishAchievement = async (
     );
   }
 
-  const achievementRef =
-    doc(
-      db,
-      ACHIEVEMENTS_COLLECTION,
-      achievementId
-    );
+  const achievementRef = doc(
+    db,
+    ACHIEVEMENTS_COLLECTION,
+    achievementId
+  );
 
   await updateDoc(
     achievementRef,
@@ -529,12 +533,11 @@ export const deleteAchievement = async (
     );
   }
 
-  const achievementRef =
-    doc(
-      db,
-      ACHIEVEMENTS_COLLECTION,
-      achievementId
-    );
+  const achievementRef = doc(
+    db,
+    ACHIEVEMENTS_COLLECTION,
+    achievementId
+  );
 
   await deleteDoc(
     achievementRef
@@ -579,13 +582,10 @@ const getCompletedTripCount =
           ).toLowerCase();
 
         if (
-          status ===
-            "completed" ||
+          status === "completed" ||
           status === "complete" ||
-          trip.completed ===
-            true ||
-          trip.isCompleted ===
-            true
+          trip.completed === true ||
+          trip.isCompleted === true
         ) {
           count += 1;
         }
@@ -731,6 +731,20 @@ export const getUserAchievement = async (
 // ============================================================
 // AWARD ACHIEVEMENT ONCE
 // ============================================================
+//
+// IMPORTANT:
+//
+// This function awards the achievement to the UID passed in.
+//
+// It does NOT check whether the caller is an admin.
+//
+// The registration page passes the newly-created USER UID.
+//
+// The admin page does NOT call this function.
+//
+// Firestore Security Rules should control who can write
+// achievement records.
+// ============================================================
 
 export const awardAchievement = async (
   uid,
@@ -761,67 +775,68 @@ export const awardAchievement = async (
       achievement.id
     );
 
-  const awardResult = await runTransaction(
-    db,
-    async (transaction) => {
-      const existing =
-        await transaction.get(
-          userAchievementRef
+  const awardResult =
+    await runTransaction(
+      db,
+      async (transaction) => {
+        const existing =
+          await transaction.get(
+            userAchievementRef
+          );
+
+        // Already awarded.
+        if (existing.exists()) {
+          return {
+            awarded: false,
+            alreadyAwarded: true,
+          };
+        }
+
+        transaction.set(
+          userAchievementRef,
+          {
+            achievementId:
+              achievement.id,
+
+            title:
+              achievement.title ||
+              "",
+
+            category:
+              achievement.category ||
+              "",
+
+            unlocked: true,
+
+            unlockedAt:
+              serverTimestamp(),
+          }
         );
 
-      // Already awarded.
-      if (existing.exists()) {
+        // Increase only the user's badge count.
+        transaction.set(
+          userRef,
+          {
+            badges_earned:
+              increment(1),
+
+            updatedAt:
+              serverTimestamp(),
+          },
+          {
+            merge: true,
+          }
+        );
+
         return {
-          awarded: false,
-          alreadyAwarded: true,
+          awarded: true,
+          alreadyAwarded: false,
         };
       }
+    );
 
-      transaction.set(
-        userAchievementRef,
-        {
-          achievementId:
-            achievement.id,
-
-          title:
-            achievement.title ||
-            "",
-
-          category:
-            achievement.category ||
-            "",
-
-          unlocked: true,
-
-          unlockedAt:
-            serverTimestamp(),
-        }
-      );
-
-      // Keep only the user's achievement count.
-      transaction.set(
-        userRef,
-        {
-          badges_earned:
-            increment(1),
-
-          updatedAt:
-            serverTimestamp(),
-        },
-        {
-          merge: true,
-        }
-      );
-
-      return {
-        awarded: true,
-        alreadyAwarded: false,
-      };
-    }
-  );
-
-  // Notify the currently open GreenTrip app
-  // immediately after a NEW achievement is awarded.
+  // Notify currently-open GreenTrip app
+  // after a NEW achievement is awarded.
   if (
     awardResult?.awarded === true &&
     typeof window !== "undefined"
@@ -832,7 +847,8 @@ export const awardAchievement = async (
         {
           detail: {
             achievement: {
-              id: achievement.id,
+              id:
+                achievement.id,
 
               title:
                 achievement.title ||
@@ -914,6 +930,35 @@ export const checkAndAwardAchievements =
     for (
       const achievement of published
     ) {
+      // Registration achievements are handled
+      // separately immediately after registration.
+      //
+      // This prevents the normal progress checker
+      // from treating registration as a numeric
+      // progress value.
+      if (
+        achievement.ruleType ===
+        "user_registered"
+      ) {
+        result.push({
+          ...achievement,
+
+          progress: 0,
+
+          ruleTarget: 1,
+
+          ruleUnit:
+            achievement.ruleUnit ||
+            "registration",
+
+          unlocked: false,
+
+          awarded: false,
+        });
+
+        continue;
+      }
+
       const target =
         Math.max(
           Number(
@@ -1038,7 +1083,6 @@ export const checkAchievementsAfterProgressChange =
       await new Promise(
         (resolve) => {
           let finished = false;
-
           let unsubscribe;
 
           unsubscribe =
@@ -1063,3 +1107,171 @@ export const checkAchievementsAfterProgressChange =
       achievements
     );
   };
+
+// ============================================================
+// CHECK FIRST-REGISTRATION ACHIEVEMENT
+// ============================================================
+//
+// This function is ONLY called by the registration flow.
+//
+// Admins CRUD the achievement catalogue.
+//
+// Admins do NOT receive registration achievements.
+//
+// When a NEW USER successfully registers:
+//
+// Register.jsx
+//      ↓
+// registerTourist()
+//      ↓
+// get new user's UID
+//      ↓
+// checkRegistrationAchievement(uid)
+//      ↓
+// awardAchievement(uid, achievement)
+//      ↓
+// users/{uid}/achievements/{achievementId}
+//
+// ============================================================
+
+export const checkRegistrationAchievement =
+  async (uid) => {
+    if (!uid) {
+      return {
+        newlyAwarded: [],
+      };
+    }
+
+    try {
+      const achievementRef =
+        collection(
+          db,
+          ACHIEVEMENTS_COLLECTION
+        );
+
+      const snapshot =
+        await getDocs(
+          achievementRef
+        );
+
+      const registrationAchievements =
+        snapshot.docs
+          .map((item) => ({
+            id: item.id,
+            ...item.data(),
+          }))
+          .filter(
+            (achievement) =>
+              achievement.status ===
+                "published" &&
+              achievement.ruleType ===
+                "user_registered"
+          );
+
+      const newlyAwarded = [];
+
+      for (
+        const achievement of
+          registrationAchievements
+      ) {
+        const result =
+          await awardAchievement(
+            uid,
+            achievement
+          );
+
+        if (
+          result?.awarded === true
+        ) {
+          newlyAwarded.push(
+            achievement
+          );
+        }
+      }
+
+      return {
+        newlyAwarded,
+      };
+    } catch (error) {
+      console.error(
+        "Failed to check registration achievement:",
+        error
+      );
+
+      return {
+        newlyAwarded: [],
+      };
+    }
+  };
+
+// ============================================================
+// CHECK FIRST ITINERARY SAVED ACHIEVEMENT
+// ============================================================
+//
+// This function is called after a user successfully saves an
+// itinerary. The achievement is awarded once and stored under:
+//
+// users/{uid}/achievements/{achievementId}
+//
+// Because awardAchievement() checks whether that user achievement
+// document already exists, deleting the itinerary later does NOT
+// unlock the achievement again. Saving another itinerary also
+// cannot award the same achievement twice.
+//
+// ============================================================
+
+export const checkItinerarySavedAchievement = async (uid) => {
+  if (!uid) {
+    return {
+      newlyAwarded: [],
+    };
+  }
+
+  try {
+    const achievementRef = collection(
+      db,
+      ACHIEVEMENTS_COLLECTION
+    );
+
+    const snapshot = await getDocs(
+      achievementRef
+    );
+
+    const itineraryAchievements = snapshot.docs
+      .map((item) => ({
+        id: item.id,
+        ...item.data(),
+      }))
+      .filter(
+        (achievement) =>
+          achievement.status === "published" &&
+          achievement.ruleType === "itinerary_saved"
+      );
+
+    const newlyAwarded = [];
+
+    for (const achievement of itineraryAchievements) {
+      const result = await awardAchievement(
+        uid,
+        achievement
+      );
+
+      if (result?.awarded === true) {
+        newlyAwarded.push(achievement);
+      }
+    }
+
+    return {
+      newlyAwarded,
+    };
+  } catch (error) {
+    console.error(
+      "Failed to check itinerary saved achievement:",
+      error
+    );
+
+    return {
+      newlyAwarded: [],
+    };
+  }
+};
