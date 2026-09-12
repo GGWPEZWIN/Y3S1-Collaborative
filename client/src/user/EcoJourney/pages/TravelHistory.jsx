@@ -9,7 +9,6 @@ import {
   Search,
   ChevronLeft,
   TrendingDown,
-  Award,
 } from "lucide-react";
 
 import {
@@ -35,7 +34,6 @@ export default function TravelHistory({
       tripsCompleted: 0,
       avgEcoScore: 0,
       totalCarbonKg: 0,
-      badgesEarned: 0,
     });
 
   const [searchText, setSearchText] =
@@ -137,6 +135,20 @@ export default function TravelHistory({
       return {
         background: "#dcfce7",
         color: "#16a34a",
+      };
+    }
+
+    if (grade === "A-") {
+      return {
+        background: "#ecfccb",
+        color: "#4d7c0f",
+      };
+    }
+
+    if (grade === "B+") {
+      return {
+        background: "#fef3c7",
+        color: "#d97706",
       };
     }
 
@@ -652,41 +664,6 @@ export default function TravelHistory({
 
                     </div>
 
-
-                    {/* BADGES */}
-
-                    <div>
-
-                      <div
-                        style={
-                          styles.statLabel
-                        }
-                      >
-                        Badges
-                      </div>
-
-                      <div
-                        style={
-                          styles.statValueRow
-                        }
-                      >
-
-                        <Award
-                          size={17}
-                          color="#f59e0b"
-                        />
-
-                        <span
-                          style={
-                            styles.statValue
-                          }
-                        >
-                          {trip.badgesEarned} earned
-                        </span>
-
-                      </div>
-
-                    </div>
 
                   </div>
 
