@@ -76,34 +76,38 @@ export async function searchUserByEmail(
   );
 
   try {
-    const snap = await getDocs(q);
+  const snap = await getDocs(q);
 
-    if (snap.empty) return null;
+  if (snap.empty) return null;
 
-    const found = snap.docs[0];
+  const found = snap.docs[0];
 
-    if (found.id === effectiveUid) {
-      return {
-        self: true,
-      };
-    }
-
+  if (found.id === effectiveUid) {
     return {
-      uid: found.id,
-      ...found.data(),
+      self: true,
     };
+  }
+
+  return {
+    uid: found.id,
+    ...found.data(),
+  };
   } catch (error) {
     console.error(
-      "Friend email search failed:",
+      "Friend email search failed:", 
       error
     );
-
-    if (error?.code === "permission-denied") {
+  
+    /** @type {any} */
+    const err = error;
+  
+    if (err?.code === "permission-denied") {
       throw new Error(
-        "Firestore denied the user search. Make sure you are signed in and the latest Firestore rules are published to the same Firebase project used by this app."
+        "Firestore denied the user search. Make sure you are signed in and the latest Firestore rules are published to the same Firebase project used by this app.",
+        { cause: error }
       );
     }
-
+  
     throw error;
   }
 }
@@ -275,15 +279,15 @@ export async function sendFriendRequest(
       )
     );
 
-  const reverseRef =
-    doc(
-      db,
-      "friendRequests",
-      requestId(
-        toUid,
-        fromUid
-      )
-    );
+  //const reverseRef =
+  //  doc(
+  //    db,
+  //    "friendRequests",
+  //    requestId(
+  //      toUid,
+  //      fromUid
+  //    )
+  //  );
 
   /*
    * IMPORTANT FIX

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Leaf,
   Hotel,
@@ -15,7 +15,7 @@ import { doc, getDoc } from "firebase/firestore";
 export default function GreenCertificationHome({ onNavigate }) {
   const [partnerDisplayName, setPartnerDisplayName] = useState("Hotel Partner");
   const [hasApplied, setHasApplied] = useState(false);
-  const [checkingStatus, setCheckingStatus] = useState(true);
+  const [, setCheckingStatus] = useState(true);
 
   // Generate a consistent 4-digit code from user UID (e.g., Hotel_4821)
   const generateDefaultHotelTag = (uid) => {

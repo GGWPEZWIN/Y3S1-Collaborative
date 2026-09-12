@@ -1,8 +1,11 @@
 import { formatCarbonKg, formatScore } from "../services/report/reportDisplay.js";
+import ResourceImpactCard from "./ResourceImpactCard";
 import TripActionRow from "./TripActionRow";
 
 export default function CompletionSummary({
   summary,
+  wasteImpact = null,
+  wasteImpactStatus = "idle",
   confirmingCancel = false,
   cancelError = null,
   isCancelling = false,
@@ -89,6 +92,8 @@ export default function CompletionSummary({
           ))}
         </ol>
       </article>
+
+      <ResourceImpactCard impact={wasteImpact} status={wasteImpactStatus} />
 
       <div className="m2-live" aria-live="polite">
         {finishError ? (

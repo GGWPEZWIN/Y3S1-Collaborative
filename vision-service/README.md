@@ -35,7 +35,7 @@ python -c "import torch; print(torch.cuda.get_device_name(0))"
 Run it:
 
 ```bash
-uvicorn main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000
 curl http://localhost:8000/health
 ```
 

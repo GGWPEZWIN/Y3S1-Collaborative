@@ -15,6 +15,9 @@ import {
   CheckCircle2,
   PlayCircle,
   Circle,
+  Utensils,
+  Droplet,
+  Recycle,
 } from "lucide-react";
 
 import ItineraryShell from "../components/ItineraryShell";
@@ -40,6 +43,11 @@ import {
 import {
   syncTravelHistoryFromItinerary,
 } from "../../../firebase/travelHistoryService";
+
+import { useCurrentUser } from "../../../firebase/useCurrentUser";
+import useTripWasteImpact, {
+  WASTE_IMPACT_LOAD,
+} from "../../../firebase/useTripWasteImpact";
 
 /*
  * ============================================================
@@ -719,6 +727,20 @@ function SavedItineraryView({
 
   /*
    * ==========================================================
+   * RESOURCE IMPACT  (Waste & Resource module)
+   * ==========================================================
+   * Additive read of the trip's waste logs, joined on the same
+   * itinerary id the Waste & Resource module tags them with.
+   */
+
+  const { authUser } = useCurrentUser();
+  const wasteImpact = useTripWasteImpact(
+    authUser?.uid || null,
+    id || null
+  );
+
+  /*
+   * ==========================================================
    * STATUS STATE
    * ==========================================================
    */
@@ -1237,6 +1259,108 @@ function SavedItineraryView({
           </p>
         </div>
       )}
+
+      {/* =====================================================
+          RESOURCE IMPACT
+          ===================================================== */}
+
+      <div
+        style={{
+          ...styles.card,
+          marginTop: 16,
+        }}
+      >
+        <h3
+          style={
+            styles.cardTitle
+          }
+        >
+          Resource Impact
+        </h3>
+
+        {wasteImpact.status ===
+          WASTE_IMPACT_LOAD.LOADING && (
+          <p style={styles.muted}>
+            Loading waste &amp; resource logs…
+          </p>
+        )}
+
+        {wasteImpact.status !==
+          WASTE_IMPACT_LOAD.LOADING &&
+          (!wasteImpact.impact ||
+            wasteImpact.impact
+              .logCount === 0) && (
+            <p style={styles.muted}>
+              No waste &amp; resource logs
+              recorded for this trip yet.
+              Log food waste, water and
+              plastic use from the Waste
+              tab while this trip is active.
+            </p>
+          )}
+
+        {wasteImpact.impact &&
+          wasteImpact.impact
+            .logCount > 0 && (
+            <>
+              <div
+                style={{
+                  ...styles.impactRow,
+                  ...(isPhone
+                    ? styles.impactRowPhone
+                    : null),
+                }}
+              >
+                <Impact
+                  icon={Utensils}
+                  color="#b45309"
+                  label="Food waste"
+                  value={`${wasteImpact.impact.foodWasteG}g`}
+                  sub="Logged this trip"
+                />
+
+                <Impact
+                  icon={Droplet}
+                  color="#0ea5e9"
+                  label="Water used"
+                  value={`${wasteImpact.impact.waterL}L`}
+                  sub="Logged this trip"
+                />
+
+                <Impact
+                  icon={Recycle}
+                  color="#15803d"
+                  label="Plastic items"
+                  value={
+                    wasteImpact.impact
+                      .plasticItems
+                  }
+                  sub="Logged this trip"
+                />
+              </div>
+
+              <p
+                style={{
+                  ...styles.muted,
+                  marginTop: 12,
+                }}
+              >
+                From{" "}
+                {
+                  wasteImpact.impact
+                    .logCount
+                }{" "}
+                waste log
+                {wasteImpact.impact
+                  .logCount === 1
+                  ? ""
+                  : "s"}{" "}
+                recorded during this
+                trip.
+              </p>
+            </>
+          )}
+      </div>
 
       {/* =====================================================
           ROUTE

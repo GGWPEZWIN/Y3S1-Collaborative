@@ -48,39 +48,102 @@ export function ensureNotificationPermission() {
 export function notify(title, options) {
   try {
     if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-      new Notification(title, options);
+      // Windows/Chrome auto-dismiss a plain toast after a few seconds, easy
+      // to miss if you're not looking right at that moment. requireInteraction
+      // keeps it on screen until the traveller actually dismisses it.
+      new Notification(title, { requireInteraction: true, ...options });
     }
   } catch {
     /* notification blocked */
   }
 }
 
+// Keyed by the native watch id, so clearWatch() can cancel a still-pending
+// watchdog alongside the underlying watch.
+const geofenceWatchdogs = new Map();
+
 export function watchPosition(onPosition, onError) {
-  return navigator.geolocation.watchPosition(onPosition, onError, {
-    enableHighAccuracy: true,
-    maximumAge: 30000,
-    timeout: 20000,
-  });
+  const id = navigator.geolocation.watchPosition(
+    (pos) => {
+      const w = geofenceWatchdogs.get(id);
+      if (w) clearTimeout(w);
+      geofenceWatchdogs.delete(id);
+      onPosition(pos);
+    },
+    (err) => {
+      const w = geofenceWatchdogs.get(id);
+      if (w) clearTimeout(w);
+      geofenceWatchdogs.delete(id);
+      onError(err);
+    },
+    { enableHighAccuracy: true, maximumAge: 30000, timeout: 20000 }
+  );
+
+  // See watchPositionLoose for why this is needed: the native `timeout`
+  // option is not honoured everywhere (observed hanging indefinitely when
+  // the OS-level location service is off), so without an independent
+  // watchdog the distance readout and geofence trigger can get stuck
+  // forever waiting on a fix that never arrives.
+  const watchdog = setTimeout(() => {
+    geofenceWatchdogs.delete(id);
+    onError();
+  }, 12000);
+  geofenceWatchdogs.set(id, watchdog);
+
+  return id;
 }
 
 export function clearWatch(id) {
-  if (id !== null && id !== undefined) navigator.geolocation.clearWatch(id);
+  if (id === null || id === undefined) return;
+  const w = geofenceWatchdogs.get(id);
+  if (w) clearTimeout(w);
+  geofenceWatchdogs.delete(id);
+  navigator.geolocation.clearWatch(id);
 }
 
 /**
- * One-shot position read, used to centre the nudge map. Resolves to null
- * rather than rejecting, so callers can fall back to the lodging without
- * treating a declined permission as an error.
+ * One-shot position read, used to seed a new lodging in LodgingForm.
+ * Resolves to { lat, lng } on success, or { error } on failure rather than
+ * rejecting — error is "denied" | "timeout" | "unavailable" | "unsupported"
+ * so the caller can show something more actionable than a generic failure.
  */
 export function getCurrentPosition({ timeout = 8000 } = {}) {
   return new Promise((resolve) => {
     if (!isGeolocationSupported()) {
-      resolve(null);
+      resolve({ error: "unsupported" });
       return;
     }
+
+    // As with watchPositionLoose, the `timeout` option is a request the
+    // browser can silently ignore (observed when the OS-level location
+    // service is off) — this watchdog is what actually bounds the wait,
+    // so "Use my current location" can't get stuck on "Locating…" forever.
+    let resolved = false;
+    const watchdog = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      resolve({ error: "timeout" });
+    }, timeout + 2000);
+
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => resolve(null),
+      (pos) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(watchdog);
+        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      },
+      (err) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(watchdog);
+        const error =
+          err.code === err.PERMISSION_DENIED
+            ? "denied"
+            : err.code === err.TIMEOUT
+            ? "timeout"
+            : "unavailable";
+        resolve({ error });
+      },
       { enableHighAccuracy: false, maximumAge: 300000, timeout }
     );
   });
@@ -100,10 +163,37 @@ export function watchPositionLoose(onPosition, onUnavailable) {
     const t = setTimeout(onUnavailable, 0);
     return () => clearTimeout(t);
   }
+
+  // The `timeout` option below is a request to the browser, not a
+  // guarantee — when the OS-level location service is off (observed on
+  // Windows even while the site's own permission shows "granted"), Chrome
+  // can leave watchPosition hanging with neither callback ever firing,
+  // no matter what timeout is passed. This watchdog is what actually
+  // bounds the wait, so the caller always reaches a terminal state.
+  let resolved = false;
+  const watchdog = setTimeout(() => {
+    if (resolved) return;
+    resolved = true;
+    onUnavailable();
+  }, 12000);
+
   const id = navigator.geolocation.watchPosition(
-    (pos) => onPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-    onUnavailable,
+    (pos) => {
+      resolved = true;
+      clearTimeout(watchdog);
+      onPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    },
+    () => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(watchdog);
+      onUnavailable();
+    },
     { enableHighAccuracy: false, maximumAge: 30000, timeout: 10000 }
   );
-  return () => navigator.geolocation.clearWatch(id);
+
+  return () => {
+    clearTimeout(watchdog);
+    navigator.geolocation.clearWatch(id);
+  };
 }

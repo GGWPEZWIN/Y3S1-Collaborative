@@ -13,6 +13,7 @@ import React from "react";
  * - size  — "sm" | "md"
  */
 export default function EcoScoreBadge({ score, label = "Eco Score", size = "md" }) {
+  const isValid = typeof score === "number" && Number.isFinite(score);
   const tone = toneFor(score);
   const compact = size === "sm";
 
@@ -32,13 +33,16 @@ export default function EcoScoreBadge({ score, label = "Eco Score", size = "md" 
           padding: compact ? "2px 10px" : "4px 14px",
         }}
       >
-        {score}
+        {isValid ? score : "—"}
       </span>
     </div>
   );
 }
 
 function toneFor(score) {
+  if (!(typeof score === "number" && Number.isFinite(score))) {
+    return { bg: "#f3f4f6", fg: "#6b7280" };
+  }
   if (score >= 85) return { bg: "#dcfce7", fg: "#15803d" };
   if (score >= 70) return { bg: "#fef3c7", fg: "#b45309" };
   return { bg: "#fee2e2", fg: "#b91c1c" };

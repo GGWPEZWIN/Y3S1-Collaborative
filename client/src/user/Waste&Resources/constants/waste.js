@@ -1,13 +1,3 @@
-import {
-  Home,
-  Map,
-  Navigation,
-  Users,
-  Trophy,
-  Trash2,
-  Award,
-} from "lucide-react";
-
 /* F5 — Baselines now live in constants/nationalBaseline.js with full
    source attribution, and are read through services/baselineService.js
    so the water figure can come from the data.gov.my Open API. */
@@ -69,13 +59,3 @@ export const FOOD_PROFILE = {
 
 /* F6 — Nearby points of interest are now fetched live from OpenStreetMap;
    see services/poiService.js. The former hardcoded list is gone. */
-
-export const NAV_ITEMS = [
-  { id: "dashboard", path: "/dashboard", label: "Dashboard", icon: Home },
-  { id: "itinerary", path: "/itinerary", label: "Itinerary", icon: Map },
-  { id: "recommendations", path: "/recommendations", label: "Recommendations", icon: Navigation },
-  { id: "community", path: "/community", label: "Community", icon: Users },
-  { id: "challenges", path: "/challenges", label: "Challenges", icon: Trophy },
-  { id: "waste", path: "/waste", label: "Waste", icon: Trash2 },
-  { id: "certification", path: "/certification", label: "Certification", icon: Award },
-];
