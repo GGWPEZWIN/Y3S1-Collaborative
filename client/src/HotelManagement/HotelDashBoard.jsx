@@ -14,17 +14,20 @@ import { doc, getDoc } from "firebase/firestore";
 
 export default function GreenCertificationHome({ onNavigate }) {
   const [partnerDisplayName, setPartnerDisplayName] = useState("Hotel Partner");
+  const [partnerEmail, setPartnerEmail] = useState("");
   const [hasApplied, setHasApplied] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(true);
 
-  // Generate a consistent 4-digit code from user UID (e.g., Hotel_4821)
-  const generateDefaultHotelTag = (uid) => {
-    if (!uid) return "Hotel_1001";
-    const numericSeed = uid
-      .split("")
-      .reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    const code = (numericSeed % 9000) + 1000;
-    return `Hotel_${code}`;
+  // Generate a consistent placeholder based on the user's UID (matches HotelProfile.jsx)
+  const getAccountSpecificPlaceholder = (uid) => {
+    if (!uid) return "Hotel-1234";
+    let hash = 0;
+    for (let i = 0; i < uid.length; i++) {
+      hash = (hash << 5) - hash + uid.charCodeAt(i);
+      hash |= 0;
+    }
+    const randomNum = Math.abs(hash % 9000) + 1000;
+    return `Hotel-${randomNum}`;
   };
 
   useEffect(() => {
@@ -35,7 +38,8 @@ export default function GreenCertificationHome({ onNavigate }) {
         return;
       }
 
-      const defaultTag = generateDefaultHotelTag(user.uid);
+      setPartnerEmail(user.email || "user@gmail.com");
+      const defaultTag = getAccountSpecificPlaceholder(user.uid);
 
       try {
         // 1. Check if user configured a custom name in 'users' collection
@@ -52,11 +56,11 @@ export default function GreenCertificationHome({ onNavigate }) {
         if (appSnap.exists()) {
           setHasApplied(true);
           const hotelName = appSnap.data().hotelName;
-          // Priority: Custom username -> Hotel application name -> Hotel_XXXX
-          setPartnerDisplayName(customUsername || hotelName || defaultTag);
+          // Priority: Hotel application name -> Custom username -> Hotel-XXXX
+          setPartnerDisplayName(hotelName || customUsername || defaultTag);
         } else {
           setHasApplied(false);
-          // Priority: Custom username -> Hotel_XXXX
+          // Priority: Custom username -> Hotel-XXXX
           setPartnerDisplayName(customUsername || defaultTag);
         }
       } catch (err) {
@@ -69,6 +73,8 @@ export default function GreenCertificationHome({ onNavigate }) {
 
     fetchUserAndApplicationData();
   }, []);
+
+  const avatarLetter = (partnerEmail || "u").charAt(0).toUpperCase();
 
   const tiers = [
     {
@@ -138,7 +144,6 @@ export default function GreenCertificationHome({ onNavigate }) {
     }
   };
 
-  // Directs to Hotel Profile instead of Traveler Profile
   const handleProfileClick = () => {
     if (onNavigate) {
       onNavigate("/hotel/profile");
@@ -168,7 +173,7 @@ export default function GreenCertificationHome({ onNavigate }) {
             <div style={styles.profileName}>{partnerDisplayName}</div>
             <div style={styles.profileScore}>Eco Portal</div>
           </div>
-          <div style={styles.avatar}>🏨</div>
+          <div style={styles.avatar}>{avatarLetter}</div>
         </div>
       </header>
 
@@ -325,11 +330,13 @@ const styles = {
     width: 38,
     height: 38,
     borderRadius: "50%",
-    backgroundColor: "#e2e8f0",
+    backgroundColor: "#fed7aa",
+    color: "#9a3412",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 18,
+    fontSize: 16,
+    fontWeight: 800,
   },
   main: {
     maxWidth: 980,

@@ -45,14 +45,15 @@ export default function HotelPartnerDashboard({ onNavigate }) {
   const [selectedRenewalFile, setSelectedRenewalFile] = useState(null);
   const [uploadingRenewal, setUploadingRenewal] = useState(false);
 
-  // Tier Upgrade Modal
+  // Tier Upgrade Modal States (Fee Typing + File Upload Workflow)
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeForm, setUpgradeForm] = useState({
-    newElectricityUsage: "",
-    newWaterUsage: "",
+    newBillFee: "",
+    newWaterFee: "",
     implementedInitiatives: "",
   });
-  const [upgradeFile, setUpgradeFile] = useState(null);
+  const [elecUpgradeFile, setElecUpgradeFile] = useState(null);
+  const [waterUpgradeFile, setWaterUpgradeFile] = useState(null);
   const [submittingUpgrade, setSubmittingUpgrade] = useState(false);
 
   useEffect(() => {
@@ -72,7 +73,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
       }
     }).catch(() => setUserName(fallbackTag));
 
-    // 1. Listen to main hotel application doc
+    // 1. Listen to main hotel application doc for general metrics & status (Banners, Tiers, etc.)
     const unsubscribeApp = listenToHotelApplication(user.uid, (data) => {
       setHotelData(data);
       if (data?.hotelName) {
@@ -81,7 +82,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
       setLoading(false);
     });
 
-    // 2. Listen to all entries in 'audits' subcollection
+    // 2. Listen to all entries in 'audits' subcollection (Single source of truth for submission history cards)
     const auditsQuery = query(
       collection(db, "hotel_applications", user.uid, "audits"),
       orderBy("uploadedAt", "desc")
@@ -102,28 +103,50 @@ export default function HotelPartnerDashboard({ onNavigate }) {
 
   const isSuspended = hotelData?.status === "Suspended";
   const isFlagged = hotelData?.status === "Flagged";
+  const isRejected = hotelData?.status === "Rejected";
   const isApproved = hotelData?.status === "Approved" || (isFlagged && !isSuspended && !!hotelData?.certificationTier);
 
-  // Retain Bronze tier during audits/flags unless explicitly suspended
-  const currentTier = !isSuspended && hotelData?.certificationTier 
-    ? hotelData.certificationTier 
-    : isApproved 
-    ? "Bronze" 
-    : "None";
+  // Check if initial application is strictly Rejected by Admin action
+  const isInitialApplicationRejected = isRejected && !hotelData?.certificationTier;
 
-  const targetNextTier = currentTier === "Bronze" ? "Silver" : currentTier === "Silver" ? "Gold" : "Platinum";
+  // Dynamic Savings & Score Calculation based on fee reduction
+  const baselineFee = Number(hotelData?.electricityBillFee || 4500.00);
+  const latestUpgradeAudit = auditHistory.find(a => a.type === "tier_upgrade" && (a.status === "Passed" || a.status === "Approved"));
+  const verifiedSavingsPercent = latestUpgradeAudit?.aiAnalysis?.savingsPercent || (isApproved ? 15 : 0);
+  const dynamicScore = Math.min(100, Math.max(0, Math.round(verifiedSavingsPercent * 2.5)));
 
-  // Expiry calculation
+  // Dynamic Tier calculation based on verified savings thresholds (Bronze: 10-20%, Silver: 20-30%, Gold: 30-40%, Platinum: >40%)
+  let calculatedTier = "Bronze";
+  if (verifiedSavingsPercent >= 40) calculatedTier = "Platinum";
+  else if (verifiedSavingsPercent >= 30) calculatedTier = "Gold";
+  else if (verifiedSavingsPercent >= 20) calculatedTier = "Silver";
+  else if (verifiedSavingsPercent >= 10) calculatedTier = "Bronze";
+
+  const currentTier = !isSuspended && isApproved ? calculatedTier : "None";
+  const targetNextTier = currentTier === "Bronze" ? "Silver" : currentTier === "Silver" ? "Gold" : currentTier === "Gold" ? "Platinum" : "Platinum";
+
+  // Expiry & Date-based Banner Calculations
   const nowMs = Date.now();
   const expiryDateMs = hotelData?.expiryDate ? new Date(hotelData.expiryDate).getTime() : nowMs + 365 * 24 * 3600 * 1000;
-  const daysUntilExpiry = Math.ceil((expiryDateMs - nowMs) / (1000 * 60 * 60 * 24));
+  const daysUntilExpiry = Math.max(0, Math.ceil((expiryDateMs - nowMs) / (1000 * 60 * 60 * 24)));
+  
+  // Start and End formatted dates
+  const startDateMs = hotelData?.createdAt?.seconds ? hotelData.createdAt.seconds * 1000 : expiryDateMs - 365 * 24 * 3600 * 1000;
+  const startDateStr = new Date(startDateMs).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const endDateStr = new Date(expiryDateMs).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+
+  const totalCycleDays = Math.max(1, (expiryDateMs - startDateMs) / (1000 * 60 * 60 * 24));
+  const elapsedDays = Math.max(0, (nowMs - startDateMs) / (1000 * 60 * 60 * 24));
+  const bannerProgressPercent = Math.min(100, Math.max(0, (elapsedDays / totalCycleDays) * 100));
+
   const isRenewalDue = !isSuspended && isApproved && daysUntilExpiry <= 30 && hotelData?.renewal?.status !== "Submitted";
 
-  // Active spot-check only shows when strictly Pending and not suspended
+  // Active spot-check only shows when strictly Pending, not suspended, and already approved/certified
   const spotCheckData = hotelData?.spotCheck;
-  const hasActiveSpotCheck = spotCheckData?.status === "Pending" && !isSuspended;
+  const hasActiveSpotCheck = spotCheckData?.status === "Pending" && !isSuspended && isApproved;
 
-  const pendingCount = (hasActiveSpotCheck ? 1 : 0) + (isRenewalDue ? 1 : 0);
+  // Strict Actionable Pending Badge Counter (Only counts active tasks requiring partner response)
+  const pendingAlertCount = (hasActiveSpotCheck ? 1 : 0) + (isRenewalDue ? 1 : 0);
   const strikes = hotelData?.flagStrikesCount || 0;
 
   // Dismiss Notice
@@ -197,35 +220,35 @@ export default function HotelPartnerDashboard({ onNavigate }) {
   // Tier Upgrade Submit Handler
   const handleUpgradeSubmit = async (e) => {
     e.preventDefault();
-    if (!upgradeFile || !auth.currentUser) {
-      alert("Please attach your latest utility statement as evidence.");
+    if (!elecUpgradeFile || !auth.currentUser) {
+      alert("Please attach your mandatory electricity bill statement.");
       return;
     }
 
     setSubmittingUpgrade(true);
     try {
-      const fileUrl = await uploadSpotCheckEvidence(auth.currentUser.uid, upgradeFile, "tier_upgrade");
-
-      await setDoc(doc(db, "hotel_applications", auth.currentUser.uid), {
-        upgradeRequest: {
-          status: "Pending Review",
-          targetTier: targetNextTier,
-          newElectricityUsage: Number(upgradeForm.newElectricityUsage) || hotelData?.electricityUsage,
-          newWaterUsage: Number(upgradeForm.newWaterUsage) || hotelData?.waterUsage,
-          initiatives: upgradeForm.implementedInitiatives,
-          submittedFileName: upgradeFile.name,
-          submittedFileUrl: fileUrl,
-          requestedAt: new Date().toISOString(),
+      await uploadSpotCheckEvidence(
+        auth.currentUser.uid, 
+        elecUpgradeFile, 
+        "tier_upgrade", 
+        { 
+          waterFile: waterUpgradeFile,
+          upgradeForm: { 
+            ...upgradeForm, 
+            targetTier: targetNextTier,
+            prevElectricityUsage: hotelData?.electricityUsage || 12000 
+          } 
         }
-      }, { merge: true });
+      );
 
       alert(`Upgrade request to ${targetNextTier} Tier submitted! GreenTrip Admin will review your updated metrics.`);
       setShowUpgradeModal(false);
-      setUpgradeFile(null);
+      setElecUpgradeFile(null);
+      setWaterUpgradeFile(null);
       setTab("submitted");
     } catch (err) {
       console.error(err);
-      alert("Failed to submit upgrade application.");
+      alert(err.message || "Failed to submit upgrade application.");
     } finally {
       setSubmittingUpgrade(false);
     }
@@ -272,9 +295,9 @@ export default function HotelPartnerDashboard({ onNavigate }) {
   // Filter submitted records by status
   const filteredAuditHistory = auditHistory.filter((log) => {
     if (submittedStatusFilter === "All") return true;
-    if (submittedStatusFilter === "Passed") return log.status === "Passed";
+    if (submittedStatusFilter === "Passed") return log.status === "Passed" || log.status === "Approved";
     if (submittedStatusFilter === "Rejected") return log.status === "Rejected";
-    if (submittedStatusFilter === "Under Review") return log.status === "Submitted" || !log.status;
+    if (submittedStatusFilter === "Under Review") return log.status === "Submitted" || !log.status || log.status === "Pending Review";
     return true;
   });
 
@@ -295,7 +318,6 @@ export default function HotelPartnerDashboard({ onNavigate }) {
           <span style={styles.brandTitle}>GreenTrip Malaysia</span>
         </div>
 
-        {/* CLICKABLE PROFILE BADGE WITH DYNAMIC HOTEL NAME */}
         <div 
           style={styles.profileBadge}
           onClick={() => onNavigate?.("/hotel/profile")}
@@ -330,10 +352,10 @@ export default function HotelPartnerDashboard({ onNavigate }) {
           </div>
           <div style={{
             ...styles.tierBadge,
-            backgroundColor: isApproved ? "#fed7aa" : isSuspended ? "#fee2e2" : "#fef08a",
-            color: isApproved ? "#9a3412" : isSuspended ? "#b91c1c" : "#854d0e",
+            backgroundColor: isApproved ? "#fed7aa" : isSuspended ? "#fee2e2" : isInitialApplicationRejected ? "#fee2e2" : "#fef08a",
+            color: isApproved ? "#9a3412" : isSuspended ? "#b91c1c" : isInitialApplicationRejected ? "#b91c1c" : "#854d0e",
           }}>
-            <span>🏅</span> {isApproved ? `${currentTier} Tier` : isSuspended ? "Suspended" : "Under Review"}
+            <span>🏅</span> {isApproved ? `${currentTier} Tier` : isSuspended ? "Suspended" : isInitialApplicationRejected ? "Rejected" : "Under Review"}
           </div>
         </div>
 
@@ -350,6 +372,26 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                 Eligible to re-apply after: <strong>{new Date(hotelData?.suspendedUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</strong>. When reapplying, your tier will reset to baseline.
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Initial Application Rejected / Flagged Notice Banner */}
+        {isInitialApplicationRejected && (
+          <div style={styles.initialFlagBanner}>
+            <AlertTriangle size={24} color="#b91c1c" />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: "#991b1b" }}>Application Rejected by Admin - Re-submission Required</div>
+              <div style={{ fontSize: 13, color: "#b91c1c", marginTop: 4 }}>
+                {hotelData?.fraudFlags?.reason || hotelData?.rejectionReason || "Your certification application was rejected. Please review your details and re-apply."}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate?.("/certification/apply")}
+              style={styles.reapplyBtn}
+            >
+              Re-apply Now
+            </button>
           </div>
         )}
 
@@ -375,7 +417,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
         )}
 
         {/* Certification Active / Warning Banner */}
-        {!isSuspended && (
+        {!isSuspended && !isInitialApplicationRejected && (
           <div style={{
             ...styles.banner,
             backgroundColor: isApproved ? "#dcfce7" : isFlagged ? "#fee2e2" : "#fef9c3",
@@ -405,7 +447,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                   color: isApproved && !isFlagged ? "#16a34a" : isFlagged ? "#dc2626" : "#d97706" 
                 }}>
                   {isApproved && !isFlagged 
-                    ? `National Eco Certification active. ${daysUntilExpiry > 0 ? daysUntilExpiry : 0} days remaining in current cycle.`
+                    ? `National Eco Certification active (${startDateStr} – ${endDateStr}). ${daysUntilExpiry} days remaining in current cycle.`
                     : isFlagged 
                     ? (hotelData?.fraudFlags?.reason || "Please submit accurate meter proof below to resolve this discrepancy.")
                     : "Application submitted. Awaiting GreenTrip admin approval."}
@@ -413,7 +455,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
               </div>
             </div>
             <div style={styles.bannerProgressTrack}>
-              <div style={{ ...styles.bannerProgressBar, width: isApproved ? "85%" : "25%" }} />
+              <div style={{ ...styles.bannerProgressBar, width: `${bannerProgressPercent}%` }} />
             </div>
           </div>
         )}
@@ -422,15 +464,15 @@ export default function HotelPartnerDashboard({ onNavigate }) {
         <div style={styles.statsGrid}>
           <div style={styles.statCard}>
             <Zap size={24} color="#eab308" fill="#fef08a" />
-            <div style={styles.statValue}>{isApproved ? "27%" : "0%"}</div>
-            <div style={styles.statTitle}>Electricity Savings</div>
-            <div style={styles.statCompare}>{hotelData?.electricityUsage ? `${hotelData.electricityUsage} kWh/mo` : "vs benchmark"}</div>
+            <div style={styles.statValue}>{isApproved ? `${verifiedSavingsPercent}%` : "0%"}</div>
+            <div style={styles.statTitle}>Bill Cost Savings</div>
+            <div style={styles.statCompare}>Baseline: RM {baselineFee.toFixed(2)}</div>
           </div>
           <div style={styles.statCard}>
             <Droplets size={24} color="#38bdf8" fill="#bae6fd" />
             <div style={styles.statValue}>{isApproved ? "38%" : "0%"}</div>
             <div style={styles.statTitle}>Water Savings</div>
-            <div style={styles.statCompare}>{hotelData?.waterUsage ? `${hotelData.waterUsage} L/mo` : "vs benchmark"}</div>
+            <div style={styles.statCompare}>{hotelData?.waterUsage ? `RM ${hotelData.waterUsage}/mo` : "vs benchmark"}</div>
           </div>
           <div style={styles.statCard}>
             <div style={{ fontSize: 24 }}>📉</div>
@@ -440,7 +482,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
           </div>
           <div style={styles.statCard}>
             <Award size={24} color="#f59e0b" />
-            <div style={styles.statValue}>{isApproved ? "85/100" : "Pending"}</div>
+            <div style={styles.statValue}>{isApproved ? `${dynamicScore}/100` : "Pending"}</div>
             <div style={styles.statTitle}>Green Score</div>
             <div style={styles.statCompare}>{isApproved ? `Progress to ${targetNextTier}` : "Awaiting baseline"}</div>
           </div>
@@ -454,7 +496,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
               <div style={styles.bronzePillBadge}>{isApproved ? `${currentTier} Tier` : "No Tier"}</div>
             </div>
 
-            {isApproved && (
+            {isApproved && currentTier !== "Platinum" && (
               <button 
                 type="button" 
                 onClick={() => setShowUpgradeModal(true)} 
@@ -467,11 +509,11 @@ export default function HotelPartnerDashboard({ onNavigate }) {
           </div>
 
           <div style={styles.progressSub}>
-            <span>{isApproved ? `Progress toward ${targetNextTier} Tier (Reduces bills to earn +10 pts)` : "Pending audit approval"}</span>
-            <span>{isApproved ? "80/90 points" : "0/90 points"}</span>
+            <span>{isApproved ? `Progress toward ${targetNextTier} Tier (Verified Savings: ${verifiedSavingsPercent}%)` : "Pending audit approval"}</span>
+            <span>{dynamicScore}/100 points</span>
           </div>
           <div style={styles.progressTrack}>
-            <div style={{ ...styles.progressBarFill, width: isApproved ? "88%" : "0%" }} />
+            <div style={{ ...styles.progressBarFill, width: `${dynamicScore}%` }} />
           </div>
         </div>
 
@@ -483,9 +525,9 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                 <Lightbulb size={20} color="#ca8a04" />
               </div>
               <div>
-                <h3 style={styles.suggestionTitle}>Actionable Steps to Earn +10 Points</h3>
+                <h3 style={styles.suggestionTitle}>Actionable Steps to Earn More Points</h3>
                 <p style={styles.suggestionSubtitle}>
-                  Decreasing your consumption through these steps reduces your monthly bills and boosts your score to <strong>{targetNextTier} Tier (90 pts)</strong>
+                  Decreasing your consumption further reduces your monthly bills and boosts your score toward <strong>{targetNextTier} Tier</strong>
                 </p>
               </div>
             </div>
@@ -496,7 +538,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                 <div>
                   <div style={styles.suggestionItemTitle}>Install Room Keycard Power Cuts (+5 pts)</div>
                   <div style={styles.suggestionItemDesc}>
-                    Cuts guest room idle electricity by ~14%, lowering your billed kWh and adding +5 score points.
+                    Cuts guest room idle electricity by ~14%, lowering your billed Ringgit amount and adding score points.
                   </div>
                 </div>
               </div>
@@ -506,7 +548,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                 <div>
                   <div style={styles.suggestionItemTitle}>Aerator Faucet Retrofits (+5 pts)</div>
                   <div style={styles.suggestionItemDesc}>
-                    Reduces tap water flow from 9L/min to 5L/min. Lower water volume on your bills adds +5 score points.
+                    Reduces tap water flow from 9L/min to 5L/min. Lower water volume on your bills adds score points.
                   </div>
                 </div>
               </div>
@@ -536,7 +578,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
               onClick={() => setTab("pending")}
               style={{ ...styles.filterPill, ...(tab === "pending" ? styles.filterPillActive : {}) }}
             >
-              Pending {pendingCount > 0 && <span style={styles.redBadge}>{pendingCount}</span>}
+              Pending {pendingAlertCount > 0 && <span style={styles.redBadge}>{pendingAlertCount}</span>}
             </button>
           </div>
 
@@ -589,11 +631,11 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <label style={styles.filePickerBox}>
-                    <Upload size={16} color="#4b5563" />
-                    <span style={{ fontWeight: 600, fontSize: 13, color: "#374151" }}>
-                      {selectedSpotCheckFile ? selectedSpotCheckFile.name : "Choose File (PNG, JPG, PDF < 800KB)"}
+                  <label style={styles.spotCheckUploadBtn}>
+                    <span style={{ fontWeight: 600, fontSize: 13, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {selectedSpotCheckFile ? selectedSpotCheckFile.name : "Choose Spot-Check File (PDF, PNG < 800KB)"}
                     </span>
+                    <Upload size={16} color="#4b5563" />
                     <input 
                       type="file" 
                       accept=".pdf,.png,.jpg,.jpeg" 
@@ -634,11 +676,11 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <label style={styles.filePickerBox}>
-                    <Upload size={16} color="#4b5563" />
-                    <span style={{ fontWeight: 600, fontSize: 13, color: "#374151" }}>
+                  <label style={styles.spotCheckUploadBtn}>
+                    <span style={{ fontWeight: 600, fontSize: 13, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {selectedRenewalFile ? selectedRenewalFile.name : "Choose Renewal Bill (PDF, PNG < 800KB)"}
                     </span>
+                    <Upload size={16} color="#4b5563" />
                     <input 
                       type="file" 
                       accept=".pdf,.png,.jpg,.jpeg" 
@@ -682,15 +724,18 @@ export default function HotelPartnerDashboard({ onNavigate }) {
               </div>
             ) : (
               filteredAuditHistory.map((audit) => {
-                const statusColor = audit.status === "Passed" ? "#15803d" : audit.status === "Rejected" ? "#b91c1c" : "#b45309";
-                const statusBg = audit.status === "Passed" ? "#dcfce7" : audit.status === "Rejected" ? "#fee2e2" : "#fef9c3";
+                const statusColor = audit.status === "Passed" || audit.status === "Approved" ? "#15803d" : audit.status === "Rejected" ? "#b91c1c" : "#b45309";
+                const statusBg = audit.status === "Passed" || audit.status === "Approved" ? "#dcfce7" : audit.status === "Rejected" ? "#fee2e2" : "#fef9c3";
 
                 return (
                   <div key={audit.id} style={styles.auditLogCard}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div>
                         <h4 style={{ fontSize: 15, fontWeight: 700, color: "#111827", margin: 0 }}>
-                          {audit.type === "renewal" ? "Annual Renewal Submission" : audit.type === "tier_upgrade" ? `Tier Upgrade Request (${audit.targetTier || "Next Tier"})` : "Spot-Check Submission"}
+                          {audit.type === "initial_application" ? "Initial Certification Application" :
+                           audit.type === "renewal" ? "Annual Renewal Submission" : 
+                           audit.type === "tier_upgrade" ? `Tier Upgrade Request (${audit.targetTier || "Next Tier"})` : 
+                           "Spot-Check Submission"}
                         </h4>
                         <div style={{ fontSize: 12, color: "#6b7280", marginTop: 3 }}>
                           Submitted: {audit.uploadedAt?.seconds ? new Date(audit.uploadedAt.seconds * 1000).toLocaleString() : "Recently"}
@@ -701,14 +746,33 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                       </span>
                     </div>
 
-                    {audit.fileName && (
-                      <div style={{ marginTop: 10 }}>
-                        <button type="button" onClick={() => openDoc(audit.fileUrl)} style={styles.previewBtnSmall}>
-                          <FileText size={13} color="#0284c7" />
-                          <span>{audit.fileName}</span>
-                          <ExternalLink size={11} />
-                        </button>
+                    {audit.type === "initial_application" ? (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                        {audit.elecUrl && (
+                          <button type="button" onClick={() => openDoc(audit.elecUrl)} style={styles.previewBtnSmall}>
+                            <FileText size={13} color="#0284c7" />
+                            <span>View Electricity Bill</span>
+                            <ExternalLink size={11} />
+                          </button>
+                        )}
+                        {audit.waterUrl && (
+                          <button type="button" onClick={() => openDoc(audit.waterUrl)} style={styles.previewBtnSmall}>
+                            <FileText size={13} color="#0284c7" />
+                            <span>View Water Bill</span>
+                            <ExternalLink size={11} />
+                          </button>
+                        )}
                       </div>
+                    ) : (
+                      audit.fileUrl && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                          <button type="button" onClick={() => openDoc(audit.fileUrl)} style={styles.previewBtnSmall}>
+                            <FileText size={13} color="#0284c7" />
+                            <span>{audit.fileName}</span>
+                            <ExternalLink size={11} />
+                          </button>
+                        </div>
+                      )
                     )}
                   </div>
                 );
@@ -718,7 +782,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
         )}
       </main>
 
-      {/* TIER UPGRADE MODAL */}
+      {/* TIER UPGRADE MODAL - FEE TYPING + FILE UPLOAD WORKFLOW */}
       {showUpgradeModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalBox}>
@@ -732,26 +796,79 @@ export default function HotelPartnerDashboard({ onNavigate }) {
             </div>
 
             <form onSubmit={handleUpgradeSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={styles.modalLabel}>Updated Electricity Usage (kWh/mo)</label>
-                <input
-                  type="number"
-                  placeholder="e.g. 12000"
-                  value={upgradeForm.newElectricityUsage}
-                  onChange={(e) => setUpgradeForm({ ...upgradeForm, newElectricityUsage: e.target.value })}
-                  style={styles.modalInput}
-                />
+              
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={styles.modalLabel}>Electricity Bill Fee (RM)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="e.g. 3800.00"
+                    value={upgradeForm.newBillFee}
+                    onChange={(e) => setUpgradeForm({ ...upgradeForm, newBillFee: e.target.value })}
+                    style={styles.modalInput}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={styles.modalLabel}>Water Bill Fee (RM, Optional)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="e.g. 1200.00"
+                    value={upgradeForm.newWaterFee}
+                    onChange={(e) => setUpgradeForm({ ...upgradeForm, newWaterFee: e.target.value })}
+                    style={styles.modalInput}
+                  />
+                </div>
               </div>
 
-              <div>
-                <label style={styles.modalLabel}>Updated Water Usage (L/mo)</label>
-                <input
-                  type="number"
-                  placeholder="e.g. 28000"
-                  value={upgradeForm.newWaterUsage}
-                  onChange={(e) => setUpgradeForm({ ...upgradeForm, newWaterUsage: e.target.value })}
-                  style={styles.modalInput}
-                />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={styles.modalLabel}>Electricity Bill (Mandatory)</label>
+                  <label style={styles.filePickerBtnCustom}>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {elecUpgradeFile ? elecUpgradeFile.name : "Choose Electricity Bill"}
+                    </span>
+                    <Upload size={15} color="#4b5563" />
+                    <input 
+                      type="file" 
+                      accept=".pdf,.png,.jpg,.jpeg" 
+                      onChange={(e) => {
+                        const f = e.target.files[0];
+                        if (f && f.size > 800 * 1024) {
+                          alert("File exceeds 800KB limit.");
+                          return;
+                        }
+                        setElecUpgradeFile(f);
+                      }} 
+                      style={{ display: "none" }} 
+                      required
+                    />
+                  </label>
+                </div>
+                <div>
+                  <label style={styles.modalLabel}>Water Bill (Optional)</label>
+                  <label style={styles.filePickerBtnCustom}>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {waterUpgradeFile ? waterUpgradeFile.name : "Choose Water Bill"}
+                    </span>
+                    <Upload size={15} color="#4b5563" />
+                    <input 
+                      type="file" 
+                      accept=".pdf,.png,.jpg,.jpeg" 
+                      onChange={(e) => {
+                        const f = e.target.files[0];
+                        if (f && f.size > 800 * 1024) {
+                          alert("File exceeds 800KB limit.");
+                          return;
+                        }
+                        setWaterUpgradeFile(f);
+                      }} 
+                      style={{ display: "none" }} 
+                    />
+                  </label>
+                </div>
               </div>
 
               <div>
@@ -760,31 +877,8 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                   placeholder="Describe measures taken (e.g., LED retrofits, keycard power cut switches)..."
                   value={upgradeForm.implementedInitiatives}
                   onChange={(e) => setUpgradeForm({ ...upgradeForm, implementedInitiatives: e.target.value })}
-                  style={{ ...styles.modalInput, height: 70, resize: "vertical" }}
+                  style={{ ...styles.modalInput, height: 60, resize: "vertical" }}
                 />
-              </div>
-
-              <div>
-                <label style={styles.modalLabel}>Latest Utility Statement Evidence (Mandatory)</label>
-                <label style={styles.filePickerBox}>
-                  <Upload size={16} color="#4b5563" />
-                  <span style={{ fontWeight: 600, fontSize: 13, color: "#374151" }}>
-                    {upgradeFile ? upgradeFile.name : "Choose File (PDF, PNG < 800KB)"}
-                  </span>
-                  <input 
-                    type="file" 
-                    accept=".pdf,.png,.jpg,.jpeg" 
-                    onChange={(e) => {
-                      const f = e.target.files[0];
-                      if (f && f.size > 800 * 1024) {
-                        alert("File exceeds 800KB limit.");
-                        return;
-                      }
-                      setUpgradeFile(f);
-                    }} 
-                    style={{ display: "none" }} 
-                  />
-                </label>
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 10 }}>
@@ -897,6 +991,26 @@ const styles = {
   suspensionTitle: { fontSize: 15, fontWeight: 800, color: "#991b1b" },
   suspensionSub: { fontSize: 13, color: "#b91c1c", marginTop: 4, lineHeight: 1.4 },
   suspensionDate: { fontSize: 12.5, color: "#7f1d1d", marginTop: 6, fontWeight: 600 },
+  initialFlagBanner: {
+    backgroundColor: "#fef2f2",
+    border: "1.5px solid #fca5a5",
+    borderRadius: 14,
+    padding: "18px 22px",
+    display: "flex",
+    gap: 16,
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  reapplyBtn: {
+    backgroundColor: "#dc2626",
+    color: "#fff",
+    border: "none",
+    padding: "8px 16px",
+    borderRadius: 8,
+    fontWeight: 700,
+    fontSize: 13,
+    cursor: "pointer",
+  },
   reminderBanner: {
     backgroundColor: "#fef3c7",
     border: "1px solid #fde68a",
@@ -1064,15 +1178,27 @@ const styles = {
   metaNoticeRow: { display: "flex", gap: 16, fontSize: 12.5, color: "#6b7280" },
   metaItem: { display: "flex", alignItems: "center", gap: 5 },
   instructionsBox: { backgroundColor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 14px", fontSize: 13, color: "#334155", lineHeight: 1.4 },
-  filePickerBox: {
+  spotCheckUploadBtn: {
     display: "flex",
     alignItems: "center",
-    gap: 10,
+    justifyContent: "space-between",
     border: "1.5px dashed #cbd5e1",
     borderRadius: 10,
     padding: "12px 16px",
     backgroundColor: "#f8fafc",
     cursor: "pointer",
+  },
+  filePickerBtnCustom: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    border: "1px solid #cbd5e1",
+    borderRadius: 8,
+    padding: "8px 12px",
+    backgroundColor: "#f1f5f9",
+    cursor: "pointer",
+    fontSize: 12.5,
+    color: "#334155",
   },
   submitGreenBtn: {
     backgroundColor: "#16a34a",
@@ -1136,15 +1262,15 @@ const styles = {
     borderRadius: 18,
     padding: "24px 28px",
     width: "100%",
-    maxWidth: 480,
+    maxWidth: 520,
     boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1)",
   },
   modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
   closeModalBtn: { background: "transparent", border: "none", cursor: "pointer" },
-  modalLabel: { fontSize: 12.5, fontWeight: 700, color: "#374151", display: "block", marginBottom: 6 },
+  modalLabel: { fontSize: 12, fontWeight: 700, color: "#374151", display: "block", marginBottom: 4 },
   modalInput: {
     width: "100%",
-    padding: "10px 14px",
+    padding: "8px 12px",
     borderRadius: 8,
     border: "1px solid #cbd5e1",
     fontSize: 13,

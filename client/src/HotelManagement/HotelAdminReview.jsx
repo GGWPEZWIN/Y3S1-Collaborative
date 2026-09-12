@@ -50,7 +50,7 @@ const getDynamicChartData = (apps, allAuditsMap) => {
       } else if (app.status === "Rejected") {
         monthsMap[monthName].rejected += 1;
         monthsMap[monthName].total += 1;
-      } else if (app.status === "Flagged" || app.status === "Suspended") {
+      } else if (app.status === "Flagged" || app.fraudFlags?.hasSuspicion) {
         monthsMap[monthName].flagged += 1;
         monthsMap[monthName].total += 1;
       }
@@ -103,7 +103,7 @@ export default function HotelAdminReview() {
       for (const d of snapshot.docs) {
         try {
           const auditsSnap = await getDocs(collection(db, "hotel_applications", d.id, "audits"));
-          auditsMap[d.id] = auditsSnap.docs.map(ad => ad.data());
+          auditsMap[d.id] = auditsSnap.docs.map(ad => ({ id: ad.id, ...ad.data() }));
         } catch (e) {
           auditsMap[d.id] = [];
         }
@@ -167,22 +167,52 @@ export default function HotelAdminReview() {
     }
   };
 
-  // General Status Updater (Initial Review)
+  // General Status Updater (Handles both initial review and tier upgrades correctly)
   const handleStatus = async (appId, newStatus) => {
     try {
-      const updatePayload = newStatus === "Approved" 
-        ? { status: "Approved", certificationTier: "Bronze" }
-        : { status: newStatus };
+      const targetApp = applications.find(a => a.id === appId);
+      const upgradeReq = targetApp?.upgradeRequest;
+      const currentTier = targetApp?.certificationTier || "Bronze";
+
+      let updatePayload = {};
+      if (newStatus === "Approved") {
+        let grantedTier = upgradeReq?.targetTier || currentTier;
+        if (!targetApp?.certificationTier) {
+          grantedTier = "Bronze";
+        }
+
+        updatePayload = {
+          status: "Approved",
+          certificationTier: grantedTier,
+          upgradeRequest: null,
+        };
+      } else {
+        updatePayload = {
+          status: newStatus,
+          upgradeRequest: null,
+        };
+      }
 
       await updateHotelStatus(appId, updatePayload);
-      alert(`Hotel status updated to: ${newStatus}${newStatus === "Approved" ? " (Certified Bronze)" : ""}`);
+
+      // Only update the audit log that is currently pending review
+      const auditsRef = collection(db, "hotel_applications", appId, "audits");
+      const pendingAudits = await getDocs(query(auditsRef, where("status", "in", ["Pending Review", "Submitted"])));
+      for (const auditDoc of pendingAudits.docs) {
+        await updateDoc(doc(db, "hotel_applications", appId, "audits", auditDoc.id), {
+          status: newStatus === "Approved" ? "Passed" : newStatus,
+          reviewedAt: new Date().toISOString(),
+        });
+      }
+
+      alert(`Hotel status updated to: ${newStatus}${newStatus === "Approved" ? ` (Tier: ${updatePayload.certificationTier})` : ""}`);
     } catch (err) {
       console.error(err);
       alert("Failed to update status");
     }
   };
 
-  // 3-Strikes Violation Logic
+  // 3-Strikes Violation Logic (Strictly isolated to spot_check audit logs)
   const handleRejectEvidenceWithStrike = async (hotel) => {
     const currentStrikes = (hotel.flagStrikesCount || 0) + 1;
     const isSuspended = currentStrikes >= 3;
@@ -200,26 +230,31 @@ export default function HotelAdminReview() {
         suspendedUntil: sixMonthsDate.toISOString(),
         suspensionReason: "Exceeded 3 rejected audit submissions. Certification revoked for 6 months.",
         "spotCheck.status": "Failed",
+        "fraudFlags.hasSuspicion": false, 
+        upgradeRequest: null,
       };
       alert(`STRIKE 3/3: ${hotel.hotelName} is SUSPENDED for 6 months. Tier has been revoked.`);
     } else {
       updatePayload = {
-        status: "Flagged",
+        status: "Rejected",
         flagStrikesCount: currentStrikes,
-        certificationTier: hotel.certificationTier || "Bronze",
-        "fraudFlags.reason": `Audit evidence rejected by Admin (Strike ${currentStrikes}/3). Please resubmit valid meter proof.`,
+        certificationTier: hotel.certificationTier || null,
+        rejectionReason: hotel.fraudFlags?.reason || "Audit evidence rejected by Admin.",
+        "fraudFlags.hasSuspicion": false,
+        "fraudFlags.reason": `Audit evidence rejected by Admin (Strike ${currentStrikes}/3).`,
         "spotCheck.status": "Pending",
         "spotCheck.submittedFileName": null,
         "spotCheck.submittedFileUrl": null,
+        upgradeRequest: null,
       };
-      alert(`Evidence Rejected! Warning Strike ${currentStrikes}/3 recorded for ${hotel.hotelName}. Hotel must resubmit, tier remains ${hotel.certificationTier || "Bronze"}.`);
+      alert(`Evidence Rejected! Warning Strike ${currentStrikes}/3 recorded for ${hotel.hotelName}. Application marked as Rejected.`);
     }
 
     try {
       await updateHotelStatus(hotel.id, updatePayload);
 
       const auditsRef = collection(db, "hotel_applications", hotel.id, "audits");
-      const pendingAudits = await getDocs(query(auditsRef, where("status", "==", "Submitted")));
+      const pendingAudits = await getDocs(query(auditsRef, where("status", "in", ["Pending Review", "Submitted"])));
       for (const auditDoc of pendingAudits.docs) {
         await updateDoc(doc(db, "hotel_applications", hotel.id, "audits", auditDoc.id), {
           status: "Rejected",
@@ -314,19 +349,22 @@ export default function HotelAdminReview() {
     }
   };
 
-  // Category partition with strict clearing for processed items
+  // STRICT SEPARATION FILTERS (Ensures actioned flags disappear from queue)
   const pendingApps = applications.filter((a) => {
-    if (a.status === "Approved" || a.status === "Rejected" || a.status === "Flagged" || a.status === "Suspended") return false;
-    if (pendingFilter === "All") return !a.status || a.status === "Pending Review" || a.status === "Submitted";
-    if (pendingFilter === "Pending") return !a.status || a.status === "Pending Review" || a.status === "Submitted";
+    const hasFlag = (a.status === "Flagged" || a.fraudFlags?.hasSuspicion || a.upgradeRequest?.aiAnalysis?.hasSuspicion) && a.status !== "Approved";
+    const isActioned = a.status === "Approved" || a.status === "Rejected" || a.status === "Suspended";
+    if (hasFlag || (isActioned && !a.upgradeRequest)) return false;
+    
+    const isPendingReview = !a.status || a.status === "Pending Review" || a.status === "Submitted" || a.upgradeRequest?.status === "Pending Review";
+    if (pendingFilter === "All") return isPendingReview;
+    if (pendingFilter === "Pending") return isPendingReview;
     return a.status === pendingFilter;
   });
 
   const flaggedApps = applications.filter((a) => {
-    if (a.status === "Approved") return false;
-
     const isSuspended = a.status === "Suspended";
-    const isFlagged = a.status === "Flagged" || a.fraudFlags?.hasSuspicion;
+    const isFlagged = (a.status === "Flagged" || a.fraudFlags?.hasSuspicion || a.upgradeRequest?.aiAnalysis?.hasSuspicion) && a.status !== "Approved";
+    
     if (flaggedFilter === "Active") return isFlagged && !isSuspended;
     if (flaggedFilter === "Suspended") return isSuspended;
     return isFlagged || isSuspended;
@@ -344,7 +382,10 @@ export default function HotelAdminReview() {
     return true;
   });
 
-  const pendingReviewCount = applications.filter((a) => a.spotCheck?.status === "Submitted").length;
+  // Dynamic Badge Counters for Tabs
+  const pendingCount = pendingApps.length;
+  const flaggedCount = flaggedApps.length;
+  const spotCheckBadgeCount = applications.filter(a => a.spotCheck?.status === "Submitted").length;
 
   const certifiedApps = applications.filter((a) => {
     if (a.status !== "Approved" && (!a.certificationTier || a.status === "Suspended")) return false;
@@ -374,36 +415,17 @@ export default function HotelAdminReview() {
   const getAllAppDocuments = (app) => {
     const docs = [];
     
-    // Check 3-month electricity records
     if (app.electricityBillM1Url) docs.push({ name: "Electricity Bill (Month 1)", url: app.electricityBillM1Url });
     if (app.electricityBillM2Url) docs.push({ name: "Electricity Bill (Month 2)", url: app.electricityBillM2Url });
     if (app.electricityBillM3Url) docs.push({ name: "Electricity Bill (Month 3)", url: app.electricityBillM3Url });
 
-    // Check 3-month water records
     if (app.waterBillM1Url) docs.push({ name: "Water Bill (Month 1)", url: app.waterBillM1Url });
     if (app.waterBillM2Url) docs.push({ name: "Water Bill (Month 2)", url: app.waterBillM2Url });
     if (app.waterBillM3Url) docs.push({ name: "Water Bill (Month 3)", url: app.waterBillM3Url });
 
-    // Legacy single field fallbacks if 3-month fields aren't populated yet
     if (docs.length === 0) {
       if (app.electricityBillUrl) docs.push({ name: "Electricity Bill", url: app.electricityBillUrl });
       if (app.waterBillUrl) docs.push({ name: "Water Bill", url: app.waterBillUrl });
-      if (app.gasBillUrl) docs.push({ name: "Gas / Energy Bill", url: app.gasBillUrl });
-      if (app.meterPhotoUrl) docs.push({ name: "Meter Photo", url: app.meterPhotoUrl });
-      if (app.licenseUrl) docs.push({ name: "Business License", url: app.licenseUrl });
-      if (app.auditReportUrl) docs.push({ name: "Audit Report", url: app.auditReportUrl });
-    }
-
-    // Check if there is a generic documents array
-    if (Array.isArray(app.documents)) {
-      app.documents.forEach((d, idx) => {
-        if (d && d.url) docs.push({ name: d.name || `Document ${idx + 1}`, url: d.url });
-      });
-    }
-
-    // Final generic fallback
-    if (docs.length === 0 && app.documentUrl) {
-      docs.push({ name: "Submitted Evidence Document", url: app.documentUrl });
     }
 
     return docs;
@@ -414,24 +436,24 @@ export default function HotelAdminReview() {
       {/* Header */}
       <div style={styles.titleSection}>
         <h1 style={styles.heading}>Admin Dashboard</h1>
-        <p style={styles.subheading}>Review applications, investigate flagged cases, and manage certifications</p>
+        <p style={styles.subheading}>Review clean inflows, investigate flagged cases, and manage certifications</p>
       </div>
 
       {/* Top 4 Metrics */}
       <div style={styles.statsGrid}>
         <div style={styles.statCard}>
           <div style={{ fontSize: 22 }}>🔆</div>
-          <div style={styles.statNumber}>{applications.filter(a => a.status === "Pending Review" || !a.status).length}</div>
+          <div style={styles.statNumber}>{pendingCount}</div>
           <div style={styles.statLabel}>Pending Reviews</div>
         </div>
         <div style={styles.statCard}>
           <div style={{ fontSize: 22 }}>🔺</div>
-          <div style={styles.statNumber}>{applications.filter(a => a.status === "Flagged" || a.status === "Suspended").length}</div>
+          <div style={styles.statNumber}>{flaggedCount}</div>
           <div style={styles.statLabel}>Flagged Cases</div>
         </div>
         <div style={styles.statCard}>
           <div style={{ fontSize: 22 }}>📋</div>
-          <div style={styles.statNumber}>{applications.filter(a => a.spotCheck?.status === "Pending" || a.spotCheck?.status === "Submitted").length}</div>
+          <div style={styles.statNumber}>{spotcheckApps.length}</div>
           <div style={styles.statLabel}>Spot-Checks Active</div>
         </div>
         <div style={styles.statCard}>
@@ -449,7 +471,6 @@ export default function HotelAdminReview() {
         </div>
 
         <div style={styles.chartArea}>
-          {/* Y-Axis Labels */}
           <div style={styles.yAxis}>
             <span>32</span>
             <span>24</span>
@@ -458,9 +479,7 @@ export default function HotelAdminReview() {
             <span>0</span>
           </div>
 
-          {/* Chart Grid & Bars */}
           <div style={styles.gridContainer}>
-            {/* Horizontal Grid Lines */}
             <div style={styles.gridLine} />
             <div style={styles.gridLine} />
             <div style={styles.gridLine} />
@@ -479,10 +498,8 @@ export default function HotelAdminReview() {
                     onMouseEnter={() => setHoveredBar(idx)}
                     onMouseLeave={() => setHoveredBar(null)}
                   >
-                    {/* Hover Column Background Highlight */}
                     {isHovered && <div style={styles.barHighlightBg} />}
 
-                    {/* Interactive Tooltip Card */}
                     {isHovered && (
                       <div style={styles.tooltipCard}>
                         <div style={{ fontSize: 14, fontWeight: 700, color: "#111827", marginBottom: 6 }}>{item.month}</div>
@@ -492,7 +509,6 @@ export default function HotelAdminReview() {
                       </div>
                     )}
 
-                    {/* Bar Element */}
                     <div style={styles.barTrack}>
                       <div 
                         style={{ 
@@ -511,28 +527,28 @@ export default function HotelAdminReview() {
         </div>
       </div>
 
-      {/* Main Tabs */}
+      {/* Main Tabs with Red Badge Counters */}
       <div style={styles.subtabTrack}>
         <button
           type="button"
           onClick={() => setActiveSubTab("pending")}
           style={{ ...styles.subtabBtn, ...(activeSubTab === "pending" ? styles.subtabBtnActive : {}) }}
         >
-          Pending
+          Pending {pendingCount > 0 && <span style={styles.redBadge}>{pendingCount}</span>}
         </button>
         <button
           type="button"
           onClick={() => setActiveSubTab("flagged")}
           style={{ ...styles.subtabBtn, ...(activeSubTab === "flagged" ? styles.subtabBtnActive : {}) }}
         >
-          Flagged & Strikes
+          Flagged & Strikes {flaggedCount > 0 && <span style={styles.redBadge}>{flaggedCount}</span>}
         </button>
         <button
           type="button"
           onClick={() => setActiveSubTab("spotcheck")}
           style={{ ...styles.subtabBtn, ...(activeSubTab === "spotcheck" ? styles.subtabBtnActive : {}) }}
         >
-          Spot-Checks & Reminders {pendingReviewCount > 0 && <span style={styles.redBadge}>{pendingReviewCount}</span>}
+          Spot-Checks & Reminders {spotCheckBadgeCount > 0 && <span style={styles.redBadge}>{spotCheckBadgeCount}</span>}
         </button>
         <button
           type="button"
@@ -560,8 +576,6 @@ export default function HotelAdminReview() {
           <select value={pendingFilter} onChange={(e) => setPendingFilter(e.target.value)} style={styles.selectFilter}>
             <option value="All">All Inflow</option>
             <option value="Pending">Only Pending</option>
-            <option value="Approved">Approved Baseline</option>
-            <option value="Rejected">Rejected</option>
           </select>
         )}
 
@@ -601,17 +615,20 @@ export default function HotelAdminReview() {
           {/* TAB 1: PENDING */}
           {activeSubTab === "pending" && (
             filterBySearch(pendingApps).length === 0 ? (
-              <div style={styles.emptyBox}>No applications found under this filter.</div>
+              <div style={styles.emptyBox}>No pending applications requiring clean review.</div>
             ) : (
               filterBySearch(pendingApps).map((app) => {
                 const allDocs = getAllAppDocuments(app);
+                const upgradeReq = app.upgradeRequest;
 
                 return (
                   <div key={app.id} style={styles.pendingCard}>
                     <div style={styles.cardHeaderRow}>
-                      <h3 style={styles.cardHotelName}>{app.hotelName || "Hotel Property"}</h3>
+                      <div>
+                        <h3 style={styles.cardHotelName}>{app.hotelName || "Hotel Property"}</h3>
+                      </div>
                       <span style={styles.cardDate}>
-                        {app.status === "Approved" ? "✓ Approved" : app.status === "Rejected" ? "✕ Rejected" : "Pending Review"}
+                        {upgradeReq ? `Tier Upgrade Request (${upgradeReq.targetTier})` : "Pending Review"}
                       </span>
                     </div>
 
@@ -619,6 +636,29 @@ export default function HotelAdminReview() {
                       <MapPin size={16} color="#9ca3af" />
                       <span>{app.address ? `${app.address}, ${app.state || "Malaysia"}` : "Address not provided"}</span>
                     </div>
+
+                    {/* AI Comparative Analysis Card for Tier Upgrades */}
+                    {upgradeReq && (
+                      <div style={{ backgroundColor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: 14, marginTop: 4 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 700, color: "#0f172a", marginBottom: 6 }}>
+                          📊 AI Upgrade Comparison & Analysis
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12.5, color: "#334155", marginBottom: 8 }}>
+                          <div><strong>Electricity Baseline Fee:</strong> RM {Number(app.electricityBillFee || 4500).toFixed(2)}</div>
+                          <div><strong>New Submitted Fee:</strong> RM {Number(upgradeReq.newBillFee || 0).toFixed(2)}</div>
+                        </div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: upgradeReq.aiAnalysis?.isLower ? "#15803d" : "#b45309", marginBottom: 8 }}>
+                          {upgradeReq.aiAnalysis?.note || "Awaiting verification."}
+                        </div>
+                        {upgradeReq.submittedFileUrl && (
+                          <button type="button" onClick={() => openDocumentPreview(upgradeReq.submittedFileUrl)} style={styles.previewBtn}>
+                            <FileText size={14} color="#0284c7" />
+                            <span>Inspect New Statement ({upgradeReq.submittedFileName})</span>
+                            <ExternalLink size={12} />
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                     <div style={styles.metricsGrid3}>
                       <div style={styles.metricBox}>
@@ -638,31 +678,30 @@ export default function HotelAdminReview() {
                       </div>
                     </div>
 
-                    {/* DYNAMICALLY RENDER ALL ATTACHED DOCUMENTS */}
-                    <div style={styles.documentPreviewRow}>
-                      {allDocs.length > 0 ? (
-                        allDocs.map((docItem, idx) => (
-                          <button key={idx} type="button" onClick={() => openDocumentPreview(docItem.url)} style={styles.previewBtn}>
-                            <FileText size={14} color="#0284c7" />
-                            <span>View {docItem.name}</span>
-                            <ExternalLink size={12} />
-                          </button>
-                        ))
-                      ) : (
-                        <span style={{ fontSize: 12, color: "#9ca3af" }}>No documents attached to this application.</span>
-                      )}
-                    </div>
-
-                    {app.status !== "Approved" && (
-                      <div style={styles.actionRow}>
-                        <button type="button" onClick={() => handleStatus(app.id, "Approved")} style={styles.greenBtn}>
-                          Approve (Grant Bronze)
-                        </button>
-                        <button type="button" onClick={() => handleStatus(app.id, "Rejected")} style={styles.redOutlineBtn}>
-                          Reject
-                        </button>
+                    {!upgradeReq && (
+                      <div style={styles.documentPreviewRow}>
+                        {allDocs.length > 0 ? (
+                          allDocs.map((docItem, idx) => (
+                            <button key={idx} type="button" onClick={() => openDocumentPreview(docItem.url)} style={styles.previewBtn}>
+                              <FileText size={14} color="#0284c7" />
+                              <span>View {docItem.name}</span>
+                              <ExternalLink size={12} />
+                            </button>
+                          ))
+                        ) : (
+                          <span style={{ fontSize: 12, color: "#9ca3af" }}>No documents attached to this application.</span>
+                        )}
                       </div>
                     )}
+
+                    <div style={styles.actionRow}>
+                      <button type="button" onClick={() => handleStatus(app.id, "Approved")} style={styles.greenBtn}>
+                        {upgradeReq ? `Approve Upgrade to ${upgradeReq.targetTier}` : "Approve (Grant Bronze)"}
+                      </button>
+                      <button type="button" onClick={() => handleStatus(app.id, "Rejected")} style={styles.redOutlineBtn}>
+                        Reject
+                      </button>
+                    </div>
                   </div>
                 );
               })
@@ -701,7 +740,7 @@ export default function HotelAdminReview() {
                       <span style={{ fontWeight: 700, fontSize: 13.5 }}>
                         {isSuspended 
                           ? `Revoked until: ${new Date(app.suspendedUntil).toLocaleDateString()}` 
-                          : "Audit Discrepancy / Document Suspicion"}
+                          : "AI Audit Discrepancy / Document Suspicion"}
                       </span>
                     </div>
 
@@ -716,7 +755,6 @@ export default function HotelAdminReview() {
                       </div>
                     )}
 
-                    {/* DYNAMICALLY RENDER ALL DOCUMENTS FOR FLAGGED CARDS */}
                     <div style={styles.documentPreviewRow}>
                       {allDocs.map((docItem, idx) => (
                         <button key={idx} type="button" onClick={() => openDocumentPreview(docItem.url)} style={styles.previewBtn}>
@@ -1269,7 +1307,7 @@ const styles = {
     backgroundColor: "#fff",
     border: "1px solid #e5e7eb",
     borderRadius: 14,
-    padding: 36,
+    padding: "36px 20px",
     textAlign: "center",
     color: "#9ca3af",
     fontSize: 14,

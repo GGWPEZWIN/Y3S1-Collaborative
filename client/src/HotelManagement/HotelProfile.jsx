@@ -100,8 +100,12 @@ export default function HotelProfile({ onNavigate }) {
   };
 
   const openEditProfile = () => {
-    setHotelNameInput(hotelDoc?.hotelName || profile?.name || profile?.username || "Granito Hotel");
-    setRoomCountInput(hotelDoc?.rooms || hotelDoc?.roomCount || "120");
+    if (!hotelDoc) {
+      alert("Please submit your green certification application first before editing your hotel profile.");
+      return;
+    }
+    setHotelNameInput(hotelDoc?.hotelName || "");
+    setRoomCountInput(hotelDoc?.rooms || hotelDoc?.roomCount || "");
     setPasswordInput("");
     setCurrentPasswordInput("");
     setFieldError("");
@@ -236,10 +240,23 @@ export default function HotelProfile({ onNavigate }) {
     );
   }
 
-  const hotelName = hotelDoc?.hotelName || profile?.name || profile?.username || "Granito";
-  const avatarLetter = (hotelName || "H").charAt(0).toUpperCase();
-  const currentTier = hotelDoc?.certificationTier || (hotelDoc?.status === "Approved" ? "Bronze" : "Under Review");
-  const partnerEmail = profile?.email || currentUser?.email || "—";
+  // Generate a consistent placeholder based on the user's UID so it stays fixed for this specific account
+  const getAccountSpecificPlaceholder = (uid) => {
+    if (!uid) return "Hotel-1234";
+    let hash = 0;
+    for (let i = 0; i < uid.length; i++) {
+      hash = (hash << 5) - hash + uid.charCodeAt(i);
+      hash |= 0;
+    }
+    const randomNum = Math.abs(hash % 9000) + 1000;
+    return `Hotel-${randomNum}`;
+  };
+
+  const partnerEmail = profile?.email || currentUser?.email || "user@gmail.com";
+  const accountPlaceholderId = getAccountSpecificPlaceholder(currentUser?.uid);
+  const hotelName = hotelDoc?.hotelName || accountPlaceholderId;
+  const avatarLetter = partnerEmail.charAt(0).toUpperCase();
+  const currentTier = hotelDoc?.certificationTier || (hotelDoc?.status ? hotelDoc.status : "Not Applied");
 
   return (
     <div style={styles.container}>
@@ -277,14 +294,21 @@ export default function HotelProfile({ onNavigate }) {
 
             <div style={styles.profileIdentity}>
               <h2 style={styles.profileName}>{hotelName}</h2>
-              <p style={styles.profileRole}>Registered Eco-Partner Hotel</p>
+              <p style={styles.profileRole}>
+                {hotelDoc ? "Registered Eco-Partner Hotel" : "Pending Application"}
+              </p>
             </div>
 
             <button
               type="button"
               onClick={openEditProfile}
-              style={styles.editProfileBtn}
-              disabled={editingProfile}
+              style={{
+                ...styles.editProfileBtn,
+                opacity: hotelDoc ? 1 : 0.4,
+                cursor: hotelDoc ? "pointer" : "not-allowed",
+              }}
+              disabled={!hotelDoc || editingProfile}
+              title={hotelDoc ? "Edit Profile" : "Submit application first to unlock editing"}
             >
               <Pencil size={15} />
               <span>Edit Profile</span>
@@ -292,7 +316,7 @@ export default function HotelProfile({ onNavigate }) {
           </div>
 
           {/* EDIT PROFILE FORM */}
-          {editingProfile && (
+          {editingProfile && hotelDoc && (
             <div style={styles.editPanel}>
               <div style={styles.editPanelHeader}>
                 <div>
@@ -443,7 +467,7 @@ export default function HotelProfile({ onNavigate }) {
                 </div>
                 <div style={styles.infoText}>
                   <span style={styles.infoLabel}>Certification Status</span>
-                  <span style={styles.infoValue}>{currentTier} Tier</span>
+                  <span style={styles.infoValue}>{currentTier}</span>
                 </div>
               </div>
 
@@ -454,7 +478,7 @@ export default function HotelProfile({ onNavigate }) {
                 <div style={styles.infoText}>
                   <span style={styles.infoLabel}>Registered Location</span>
                   <span style={styles.infoValue}>
-                    {hotelDoc?.address ? `${hotelDoc.address}, ${hotelDoc.state || "Penang"}` : "Penang, Malaysia"}
+                    {hotelDoc?.address ? `${hotelDoc.address}, ${hotelDoc.state || ""}` : "Not provided"}
                   </span>
                 </div>
               </div>
@@ -465,7 +489,9 @@ export default function HotelProfile({ onNavigate }) {
                 </div>
                 <div style={styles.infoText}>
                   <span style={styles.infoLabel}>Capacity</span>
-                  <span style={styles.infoValue}>{hotelDoc?.rooms || hotelDoc?.roomCount || "120"} rooms</span>
+                  <span style={styles.infoValue}>
+                    {hotelDoc?.rooms || hotelDoc?.roomCount ? `${hotelDoc.rooms || hotelDoc.roomCount} rooms` : "Not provided"}
+                  </span>
                 </div>
               </div>
 
