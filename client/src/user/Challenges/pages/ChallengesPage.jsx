@@ -2,11 +2,8 @@ import React, { useState, useEffect } from "react";
 import Layout from "../../../shared/components/Layout";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
 
-// ============================================================
-// FIREBASE FIRESTORE IMPORTS
-// ============================================================
 import { db } from "../../../firebase/config";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, onSnapshot } from "firebase/firestore";
 
 import {
   Award,
@@ -22,7 +19,6 @@ import {
   Users,
 } from "lucide-react";
 
-// Default image fallback matching AdminChallengePage
 const DEFAULT_IMAGE_URL =
   "https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?w=800&q=80";
 
@@ -37,6 +33,7 @@ const CHALLENGES = [
     points: 50,
     carbonKg: 12.5,
     participants: 2847,
+    badge: { name: "Transit Pioneer", icon: "🚌" },
     imageUrl: "https://images.unsplash.com/photo-1596422846543-75c6fc197f07?w=600&q=80",
   },
   {
@@ -49,6 +46,7 @@ const CHALLENGES = [
     points: 30,
     carbonKg: null,
     participants: 5234,
+    badge: { name: "Zero Waste Hero", icon: "♻️" },
     imageUrl: "https://images.unsplash.com/photo-1555126634-323283e090fa?w=600&q=80",
   },
   {
@@ -61,6 +59,7 @@ const CHALLENGES = [
     points: 40,
     carbonKg: 8.2,
     participants: 1932,
+    badge: { name: "Heritage Strider", icon: "🏛️" },
     imageUrl: "https://images.unsplash.com/photo-1599423528441-2a07d3b5b62b?w=600&q=80",
   },
   {
@@ -73,6 +72,7 @@ const CHALLENGES = [
     points: 150,
     carbonKg: 45.0,
     participants: 412,
+    badge: { name: "Forest Defender", icon: "🌳" },
     imageUrl: "https://images.unsplash.com/photo-1511497584788-876760111969?w=600&q=80",
   },
   {
@@ -85,6 +85,7 @@ const CHALLENGES = [
     points: 80,
     carbonKg: null,
     participants: 845,
+    badge: { name: "River Guardian", icon: "🌊" },
     imageUrl: "https://images.unsplash.com/photo-1618477461853-cf6ed80fbfc9?w=600&q=80",
   },
   {
@@ -97,6 +98,7 @@ const CHALLENGES = [
     points: 120,
     carbonKg: 25.5,
     participants: 320,
+    badge: { name: "Coastal Protector", icon: "🏝️" },
     imageUrl: "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=600&q=80",
   },
 ];
@@ -131,12 +133,40 @@ function StatCard({ icon: Icon, iconColor, label, value, sub }) {
   );
 }
 
+function BadgeItem({ challenge }) {
+  const [hover, setHover] = useState(false);
+  const badge = challenge.badge || { name: "Eco Badge", icon: "🏆" };
+
+  return (
+    <div
+      style={styles.badgeWrapper}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <div style={styles.badgeIconCircle}>
+        <span style={{ fontSize: 24 }}>{badge.icon}</span>
+      </div>
+      <span style={styles.badgeNameLabel}>{badge.name}</span>
+
+      {hover && (
+        <div style={styles.badgeTooltip}>
+          <div style={styles.badgeTooltipHeader}>
+            <span>{badge.icon}</span> <strong>{badge.name}</strong>
+          </div>
+          <div style={styles.badgeTooltipSub}>
+            Earned by completing <strong>{challenge.title}</strong>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChallengeCard({ c, onNavigate, userChallengeState }) {
   const isJoined = userChallengeState?.joined || false;
   const progress = userChallengeState?.progress || 0;
   const isCompleted = progress >= 100;
 
-  // Safe participant calculation guaranteeing 0 instead of NA or NaN
   const baseParticipants =
     c.participants !== undefined && c.participants !== null
       ? Number(c.participants) || 0
@@ -163,7 +193,7 @@ function ChallengeCard({ c, onNavigate, userChallengeState }) {
           <div style={styles.challengeTitle}>{c.title}</div>
           {isCompleted ? (
             <span style={styles.completedBadge}>
-              <CheckCircle2 size={12} /> Completed
+              <CheckCircle2 size={12} /> Earned {c.points} pts
             </span>
           ) : isJoined ? (
             <span style={styles.inProgressBadge}>
@@ -174,13 +204,18 @@ function ChallengeCard({ c, onNavigate, userChallengeState }) {
 
         <p style={styles.challengeDesc}>{c.description}</p>
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
           <span style={{ ...styles.pill, ...difficultyPillStyle(c.difficulty) }}>
             {c.difficulty}
           </span>
           <span style={{ ...styles.pill, background: "#DBEAFE", color: "#2563EB" }}>
             {c.tag}
           </span>
+          {c.badge && (
+            <span style={{ ...styles.pill, background: "#FEF3C7", color: "#B45309", display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <Award size={12} /> Badge Reward
+            </span>
+          )}
         </div>
 
         <div style={styles.locationPill}>
@@ -188,7 +223,7 @@ function ChallengeCard({ c, onNavigate, userChallengeState }) {
           {c.location}
         </div>
 
-        {isJoined && (
+        {isJoined && !isCompleted && (
           <div style={styles.cardProgressSection}>
             <div style={styles.cardProgressRow}>
               <span style={styles.cardProgressLabel}>Progress</span>
@@ -207,7 +242,7 @@ function ChallengeCard({ c, onNavigate, userChallengeState }) {
         )}
 
         <div style={styles.statRow}>
-          <span style={styles.statRowLabel}>Reward</span>
+          <span style={styles.statRowLabel}>{isCompleted ? "Reward Earned" : "Reward"}</span>
           <span style={styles.rewardValue}>+{c.points} pts</span>
         </div>
 
@@ -252,22 +287,33 @@ export default function ChallengesPage({ onNavigate }) {
   const { authUser, profile, loading } = useCurrentUser();
 
   const [challengesList, setChallengesList] = useState(CHALLENGES);
+  const [activeTab, setActiveTab] = useState("active");
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState("All");
   const [themeFilter, setThemeFilter] = useState("All");
   const [difficultyFilter, setDifficultyFilter] = useState("All");
 
-  // Fetch challenge list directly from Firestore database and merge with default CHALLENGES
   useEffect(() => {
-    const fetchChallengesFromDatabase = async () => {
-      try {
-        let deletedIds = [];
-        try {
-          const saved = localStorage.getItem("greentrip_deleted_challenge_ids");
-          if (saved) deletedIds = JSON.parse(saved);
-        } catch (e) {}
+    const handleHashChange = () => {
+      if (window.location.hash === "#completed") {
+        setActiveTab("completed");
+      }
+    };
+    handleHashChange();
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
 
-        const querySnapshot = await getDocs(collection(db, "challenges"));
+  useEffect(() => {
+    let deletedIds = [];
+    try {
+      const saved = localStorage.getItem("greentrip_deleted_challenge_ids");
+      if (saved) deletedIds = JSON.parse(saved);
+    } catch (e) {}
+
+    const unsubscribe = onSnapshot(
+      collection(db, "challenges"),
+      (querySnapshot) => {
         const fetched = [];
         querySnapshot.forEach((docSnap) => {
           const data = docSnap.data();
@@ -282,7 +328,6 @@ export default function ChallengesPage({ onNavigate }) {
           });
         });
 
-        // Merge Firestore challenges with default CHALLENGES (filtering out replaced or deleted IDs)
         const firestoreIds = new Set(fetched.map((item) => String(item.id)));
         const activeDummies = CHALLENGES.filter(
           (dummy) =>
@@ -291,19 +336,23 @@ export default function ChallengesPage({ onNavigate }) {
         );
 
         setChallengesList([...fetched, ...activeDummies]);
-      } catch (err) {
-        console.error("Error fetching challenges list from Firestore:", err);
+      },
+      (error) => {
+        console.error("Error fetching challenges list in real-time:", error);
       }
-    };
+    );
 
-    fetchChallengesFromDatabase();
+    return () => unsubscribe();
   }, []);
 
-  // Load user challenges directly from Firestore profile data
   const userChallenges = profile?.user_challenges || profile?.userChallenges || {};
 
   const completedChallenges = challengesList.filter(
     (c) => userChallenges[c.id]?.progress >= 100
+  );
+
+  const earnedBadgesChallenges = completedChallenges.filter(
+    (c) => Boolean(c.badge)
   );
 
   const joinedChallengesCount = Object.values(userChallenges).filter(
@@ -322,7 +371,6 @@ export default function ChallengesPage({ onNavigate }) {
   );
   const totalCarbonImpact = baseCarbonKg + addedCarbonKg;
 
-  // Single Source of Truth from Firestore Profile
   const totalEcoScore = profile?.eco_score ?? profile?.ecoScore ?? 0;
   const currentRankPosition = calculateRank(totalEcoScore);
 
@@ -382,7 +430,9 @@ export default function ChallengesPage({ onNavigate }) {
 
   const filteredChallenges = challengesList.filter((c) => {
     const isCompleted = userChallenges[c.id]?.progress >= 100;
-    if (isCompleted) return false;
+    
+    if (activeTab === "active" && isCompleted) return false;
+    if (activeTab === "completed" && !isCompleted) return false;
 
     const matchesSearch =
       c.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -421,70 +471,112 @@ export default function ChallengesPage({ onNavigate }) {
           <div style={styles.rankSub}>with {user.eco_score.toLocaleString()} Eco Points</div>
         </div>
 
+        {/* Earned Badges Section */}
         <div style={{ ...styles.card, marginTop: 20 }}>
-          <div style={styles.searchBox}>
-            <Search size={16} color="#9ca3af" />
-            <input
-              type="text"
-              placeholder="Search challenges..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={styles.searchInput}
-            />
+          <div style={styles.rowHeader}>
+            <span style={styles.cardTitle}>🏅 Earned Badges</span>
+            <span style={{ fontSize: 13, color: "#6b7280" }}>
+              {earnedBadgesChallenges.length} Badge{earnedBadgesChallenges.length !== 1 ? "s" : ""} Earned
+            </span>
           </div>
+          <p style={{ color: "#6b7280", fontSize: 13.5, margin: "6px 0 16px" }}>
+            Hover over a badge to see which challenge awarded it.
+          </p>
 
-          <div style={styles.filterGrid}>
-            <div>
-              <div style={styles.filterLabel}>State</div>
-              <div style={styles.selectWrapper}>
-                <select
-                  style={styles.filterSelectNative}
-                  value={stateFilter}
-                  onChange={(e) => setStateFilter(e.target.value)}
-                >
-                  <option value="All">All States</option>
-                  <option value="Kuala Lumpur">Kuala Lumpur</option>
-                  <option value="National">National</option>
-                  <option value="Penang">Penang</option>
-                  <option value="Sabah">Sabah</option>
-                  <option value="Melaka">Melaka</option>
-                  <option value="Sarawak">Sarawak</option>
-                </select>
-                <ChevronDown size={16} color="#6b7280" style={styles.selectIcon} />
-              </div>
+          {earnedBadgesChallenges.length > 0 ? (
+            <div style={styles.badgesContainer}>
+              {earnedBadgesChallenges.map((c) => (
+                <BadgeItem key={c.id} challenge={c} />
+              ))}
+            </div>
+          ) : (
+            <div style={styles.noBadgesBox}>
+              Complete challenges with badge rewards to collect your achievements here!
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginTop: 32 }}>
+          <div style={styles.tabsContainer}>
+            <button
+              style={activeTab === "active" ? styles.activeTabBtn : styles.inactiveTabBtn}
+              onClick={() => setActiveTab("active")}
+            >
+              Active Challenges
+            </button>
+            <button
+              style={activeTab === "completed" ? styles.activeTabBtn : styles.inactiveTabBtn}
+              onClick={() => setActiveTab("completed")}
+            >
+              Completed Challenges
+            </button>
+          </div>
+          
+          <div style={styles.card}>
+            <div style={styles.searchBox}>
+              <Search size={16} color="#9ca3af" />
+              <input
+                type="text"
+                placeholder="Search challenges..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={styles.searchInput}
+              />
             </div>
 
-            <div>
-              <div style={styles.filterLabel}>Theme</div>
-              <div style={styles.selectWrapper}>
-                <select
-                  style={styles.filterSelectNative}
-                  value={themeFilter}
-                  onChange={(e) => setThemeFilter(e.target.value)}
-                >
-                  <option value="All">All Themes</option>
-                  <option value="Low-Carbon Transit">Low-Carbon Transit</option>
-                  <option value="Zero-Plastic">Zero-Plastic</option>
-                  <option value="Reforestation">Reforestation</option>
-                </select>
-                <ChevronDown size={16} color="#6b7280" style={styles.selectIcon} />
+            <div style={styles.filterGrid}>
+              <div>
+                <div style={styles.filterLabel}>State</div>
+                <div style={styles.selectWrapper}>
+                  <select
+                    style={styles.filterSelectNative}
+                    value={stateFilter}
+                    onChange={(e) => setStateFilter(e.target.value)}
+                  >
+                    <option value="All">All States</option>
+                    <option value="Kuala Lumpur">Kuala Lumpur</option>
+                    <option value="National">National</option>
+                    <option value="Penang">Penang</option>
+                    <option value="Sabah">Sabah</option>
+                    <option value="Melaka">Melaka</option>
+                    <option value="Sarawak">Sarawak</option>
+                  </select>
+                  <ChevronDown size={16} color="#6b7280" style={styles.selectIcon} />
+                </div>
               </div>
-            </div>
 
-            <div>
-              <div style={styles.filterLabel}>Difficulty</div>
-              <div style={styles.selectWrapper}>
-                <select
-                  style={styles.filterSelectNative}
-                  value={difficultyFilter}
-                  onChange={(e) => setDifficultyFilter(e.target.value)}
-                >
-                  <option value="All">All Difficulty</option>
-                  <option value="Easy">Easy</option>
-                  <option value="Medium">Medium</option>
-                  <option value="Hard">Hard</option>
-                </select>
-                <ChevronDown size={16} color="#6b7280" style={styles.selectIcon} />
+              <div>
+                <div style={styles.filterLabel}>Theme</div>
+                <div style={styles.selectWrapper}>
+                  <select
+                    style={styles.filterSelectNative}
+                    value={themeFilter}
+                    onChange={(e) => setThemeFilter(e.target.value)}
+                  >
+                    <option value="All">All Themes</option>
+                    <option value="Low-Carbon Transit">Low-Carbon Transit</option>
+                    <option value="Zero-Plastic">Zero-Plastic</option>
+                    <option value="Reforestation">Reforestation</option>
+                  </select>
+                  <ChevronDown size={16} color="#6b7280" style={styles.selectIcon} />
+                </div>
+              </div>
+
+              <div>
+                <div style={styles.filterLabel}>Difficulty</div>
+                <div style={styles.selectWrapper}>
+                  <select
+                    style={styles.filterSelectNative}
+                    value={difficultyFilter}
+                    onChange={(e) => setDifficultyFilter(e.target.value)}
+                  >
+                    <option value="All">All Difficulty</option>
+                    <option value="Easy">Easy</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Hard">Hard</option>
+                  </select>
+                  <ChevronDown size={16} color="#6b7280" style={styles.selectIcon} />
+                </div>
               </div>
             </div>
           </div>
@@ -502,7 +594,9 @@ export default function ChallengesPage({ onNavigate }) {
             ))
           ) : (
             <div style={styles.noResults}>
-              No available challenges found matching your filters.
+              {activeTab === "completed" 
+                ? "You haven't completed any challenges matching these filters yet."
+                : "No available challenges found matching your filters."}
             </div>
           )}
         </div>
@@ -542,6 +636,53 @@ const styles = {
   leaderboardTagline: { color: "#6b7280", fontSize: 13.5, margin: "8px 0 16px" },
   rankNumber: { fontSize: 32, fontWeight: 800, color: "#15803d" },
   rankSub: { color: "#6b7280", fontSize: 13, marginTop: 2 },
+  badgesContainer: { display: "flex", gap: 16, flexWrap: "wrap", marginTop: 12 },
+  badgeWrapper: {
+    position: "relative",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 6,
+    cursor: "pointer",
+  },
+  badgeIconCircle: {
+    width: 54,
+    height: 54,
+    borderRadius: 999,
+    background: "#fffbeb",
+    border: "2px solid #fcd34d",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.05)",
+  },
+  badgeNameLabel: { fontSize: 12, fontWeight: 700, color: "#374151" },
+  badgeTooltip: {
+    position: "absolute",
+    bottom: "100%",
+    left: "50%",
+    transform: "translateX(-50%)",
+    marginBottom: 8,
+    width: 200,
+    background: "#1e293b",
+    color: "#fff",
+    borderRadius: 8,
+    padding: "8px 12px",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+    zIndex: 20,
+    pointerEvents: "none",
+  },
+  badgeTooltipHeader: { display: "flex", alignItems: "center", gap: 6, fontSize: 13 },
+  badgeTooltipSub: { fontSize: 11, color: "#94a3b8", marginTop: 4, lineHeight: 1.3 },
+  noBadgesBox: {
+    padding: "16px 0",
+    color: "#9ca3af",
+    fontSize: 13.5,
+    fontStyle: "italic",
+  },
+  tabsContainer: { display: "flex", gap: 10, marginBottom: 16 },
+  activeTabBtn: { padding: "10px 24px", background: "#111827", color: "#fff", borderRadius: 8, fontWeight: 700, border: "none", cursor: "pointer", fontSize: 14 },
+  inactiveTabBtn: { padding: "10px 24px", background: "#e5e7eb", color: "#4b5563", borderRadius: 8, fontWeight: 600, border: "none", cursor: "pointer", fontSize: 14 },
   searchBox: {
     display: "flex",
     alignItems: "center",
