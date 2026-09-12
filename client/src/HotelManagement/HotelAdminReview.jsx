@@ -1,100 +1,47 @@
-import { useEffect, useMemo, useState } from "react";
-import {
-  Zap,
-  Droplets,
-  FileText,
-  MapPin,
-  Send,
-  Building,
-  Search,
-  ExternalLink,
-  BellRing,
-  ShieldAlert,
-  ChevronDown,
-  ChevronUp
+import React, { useEffect, useState } from "react";
+import { 
+  Zap, 
+  Droplets, 
+  FileText, 
+  MapPin, 
+  AlertTriangle, 
+  Send, 
+  Building, 
+  Search, 
+  ExternalLink, 
+  BellRing, 
+  Clock, 
+  ShieldAlert, 
+  ChevronDown, 
+  ChevronUp 
 } from "lucide-react";
 import { updateHotelStatus } from "../firebase/hotelService";
 import { db } from "../firebase/config";
-import {
-  collection,
-  onSnapshot,
-  getDocs,
-  query,
-  where,
-  updateDoc,
-  doc
+import { 
+  collection, 
+  onSnapshot, 
+  getDocs, 
+  query, 
+  where, 
+  updateDoc, 
+  doc 
 } from "firebase/firestore";
 
-/* ------------------------------------------------------------------
-   Impure helpers live at module scope.
-   Clocks and randomness must never run during render: React can
-   re-render at any time, which would make "Near Due" flags and the
-   6-month chart buckets flip without any state change.
-   ------------------------------------------------------------------ */
-
-// Captured once at module load so the first render has a real clock
-// without calling Date.now() inside the component body.
-const MOUNT_TIME = Date.now();
-
-const CLOCK_TICK_MS = 60_000;
-
-const SPOT_CHECK_DOCS = [
-  {
-    title: "Electricity Bill + Meter Photo",
-    instruction:
-      "Upload your latest official electricity statement and matching photograph of the main meter reading.",
-  },
-  {
-    title: "Water Utility Bill + Meter Photo",
-    instruction:
-      "Upload your state water utility statement along with a clear photograph of your primary water meter dial.",
-  },
-];
-
-const pickSpotCheckDoc = () =>
-  SPOT_CHECK_DOCS[Math.floor(Math.random() * SPOT_CHECK_DOCS.length)];
-
-const nowMs = () => Date.now();
-
-const isoNow = () => new Date().toISOString();
-
-const timeLabel = () =>
-  new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-const monthsFromNow = (months) => {
-  const d = new Date();
-  d.setMonth(d.getMonth() + months);
-  return d;
-};
-
-const buildSpotCheckSchedule = (days) => {
-  const requested = new Date();
-  const due = new Date();
-  due.setDate(requested.getDate() + days);
-  return { requested, due };
-};
-
-const dateLabel = (d) =>
-  d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-
-// Helper to compute real counts from applications AND subcollection audits over the last 6 months.
-// `now` is passed in (not read from the clock) so the buckets are stable across renders.
-const getDynamicChartData = (apps, allAuditsMap, now) => {
+// Helper to compute real counts from applications AND subcollection audits over the last 6 months
+const getDynamicChartData = (apps, allAuditsMap) => {
   const monthsMap = {};
-  const today = new Date(now);
-
+  const now = new Date();
+  
   for (let i = 5; i >= 0; i--) {
-    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-    const monthName = d.toLocaleString("en-US", { month: "short" });
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthName = d.toLocaleString('en-US', { month: 'short' });
     monthsMap[monthName] = { month: monthName, approved: 0, rejected: 0, flagged: 0, total: 0 };
   }
 
   // 1. Process main hotel applications
   apps.forEach((app) => {
-    const dateObj = app.createdAt?.seconds
-      ? new Date(app.createdAt.seconds * 1000)
-      : new Date(now);
-    const monthName = dateObj.toLocaleString("en-US", { month: "short" });
+    const dateObj = app.createdAt?.seconds ? new Date(app.createdAt.seconds * 1000) : new Date();
+    const monthName = dateObj.toLocaleString('en-US', { month: 'short' });
 
     if (monthsMap[monthName]) {
       if (app.status === "Approved") {
@@ -111,24 +58,20 @@ const getDynamicChartData = (apps, allAuditsMap, now) => {
   });
 
   // 2. Process subcollection audit logs (spot-checks, renewals, upgrades)
-  Object.values(allAuditsMap)
-    .flat()
-    .forEach((audit) => {
-      const dateObj = audit.uploadedAt?.seconds
-        ? new Date(audit.uploadedAt.seconds * 1000)
-        : new Date(now);
-      const monthName = dateObj.toLocaleString("en-US", { month: "short" });
+  Object.values(allAuditsMap).flat().forEach((audit) => {
+    const dateObj = audit.uploadedAt?.seconds ? new Date(audit.uploadedAt.seconds * 1000) : new Date();
+    const monthName = dateObj.toLocaleString('en-US', { month: 'short' });
 
-      if (monthsMap[monthName]) {
-        if (audit.status === "Passed") {
-          monthsMap[monthName].approved += 1;
-          monthsMap[monthName].total += 1;
-        } else if (audit.status === "Rejected") {
-          monthsMap[monthName].rejected += 1;
-          monthsMap[monthName].total += 1;
-        }
+    if (monthsMap[monthName]) {
+      if (audit.status === "Passed") {
+        monthsMap[monthName].approved += 1;
+        monthsMap[monthName].total += 1;
+      } else if (audit.status === "Rejected") {
+        monthsMap[monthName].rejected += 1;
+        monthsMap[monthName].total += 1;
       }
-    });
+    }
+  });
 
   return Object.values(monthsMap);
 };
@@ -142,29 +85,18 @@ export default function HotelAdminReview() {
   const [showAiDetails, setShowAiDetails] = useState({});
   const [hoveredBar, setHoveredBar] = useState(null);
 
-  // Single clock for the whole component. Refreshed on an interval so
-  // due-date logic stays current without reading the clock during render.
-  const [now, setNow] = useState(MOUNT_TIME);
-
   // Sub-filters for tabs
   const [pendingFilter, setPendingFilter] = useState("All");
   const [flaggedFilter, setFlaggedFilter] = useState("All");
   const [spotCheckFilter, setSpotCheckFilter] = useState("All");
   const [certifiedTierFilter, setCertifiedTierFilter] = useState("All");
 
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
-    return () => clearInterval(id);
-  }, []);
-
   // Real-time listener: updates automatically when hotel uploads evidence or requests audits
   useEffect(() => {
     const colRef = collection(db, "hotel_applications");
-    const unsubscribe = onSnapshot(
-      colRef,
-      async (snapshot) => {
-        const docsData = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setApplications(docsData);
+    const unsubscribe = onSnapshot(colRef, async (snapshot) => {
+      const docsData = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setApplications(docsData);
 
       // Fetch subcollection audits for each hotel to include spot-checks/renewals in chart
       const auditsMap = {};
@@ -186,10 +118,7 @@ export default function HotelAdminReview() {
     return () => unsubscribe();
   }, []);
 
-  const chartData = useMemo(
-    () => getDynamicChartData(applications, auditLogsMap, now),
-    [applications, auditLogsMap, now]
-  );
+  const chartData = getDynamicChartData(applications, auditLogsMap);
 
   const toggleAiDetails = (id) => {
     setShowAiDetails((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -241,11 +170,6 @@ export default function HotelAdminReview() {
   // General Status Updater (Handles both initial review and tier upgrades correctly)
   const handleStatus = async (appId, newStatus) => {
     try {
-<<<<<<< HEAD
-      const updatePayload = newStatus === "Approved"
-        ? { status: "Approved", certificationTier: "Bronze" }
-        : { status: newStatus };
-=======
       const targetApp = applications.find(a => a.id === appId);
       const upgradeReq = targetApp?.upgradeRequest;
       const currentTier = targetApp?.certificationTier || "Bronze";
@@ -268,7 +192,6 @@ export default function HotelAdminReview() {
           upgradeRequest: null,
         };
       }
->>>>>>> main
 
       await updateHotelStatus(appId, updatePayload);
 
@@ -294,25 +217,23 @@ export default function HotelAdminReview() {
     const currentStrikes = (hotel.flagStrikesCount || 0) + 1;
     const isSuspended = currentStrikes >= 3;
 
-    let updatePayload;
+    let updatePayload = {};
 
     if (isSuspended) {
-      const sixMonthsDate = monthsFromNow(6);
+      const sixMonthsDate = new Date();
+      sixMonthsDate.setMonth(sixMonthsDate.getMonth() + 6);
 
       updatePayload = {
         status: "Suspended",
         certificationTier: null,
         flagStrikesCount: 3,
         suspendedUntil: sixMonthsDate.toISOString(),
-        suspensionReason:
-          "Exceeded 3 rejected audit submissions. Certification revoked for 6 months.",
+        suspensionReason: "Exceeded 3 rejected audit submissions. Certification revoked for 6 months.",
         "spotCheck.status": "Failed",
         "fraudFlags.hasSuspicion": false, 
         upgradeRequest: null,
       };
-      alert(
-        `STRIKE 3/3: ${hotel.hotelName} is SUSPENDED for 6 months. Tier has been revoked.`
-      );
+      alert(`STRIKE 3/3: ${hotel.hotelName} is SUSPENDED for 6 months. Tier has been revoked.`);
     } else {
       updatePayload = {
         status: "Rejected",
@@ -337,7 +258,7 @@ export default function HotelAdminReview() {
       for (const auditDoc of pendingAudits.docs) {
         await updateDoc(doc(db, "hotel_applications", hotel.id, "audits", auditDoc.id), {
           status: "Rejected",
-          reviewedAt: isoNow(),
+          reviewedAt: new Date().toISOString(),
         });
       }
     } catch (err) {
@@ -353,24 +274,20 @@ export default function HotelAdminReview() {
         status: "Approved",
         certificationTier: hotel.certificationTier || "Bronze",
         "spotCheck.status": "Passed",
-        "spotCheck.resolvedAt": isoNow(),
+        "spotCheck.resolvedAt": new Date().toISOString(),
       };
       await updateHotelStatus(hotel.id, updatePayload);
 
       const auditsRef = collection(db, "hotel_applications", hotel.id, "audits");
-      const pendingAudits = await getDocs(
-        query(auditsRef, where("status", "==", "Submitted"))
-      );
+      const pendingAudits = await getDocs(query(auditsRef, where("status", "==", "Submitted")));
       for (const auditDoc of pendingAudits.docs) {
         await updateDoc(doc(db, "hotel_applications", hotel.id, "audits", auditDoc.id), {
           status: "Passed",
-          reviewedAt: isoNow(),
+          reviewedAt: new Date().toISOString(),
         });
       }
 
-      alert(
-        `Spot-check verified! ${hotel.hotelName} remains certified ${updatePayload.certificationTier}.`
-      );
+      alert(`Spot-check verified! ${hotel.hotelName} remains certified ${updatePayload.certificationTier}.`);
     } catch (err) {
       console.error(err);
       alert("Error approving spot-check");
@@ -379,17 +296,30 @@ export default function HotelAdminReview() {
 
   // Spot-Check trigger
   const handleTriggerSpotCheck = async (hotel) => {
-    const chosenDoc = pickSpotCheckDoc();
-    const { requested, due } = buildSpotCheckSchedule(7);
+    const docOptions = [
+      {
+        title: "Electricity Bill",
+        instruction: "Upload your latest official electricity statement and matching photograph of the main meter reading.",
+      },
+      {
+        title: "Water Utility Bill",
+        instruction: "Upload your state water utility statement along with a clear photograph of your primary water meter dial.",
+      },
+    ];
+
+    const chosenDoc = docOptions[Math.floor(Math.random() * docOptions.length)];
+    const now = new Date();
+    const dueDate = new Date();
+    dueDate.setDate(now.getDate() + 7);
 
     const updatePayload = {
       spotCheck: {
         status: "Pending",
         title: chosenDoc.title,
         instruction: chosenDoc.instruction,
-        requestedAt: dateLabel(requested),
-        deadline: dateLabel(due),
-        dueDateTimestamp: due.getTime(),
+        requestedAt: now.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+        deadline: dueDate.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+        dueDateTimestamp: dueDate.getTime(),
         submittedFileName: null,
         submittedFileUrl: null,
       },
@@ -397,9 +327,7 @@ export default function HotelAdminReview() {
 
     try {
       await updateHotelStatus(hotel.id, updatePayload);
-      alert(
-        `Spot-Check Assigned to ${hotel.hotelName}!\nItem: ${chosenDoc.title}\nDue: ${updatePayload.spotCheck.deadline}`
-      );
+      alert(`Spot-Check Assigned to ${hotel.hotelName}!\nItem: ${chosenDoc.title}\nDue: ${updatePayload.spotCheck.deadline}`);
     } catch (err) {
       console.error(err);
       alert("Failed to initiate spot-check.");
@@ -409,10 +337,10 @@ export default function HotelAdminReview() {
   // Manual Nudge/Reminder Button
   const handleSendReminder = async (hotel) => {
     try {
-      const nowStr = timeLabel();
+      const nowStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       await updateHotelStatus(hotel.id, {
         adminReminder: `Urgent: Verification evidence pending. Sent by GreenTrip Admin at ${nowStr}.`,
-        reminderTimestamp: nowMs(),
+        reminderTimestamp: Date.now(),
       });
       alert(`Urgent reminder ping delivered to ${hotel.hotelName}'s dashboard!`);
     } catch (err) {
@@ -445,10 +373,12 @@ export default function HotelAdminReview() {
   const spotcheckApps = applications.filter((a) => {
     const sc = a.spotCheck;
     if (!sc || sc.status === "None" || sc.status === "Passed") return false;
+    const now = Date.now();
+    const isNearDue = sc.dueDateTimestamp && (sc.dueDateTimestamp - now < 2 * 24 * 3600 * 1000);
 
     if (spotCheckFilter === "Waiting Upload") return sc.status === "Pending";
     if (spotCheckFilter === "Uploaded") return sc.status === "Submitted";
-    if (spotCheckFilter === "Near Due") return isNearDue(sc) && sc.status === "Pending";
+    if (spotCheckFilter === "Near Due") return isNearDue && sc.status === "Pending";
     return true;
   });
 
@@ -458,24 +388,16 @@ export default function HotelAdminReview() {
   const spotCheckBadgeCount = applications.filter(a => a.spotCheck?.status === "Submitted").length;
 
   const certifiedApps = applications.filter((a) => {
-    if (a.status !== "Approved" && (!a.certificationTier || a.status === "Suspended"))
-      return false;
+    if (a.status !== "Approved" && (!a.certificationTier || a.status === "Suspended")) return false;
     if (certifiedTierFilter === "All") return true;
     return getHotelTier(a) === certifiedTierFilter;
   });
 
   const tierCounts = {
-    Platinum: applications.filter(
-      (a) => a.status !== "Suspended" && getHotelTier(a) === "Platinum"
-    ).length,
-    Gold: applications.filter((a) => a.status !== "Suspended" && getHotelTier(a) === "Gold")
-      .length,
-    Silver: applications.filter(
-      (a) => a.status !== "Suspended" && getHotelTier(a) === "Silver"
-    ).length,
-    Bronze: applications.filter(
-      (a) => a.status !== "Suspended" && getHotelTier(a) === "Bronze"
-    ).length,
+    Platinum: applications.filter((a) => a.status !== "Suspended" && getHotelTier(a) === "Platinum").length,
+    Gold: applications.filter((a) => a.status !== "Suspended" && getHotelTier(a) === "Gold").length,
+    Silver: applications.filter((a) => a.status !== "Suspended" && getHotelTier(a) === "Silver").length,
+    Bronze: applications.filter((a) => a.status !== "Suspended" && getHotelTier(a) === "Bronze").length,
   };
 
   const filterBySearch = (list) => {
@@ -492,12 +414,7 @@ export default function HotelAdminReview() {
   // Helper to collect all attached document URLs from a hotel application
   const getAllAppDocuments = (app) => {
     const docs = [];
-<<<<<<< HEAD
-
-    // Check 3-month electricity records
-=======
     
->>>>>>> main
     if (app.electricityBillM1Url) docs.push({ name: "Electricity Bill (Month 1)", url: app.electricityBillM1Url });
     if (app.electricityBillM2Url) docs.push({ name: "Electricity Bill (Month 2)", url: app.electricityBillM2Url });
     if (app.electricityBillM3Url) docs.push({ name: "Electricity Bill (Month 3)", url: app.electricityBillM3Url });
@@ -549,12 +466,8 @@ export default function HotelAdminReview() {
       {/* Monthly Review Activity Chart */}
       <div style={styles.chartCard}>
         <div style={{ marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 800, color: "#111827", margin: 0 }}>
-            Monthly Review Activity
-          </h3>
-          <p style={{ fontSize: 12.5, color: "#6b7280", margin: "3px 0 0 0" }}>
-            Approvals, rejections, and flagged cases over 6 months
-          </p>
+          <h3 style={{ fontSize: 16, fontWeight: 800, color: "#111827", margin: 0 }}>Monthly Review Activity</h3>
+          <p style={{ fontSize: 12.5, color: "#6b7280", margin: "3px 0 0 0" }}>Approvals, rejections, and flagged cases over 6 months</p>
         </div>
 
         <div style={styles.chartArea}>
@@ -579,8 +492,8 @@ export default function HotelAdminReview() {
                 const barHeightPercent = Math.min((item.total / 32) * 100, 100);
 
                 return (
-                  <div
-                    key={item.month}
+                  <div 
+                    key={item.month} 
                     style={styles.barColumnWrapper}
                     onMouseEnter={() => setHoveredBar(idx)}
                     onMouseLeave={() => setHoveredBar(null)}
@@ -589,49 +502,20 @@ export default function HotelAdminReview() {
 
                     {isHovered && (
                       <div style={styles.tooltipCard}>
-                        <div
-                          style={{
-                            fontSize: 14,
-                            fontWeight: 700,
-                            color: "#111827",
-                            marginBottom: 6,
-                          }}
-                        >
-                          {item.month}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 12.5,
-                            fontWeight: 600,
-                            color: "#22c55e",
-                            marginBottom: 3,
-                          }}
-                        >
-                          Approved : {item.approved}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 12.5,
-                            fontWeight: 600,
-                            color: "#ef4444",
-                            marginBottom: 3,
-                          }}
-                        >
-                          Rejected : {item.rejected}
-                        </div>
-                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#f59e0b" }}>
-                          Flagged : {item.flagged}
-                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#111827", marginBottom: 6 }}>{item.month}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#22c55e", marginBottom: 3 }}>Approved : {item.approved}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#ef4444", marginBottom: 3 }}>Rejected : {item.rejected}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#f59e0b" }}>Flagged : {item.flagged}</div>
                       </div>
                     )}
 
                     <div style={styles.barTrack}>
-                      <div
-                        style={{
-                          ...styles.barFill,
+                      <div 
+                        style={{ 
+                          ...styles.barFill, 
                           height: `${barHeightPercent}%`,
-                          backgroundColor: isHovered ? "#d97706" : "#f59e0b",
-                        }}
+                          backgroundColor: isHovered ? "#d97706" : "#f59e0b"
+                        }} 
                       />
                     </div>
                     <span style={styles.xAxisLabel}>{item.month}</span>
@@ -648,40 +532,28 @@ export default function HotelAdminReview() {
         <button
           type="button"
           onClick={() => setActiveSubTab("pending")}
-          style={{
-            ...styles.subtabBtn,
-            ...(activeSubTab === "pending" ? styles.subtabBtnActive : {}),
-          }}
+          style={{ ...styles.subtabBtn, ...(activeSubTab === "pending" ? styles.subtabBtnActive : {}) }}
         >
           Pending {pendingCount > 0 && <span style={styles.redBadge}>{pendingCount}</span>}
         </button>
         <button
           type="button"
           onClick={() => setActiveSubTab("flagged")}
-          style={{
-            ...styles.subtabBtn,
-            ...(activeSubTab === "flagged" ? styles.subtabBtnActive : {}),
-          }}
+          style={{ ...styles.subtabBtn, ...(activeSubTab === "flagged" ? styles.subtabBtnActive : {}) }}
         >
           Flagged & Strikes {flaggedCount > 0 && <span style={styles.redBadge}>{flaggedCount}</span>}
         </button>
         <button
           type="button"
           onClick={() => setActiveSubTab("spotcheck")}
-          style={{
-            ...styles.subtabBtn,
-            ...(activeSubTab === "spotcheck" ? styles.subtabBtnActive : {}),
-          }}
+          style={{ ...styles.subtabBtn, ...(activeSubTab === "spotcheck" ? styles.subtabBtnActive : {}) }}
         >
           Spot-Checks & Reminders {spotCheckBadgeCount > 0 && <span style={styles.redBadge}>{spotCheckBadgeCount}</span>}
         </button>
         <button
           type="button"
           onClick={() => setActiveSubTab("certified")}
-          style={{
-            ...styles.subtabBtn,
-            ...(activeSubTab === "certified" ? styles.subtabBtnActive : {}),
-          }}
+          style={{ ...styles.subtabBtn, ...(activeSubTab === "certified" ? styles.subtabBtnActive : {}) }}
         >
           Certified Directory
         </button>
@@ -701,22 +573,14 @@ export default function HotelAdminReview() {
         </div>
 
         {activeSubTab === "pending" && (
-          <select
-            value={pendingFilter}
-            onChange={(e) => setPendingFilter(e.target.value)}
-            style={styles.selectFilter}
-          >
+          <select value={pendingFilter} onChange={(e) => setPendingFilter(e.target.value)} style={styles.selectFilter}>
             <option value="All">All Inflow</option>
             <option value="Pending">Only Pending</option>
           </select>
         )}
 
         {activeSubTab === "flagged" && (
-          <select
-            value={flaggedFilter}
-            onChange={(e) => setFlaggedFilter(e.target.value)}
-            style={styles.selectFilter}
-          >
+          <select value={flaggedFilter} onChange={(e) => setFlaggedFilter(e.target.value)} style={styles.selectFilter}>
             <option value="All">All Cases</option>
             <option value="Active">Active Discrepancies</option>
             <option value="Suspended">6-Month Suspended</option>
@@ -724,11 +588,7 @@ export default function HotelAdminReview() {
         )}
 
         {activeSubTab === "spotcheck" && (
-          <select
-            value={spotCheckFilter}
-            onChange={(e) => setSpotCheckFilter(e.target.value)}
-            style={styles.selectFilter}
-          >
+          <select value={spotCheckFilter} onChange={(e) => setSpotCheckFilter(e.target.value)} style={styles.selectFilter}>
             <option value="All">All Audits</option>
             <option value="Waiting Upload">Awaiting Hotel File</option>
             <option value="Uploaded">Hotel Uploaded (Review Ready)</option>
@@ -737,11 +597,7 @@ export default function HotelAdminReview() {
         )}
 
         {activeSubTab === "certified" && (
-          <select
-            value={certifiedTierFilter}
-            onChange={(e) => setCertifiedTierFilter(e.target.value)}
-            style={styles.selectFilter}
-          >
+          <select value={certifiedTierFilter} onChange={(e) => setCertifiedTierFilter(e.target.value)} style={styles.selectFilter}>
             <option value="All">All Certified Tiers</option>
             <option value="Bronze">Bronze Tier</option>
             <option value="Silver">Silver Tier</option>
@@ -804,27 +660,23 @@ export default function HotelAdminReview() {
                       </div>
                     )}
 
-                  <div style={styles.metricsGrid3}>
-                    <div style={styles.metricBox}>
-                      <Zap size={24} color="#eab308" fill="#fef08a" />
-                      <div style={styles.metricNum}>
-                        {app.electricityUsage?.toLocaleString() || "0"}
+                    <div style={styles.metricsGrid3}>
+                      <div style={styles.metricBox}>
+                        <Zap size={24} color="#eab308" fill="#fef08a" />
+                        <div style={styles.metricNum}>{app.electricityUsage?.toLocaleString() || "0"}</div>
+                        <div style={styles.metricUnit}>kWh/mo</div>
                       </div>
-                      <div style={styles.metricUnit}>kWh/mo</div>
-                    </div>
-                    <div style={styles.metricBox}>
-                      <Droplets size={24} color="#38bdf8" fill="#bae6fd" />
-                      <div style={styles.metricNum}>
-                        {app.waterUsage?.toLocaleString() || "0"}
+                      <div style={styles.metricBox}>
+                        <Droplets size={24} color="#38bdf8" fill="#bae6fd" />
+                        <div style={styles.metricNum}>{app.waterUsage?.toLocaleString() || "0"}</div>
+                        <div style={styles.metricUnit}>L/mo</div>
                       </div>
-                      <div style={styles.metricUnit}>L/mo</div>
+                      <div style={styles.metricBox}>
+                        <FileText size={24} color="#4b5563" />
+                        <div style={styles.metricNum}>{app.rooms || "1"}</div>
+                        <div style={styles.metricUnit}>rooms</div>
+                      </div>
                     </div>
-                    <div style={styles.metricBox}>
-                      <FileText size={24} color="#4b5563" />
-                      <div style={styles.metricNum}>{app.rooms || "1"}</div>
-                      <div style={styles.metricUnit}>rooms</div>
-                    </div>
-                  </div>
 
                     {!upgradeReq && (
                       <div style={styles.documentPreviewRow}>
@@ -857,23 +709,18 @@ export default function HotelAdminReview() {
           )}
 
           {/* TAB 2: FLAGGED */}
-          {activeSubTab === "flagged" &&
-            (filterBySearch(flaggedApps).length === 0 ? (
+          {activeSubTab === "flagged" && (
+            filterBySearch(flaggedApps).length === 0 ? (
               <div style={styles.emptyBox}>No flagged or suspended properties.</div>
             ) : (
               filterBySearch(flaggedApps).map((app) => {
                 const isOpen = showAiDetails[app.id] ?? true;
                 const strikes = app.flagStrikesCount || 0;
                 const isSuspended = app.status === "Suspended";
+                const allDocs = getAllAppDocuments(app);
 
                 return (
-                  <div
-                    key={app.id}
-                    style={{
-                      ...styles.flaggedCard,
-                      borderColor: isSuspended ? "#7f1d1d" : "#ef4444",
-                    }}
-                  >
+                  <div key={app.id} style={{ ...styles.flaggedCard, borderColor: isSuspended ? "#7f1d1d" : "#ef4444" }}>
                     <div style={styles.cardHeaderRow}>
                       <div>
                         <h3 style={styles.cardHotelName}>{app.hotelName}</h3>
@@ -891,85 +738,58 @@ export default function HotelAdminReview() {
                     <div style={styles.mismatchAlert}>
                       <ShieldAlert size={18} color={isSuspended ? "#7f1d1d" : "#dc2626"} />
                       <span style={{ fontWeight: 700, fontSize: 13.5 }}>
-<<<<<<< HEAD
-                        {isSuspended
-                          ? `Revoked until: ${new Date(
-                              app.suspendedUntil
-                            ).toLocaleDateString()}`
-                          : "Audit Discrepancy / Document Suspicion"}
-=======
                         {isSuspended 
                           ? `Revoked until: ${new Date(app.suspendedUntil).toLocaleDateString()}` 
                           : "AI Audit Discrepancy / Document Suspicion"}
->>>>>>> main
                       </span>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => toggleAiDetails(app.id)}
-                      style={styles.toggleAiBtn}
-                    >
+                    <button type="button" onClick={() => toggleAiDetails(app.id)} style={styles.toggleAiBtn}>
                       {isOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-                      <span>Diagnostic &amp; Fraud Log</span>
+                      <span>Diagnostic & Fraud Log</span>
                     </button>
 
                     {isOpen && (
                       <div style={styles.aiAlertBox}>
-                        {app.suspensionReason ||
-                          app.fraudFlags?.reason ||
-                          "Irregular usage ratio or duplicate receipt detected."}
+                        {app.suspensionReason || app.fraudFlags?.reason || "Irregular usage ratio or duplicate receipt detected."}
                       </div>
                     )}
 
                     <div style={styles.documentPreviewRow}>
-                      {app.electricityBillUrl && (
-                        <button
-                          type="button"
-                          onClick={() => openDocumentPreview(app.electricityBillUrl)}
-                          style={styles.previewBtn}
-                        >
+                      {allDocs.map((docItem, idx) => (
+                        <button key={idx} type="button" onClick={() => openDocumentPreview(docItem.url)} style={styles.previewBtn}>
                           <FileText size={14} color="#dc2626" />
-                          <span>Inspect Declared Document</span>
+                          <span>Inspect {docItem.name}</span>
                           <ExternalLink size={12} />
                         </button>
-                      )}
+                      ))}
                     </div>
 
                     {!isSuspended && (
                       <div style={styles.actionRow}>
-                        <button
-                          type="button"
-                          onClick={() => handleRejectEvidenceWithStrike(app)}
-                          style={styles.redOutlineBtn}
-                        >
-                          Reject &amp; Add Strike ({strikes + 1}/3)
+                        <button type="button" onClick={() => handleRejectEvidenceWithStrike(app)} style={styles.redOutlineBtn}>
+                          Reject & Add Strike ({strikes + 1}/3)
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleStatus(app.id, "Approved")}
-                          style={styles.greenBtn}
-                        >
-                          Pardon &amp; Grant Bronze
+                        <button type="button" onClick={() => handleStatus(app.id, "Approved")} style={styles.greenBtn}>
+                          Pardon & Grant Bronze
                         </button>
                       </div>
                     )}
                   </div>
                 );
               })
-            ))}
+            )
+          )}
 
           {/* TAB 3: SPOT-CHECKS & REMINDERS */}
-          {activeSubTab === "spotcheck" &&
-            (filterBySearch(spotcheckApps).length === 0 ? (
-              <div style={styles.emptyBox}>
-                No active spot-check audits matching this filter.
-              </div>
+          {activeSubTab === "spotcheck" && (
+            filterBySearch(spotcheckApps).length === 0 ? (
+              <div style={styles.emptyBox}>No active spot-check audits matching this filter.</div>
             ) : (
               filterBySearch(spotcheckApps).map((app) => {
                 const sc = app.spotCheck;
                 const isSubmitted = sc?.status === "Submitted";
-                const nearDue = isNearDue(sc);
+                const isNearDue = sc?.dueDateTimestamp && (sc.dueDateTimestamp - Date.now() < 2 * 24 * 3600 * 1000);
 
                 return (
                   <div key={app.id} style={styles.spotCheckCard}>
@@ -981,36 +801,23 @@ export default function HotelAdminReview() {
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        {nearDue && !isSubmitted && (
+                        {isNearDue && !isSubmitted && (
                           <span style={styles.urgentPill}>Due Soon</span>
                         )}
-                        <span
-                          style={
-                            isSubmitted
-                              ? styles.submittedStatusPill
-                              : styles.pendingStatusPill
-                          }
-                        >
-                          {isSubmitted
-                            ? "Evidence Uploaded (Action Required)"
-                            : "Awaiting Hotel"}
+                        <span style={isSubmitted ? styles.submittedStatusPill : styles.pendingStatusPill}>
+                          {isSubmitted ? "Evidence Uploaded (Action Required)" : "Awaiting Hotel"}
                         </span>
                       </div>
                     </div>
 
                     <div style={{ marginTop: 10, fontSize: 13, color: "#374151" }}>
-                      Requirement: <strong>{sc?.title}</strong>
-                      <br />
+                      Requirement: <strong>{sc?.title}</strong><br />
                       Deadline: <strong>{sc?.deadline}</strong>
                     </div>
 
                     {isSubmitted && sc?.submittedFileUrl && (
                       <div style={{ marginTop: 10 }}>
-                        <button
-                          type="button"
-                          onClick={() => openDocumentPreview(sc.submittedFileUrl)}
-                          style={styles.previewBtn}
-                        >
+                        <button type="button" onClick={() => openDocumentPreview(sc.submittedFileUrl)} style={styles.previewBtn}>
                           <FileText size={14} color="#15803d" />
                           <span>Inspect Uploaded Meter Proof ({sc.submittedFileName})</span>
                           <ExternalLink size={12} />
@@ -1018,21 +825,10 @@ export default function HotelAdminReview() {
                       </div>
                     )}
 
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        marginTop: 14,
-                      }}
-                    >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>
                       <div>
                         {!isSubmitted && (
-                          <button
-                            type="button"
-                            onClick={() => handleSendReminder(app)}
-                            style={styles.reminderBtn}
-                          >
+                          <button type="button" onClick={() => handleSendReminder(app)} style={styles.reminderBtn}>
                             <BellRing size={14} />
                             <span>Send Urgent Reminder Ping</span>
                           </button>
@@ -1042,19 +838,11 @@ export default function HotelAdminReview() {
                       <div style={{ display: "flex", gap: 10 }}>
                         {isSubmitted && (
                           <>
-                            <button
-                              type="button"
-                              onClick={() => handleRejectEvidenceWithStrike(app)}
-                              style={styles.redOutlineBtn}
-                            >
+                            <button type="button" onClick={() => handleRejectEvidenceWithStrike(app)} style={styles.redOutlineBtn}>
                               Reject Evidence
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => handlePassSpotCheck(app)}
-                              style={styles.greenBtn}
-                            >
-                              Verify &amp; Pass Audit
+                            <button type="button" onClick={() => handlePassSpotCheck(app)} style={styles.greenBtn}>
+                              Verify & Pass Audit
                             </button>
                           </>
                         )}
@@ -1063,7 +851,8 @@ export default function HotelAdminReview() {
                   </div>
                 );
               })
-            ))}
+            )
+          )}
 
           {/* TAB 4: CERTIFIED DIRECTORY */}
           {activeSubTab === "certified" && (
@@ -1074,9 +863,7 @@ export default function HotelAdminReview() {
                   <div style={styles.tierBlockName}>Platinum</div>
                 </div>
                 <div style={{ ...styles.tierBlock, background: "#fef08a" }}>
-                  <div style={{ ...styles.tierBlockNum, color: "#854d0e" }}>
-                    {tierCounts.Gold}
-                  </div>
+                  <div style={{ ...styles.tierBlockNum, color: "#854d0e" }}>{tierCounts.Gold}</div>
                   <div style={styles.tierBlockName}>Gold</div>
                 </div>
                 <div style={{ ...styles.tierBlock, background: "#e5e7eb" }}>
@@ -1084,17 +871,13 @@ export default function HotelAdminReview() {
                   <div style={styles.tierBlockName}>Silver</div>
                 </div>
                 <div style={{ ...styles.tierBlock, background: "#fed7aa" }}>
-                  <div style={{ ...styles.tierBlockNum, color: "#9a3412" }}>
-                    {tierCounts.Bronze}
-                  </div>
+                  <div style={{ ...styles.tierBlockNum, color: "#9a3412" }}>{tierCounts.Bronze}</div>
                   <div style={styles.tierBlockName}>Bronze</div>
                 </div>
               </div>
 
               {filterBySearch(certifiedApps).length === 0 ? (
-                <div style={styles.emptyBox}>
-                  No certified properties match the selected filter.
-                </div>
+                <div style={styles.emptyBox}>No certified properties match the selected filter.</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   {filterBySearch(certifiedApps).map((app) => (
@@ -1103,30 +886,19 @@ export default function HotelAdminReview() {
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <Building size={16} color="#4b5563" />
                           <span style={styles.cardHotelName}>{app.hotelName}</span>
-                          <span
-                            style={
-                              getHotelTier(app) === "Platinum"
-                                ? styles.platinumPill
-                                : getHotelTier(app) === "Gold"
-                                ? styles.goldPill
-                                : getHotelTier(app) === "Silver"
-                                ? styles.silverPill
-                                : styles.bronzePill
-                            }
-                          >
+                          <span style={
+                            getHotelTier(app) === "Platinum" ? styles.platinumPill :
+                            getHotelTier(app) === "Gold" ? styles.goldPill :
+                            getHotelTier(app) === "Silver" ? styles.silverPill :
+                            styles.bronzePill
+                          }>
                             {getHotelTier(app)}
                           </span>
                         </div>
-                        <div style={styles.certifiedMeta}>
-                          {app.address ? `${app.address}, ${app.state}` : "Malaysia"}
-                        </div>
+                        <div style={styles.certifiedMeta}>{app.address ? `${app.address}, ${app.state}` : "Malaysia"}</div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => handleTriggerSpotCheck(app)}
-                        style={styles.spotCheckActionBtn}
-                      >
+                      <button type="button" onClick={() => handleTriggerSpotCheck(app)} style={styles.spotCheckActionBtn}>
                         <Send size={14} /> Trigger Random Spot-Check
                       </button>
                     </div>

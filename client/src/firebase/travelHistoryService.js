@@ -182,12 +182,25 @@ function convertTrip(docSnapshot) {
       data.name ||
       "Untitled Trip",
 
+    // Display the planned trip period as START DATE - END DATE.
+    // completedAt is kept separately as the actual completion timestamp.
     dateRange:
-      `${formatDate(startDate)} - ${formatDate(endDate)}`,
+      startDate || endDate
+        ? `${formatDate(startDate)} - ${formatDate(endDate)}`
+        : formatDate(
+            data.completedAt ||
+            data.completed_at ||
+            null
+          ),
 
     startDate,
 
     endDate,
+
+    completedAt:
+      data.completedAt ||
+      data.completed_at ||
+      null,
 
     location:
       data.location ||
@@ -278,6 +291,54 @@ export async function getCurrentUser() {
 // users/{uid}/travelHistory/{itineraryId}
 // ============================================================
 
+async function enrichTripDatesFromItinerary(trip) {
+  if (trip.startDate || trip.endDate || !trip.id) {
+    return trip;
+  }
+
+  try {
+    const itinerarySnapshot = await getDoc(
+      doc(db, "itineraries", trip.id)
+    );
+
+    if (!itinerarySnapshot.exists()) {
+      return trip;
+    }
+
+    const itinerary = itinerarySnapshot.data();
+
+    const startDate =
+      itinerary.startDate ||
+      itinerary.start_date ||
+      null;
+
+    const endDate =
+      itinerary.endDate ||
+      itinerary.end_date ||
+      null;
+
+    if (!startDate && !endDate) {
+      return trip;
+    }
+
+    return {
+      ...trip,
+      startDate,
+      endDate,
+      dateRange:
+        `${formatDate(startDate)} - ${formatDate(endDate)}`,
+    };
+  } catch (error) {
+    // Travel History should still load if an older itinerary cannot be read.
+    console.warn(
+      "Unable to load itinerary dates for travel history:",
+      trip.id,
+      error
+    );
+    return trip;
+  }
+}
+
 export async function getTravelHistory({
   status = "All Trips",
   sortBy = "Newest First",
@@ -325,6 +386,15 @@ export async function getTravelHistory({
     snapshot.docs.map(
       convertTrip
     );
+
+  // Older Travel History records may not contain startDate/endDate.
+  // Since the Travel History document ID is the itinerary ID, use the
+  // linked itinerary as a fallback so the UI can show START - END.
+  trips = await Promise.all(
+    trips.map(
+      enrichTripDatesFromItinerary
+    )
+  );
 
   // ==========================================================
   // STATUS FILTER
@@ -476,10 +546,16 @@ export async function getTravelHistorySummary() {
       summaryQuery
     );
 
-  const trips =
+  let trips =
     snapshot.docs.map(
       convertTrip
     );
+
+  trips = await Promise.all(
+    trips.map(
+      enrichTripDatesFromItinerary
+    )
+  );
 
   const completedTrips =
     trips.filter(

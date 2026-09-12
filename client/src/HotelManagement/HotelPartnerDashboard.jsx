@@ -1,55 +1,37 @@
-import { useEffect, useState } from "react";
-import {
-  Leaf,
-  CheckCircle2,
-  Zap,
-  Droplets,
-  Award,
-  FileText,
-  ChevronLeft,
-  Bell,
-  Upload,
-  Clock,
-  AlertTriangle,
-  Calendar,
-  ShieldAlert,
+import React, { useEffect, useState } from "react";
+import { 
+  Leaf, 
+  CheckCircle2, 
+  Zap, 
+  Droplets, 
+  Award, 
+  FileText, 
+  ChevronLeft, 
+  Bell, 
+  Upload, 
+  Clock, 
+  AlertTriangle, 
+  Calendar, 
+  ShieldAlert, 
   BellRing,
   RefreshCw,
   X,
   ExternalLink,
   Lightbulb,
+  ArrowUpRight,
   TrendingUp,
   Filter
 } from "lucide-react";
 import { auth, db } from "../firebase/config";
 import { listenToHotelApplication, uploadSpotCheckEvidence } from "../firebase/hotelService";
-import { doc, getDoc, collection, onSnapshot, query, orderBy, updateDoc } from "firebase/firestore";
-
-/* ------------------------------------------------------------------
-   Clock helpers live at module scope. Expiry and renewal windows are
-   day-scale, so the clock only needs to tick hourly, but it must never
-   be read during render or the renewal banner can flip on an unrelated
-   re-render.
-   ------------------------------------------------------------------ */
-
-const MOUNT_TIME = Date.now();
-const CLOCK_TICK_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-const isoNow = () => new Date().toISOString();
+import { doc, getDoc, collection, onSnapshot, query, orderBy, updateDoc, setDoc, addDoc, serverTimestamp } from "firebase/firestore";
 
 export default function HotelPartnerDashboard({ onNavigate }) {
-
   const [tab, setTab] = useState("pending");
   const [hotelData, setHotelData] = useState(null);
   const [userName, setUserName] = useState("Hotel Partner");
-  // Seeded from the auth state at mount, so the effect below never has to
-  // call setLoading(false) synchronously for the signed-out case.
-  const [loading, setLoading] = useState(() => Boolean(auth.currentUser));
+  const [loading, setLoading] = useState(true);
   const [dismissedNotice, setDismissedNotice] = useState(false);
-
-  // Single clock for expiry and renewal maths
-  const [now, setNow] = useState(MOUNT_TIME);
 
   // Subcollection audit history
   const [auditHistory, setAuditHistory] = useState([]);
@@ -75,13 +57,11 @@ export default function HotelPartnerDashboard({ onNavigate }) {
   const [submittingUpgrade, setSubmittingUpgrade] = useState(false);
 
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
-    return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
     const user = auth.currentUser;
-    if (!user) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
 
     const fallbackTag = `Hotel_${(user.uid.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0) % 9000) + 1000}`;
 
@@ -126,17 +106,8 @@ export default function HotelPartnerDashboard({ onNavigate }) {
   const isRejected = hotelData?.status === "Rejected";
   const isApproved = hotelData?.status === "Approved" || (isFlagged && !isSuspended && !!hotelData?.certificationTier);
 
-<<<<<<< HEAD
-  // Retain Bronze tier during audits/flags unless explicitly suspended
-  const currentTier = !isSuspended && hotelData?.certificationTier
-    ? hotelData.certificationTier
-    : isApproved
-    ? "Bronze"
-    : "None";
-=======
   // Check if initial application is strictly Rejected by Admin action
   const isInitialApplicationRejected = isRejected && !hotelData?.certificationTier;
->>>>>>> main
 
   // Dynamic Savings & Score Calculation based on fee reduction
   const baselineFee = Number(hotelData?.electricityBillFee || 4500.00);
@@ -183,9 +154,9 @@ export default function HotelPartnerDashboard({ onNavigate }) {
     setDismissedNotice(true);
     if (auth.currentUser) {
       try {
-        await updateDoc(doc(db, "hotel_applications", auth.currentUser.uid), {
+        await setDoc(doc(db, "hotel_applications", auth.currentUser.uid), {
           adminReminder: null
-        });
+        }, { merge: true });
       } catch (e) {
         console.error("Could not clear reminder:", e);
       }
@@ -347,12 +318,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
           <span style={styles.brandTitle}>GreenTrip Malaysia</span>
         </div>
 
-<<<<<<< HEAD
-        {/* CLICKABLE PROFILE BADGE WITH DYNAMIC HOTEL NAME */}
-        <div
-=======
         <div 
->>>>>>> main
           style={styles.profileBadge}
           onClick={() => onNavigate?.("/hotel/profile")}
           title="Manage Hotel Profile"
@@ -368,9 +334,9 @@ export default function HotelPartnerDashboard({ onNavigate }) {
       <main style={styles.main}>
         {/* Top Back Navigation Bar */}
         <div style={styles.topNavRow}>
-          <button
-            type="button"
-            onClick={() => onNavigate?.("/certification")}
+          <button 
+            type="button" 
+            onClick={() => onNavigate?.("/certification")} 
             style={styles.topBackBtn}
           >
             <ChevronLeft size={17} />
@@ -439,8 +405,8 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                 <span style={{ color: "#78350f" }}>{hotelData.adminReminder}</span>
               </div>
             </div>
-            <button
-              type="button"
+            <button 
+              type="button" 
               onClick={handleDismissNotice}
               style={styles.closeBannerBtn}
               title="Close notification"
@@ -466,29 +432,23 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                 <Clock size={24} color="#d97706" />
               )}
               <div>
-                <div style={{
-                  ...styles.bannerTitle,
-                  color: isApproved && !isFlagged ? "#15803d" : isFlagged ? "#b91c1c" : "#b45309"
+                <div style={{ 
+                  ...styles.bannerTitle, 
+                  color: isApproved && !isFlagged ? "#15803d" : isFlagged ? "#b91c1c" : "#b45309" 
                 }}>
-                  {isApproved && !isFlagged
-                    ? "Certification Active"
-                    : isFlagged
-                    ? `Audit Action Required (Strike ${strikes}/3)`
+                  {isApproved && !isFlagged 
+                    ? "Certification Active" 
+                    : isFlagged 
+                    ? `Audit Action Required (Strike ${strikes}/3)` 
                     : "Application Under Review"}
                 </div>
-                <div style={{
-                  ...styles.bannerSubtitle,
-                  color: isApproved && !isFlagged ? "#16a34a" : isFlagged ? "#dc2626" : "#d97706"
+                <div style={{ 
+                  ...styles.bannerSubtitle, 
+                  color: isApproved && !isFlagged ? "#16a34a" : isFlagged ? "#dc2626" : "#d97706" 
                 }}>
-<<<<<<< HEAD
-                  {isApproved && !isFlagged
-                    ? `National Eco Certification active. ${daysUntilExpiry > 0 ? daysUntilExpiry : 0} days remaining in current cycle.`
-                    : isFlagged
-=======
                   {isApproved && !isFlagged 
                     ? `National Eco Certification active (${startDateStr} – ${endDateStr}). ${daysUntilExpiry} days remaining in current cycle.`
                     : isFlagged 
->>>>>>> main
                     ? (hotelData?.fraudFlags?.reason || "Please submit accurate meter proof below to resolve this discrepancy.")
                     : "Application submitted. Awaiting GreenTrip admin approval."}
                 </div>
@@ -536,17 +496,10 @@ export default function HotelPartnerDashboard({ onNavigate }) {
               <div style={styles.bronzePillBadge}>{isApproved ? `${currentTier} Tier` : "No Tier"}</div>
             </div>
 
-<<<<<<< HEAD
-            {isApproved && (
-              <button
-                type="button"
-                onClick={() => setShowUpgradeModal(true)}
-=======
             {isApproved && currentTier !== "Platinum" && (
               <button 
                 type="button" 
                 onClick={() => setShowUpgradeModal(true)} 
->>>>>>> main
                 style={styles.applyUpgradeBtn}
               >
                 <TrendingUp size={14} />
@@ -606,7 +559,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
         {/* Documents & Audits Section Header */}
         <div style={styles.docHeaderRow}>
           <button style={styles.docFilterBtn}>
-            <FileText size={16} /> Documents &amp; Audits
+            <FileText size={16} /> Documents & Audits
           </button>
         </div>
 
@@ -639,7 +592,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
               >
                 <option value="All">All Statuses ({auditHistory.length})</option>
                 <option value="Under Review">Under Review</option>
-                <option value="Passed">Verified &amp; Passed</option>
+                <option value="Passed">Verified & Passed</option>
                 <option value="Rejected">Rejected</option>
               </select>
             </div>
@@ -682,20 +635,12 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                     <span style={{ fontWeight: 600, fontSize: 13, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {selectedSpotCheckFile ? selectedSpotCheckFile.name : "Choose Spot-Check File (PDF, PNG < 800KB)"}
                     </span>
-<<<<<<< HEAD
-                    <input
-                      type="file"
-                      accept=".pdf,.png,.jpg,.jpeg"
-                      onChange={handleSpotCheckFileChange}
-                      style={{ display: "none" }}
-=======
                     <Upload size={16} color="#4b5563" />
                     <input 
                       type="file" 
                       accept=".pdf,.png,.jpg,.jpeg" 
                       onChange={handleSpotCheckFileChange} 
                       style={{ display: "none" }} 
->>>>>>> main
                     />
                   </label>
 
@@ -735,20 +680,12 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                     <span style={{ fontWeight: 600, fontSize: 13, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {selectedRenewalFile ? selectedRenewalFile.name : "Choose Renewal Bill (PDF, PNG < 800KB)"}
                     </span>
-<<<<<<< HEAD
-                    <input
-                      type="file"
-                      accept=".pdf,.png,.jpg,.jpeg"
-                      onChange={handleRenewalFileChange}
-                      style={{ display: "none" }}
-=======
                     <Upload size={16} color="#4b5563" />
                     <input 
                       type="file" 
                       accept=".pdf,.png,.jpg,.jpeg" 
                       onChange={handleRenewalFileChange} 
                       style={{ display: "none" }} 
->>>>>>> main
                     />
                   </label>
 
@@ -782,7 +719,8 @@ export default function HotelPartnerDashboard({ onNavigate }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {filteredAuditHistory.length === 0 ? (
               <div style={styles.emptyPromptCard}>
-                <div>No records match the selected status filter ({submittedStatusFilter}).</div>
+                <FileText size={28} color="#9ca3af" />
+                <span style={{ fontSize: 13, color: "#6b7280" }}>No audit records found matching this status.</span>
               </div>
             ) : (
               filteredAuditHistory.map((audit) => {
@@ -790,8 +728,8 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                 const statusBg = audit.status === "Passed" || audit.status === "Approved" ? "#dcfce7" : audit.status === "Rejected" ? "#fee2e2" : "#fef9c3";
 
                 return (
-                  <div key={log.id} style={styles.actionCard}>
-                    <div style={styles.actionCardTop}>
+                  <div key={audit.id} style={styles.auditLogCard}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div>
                         <h4 style={{ fontSize: 15, fontWeight: 700, color: "#111827", margin: 0 }}>
                           {audit.type === "initial_application" ? "Initial Certification Application" :
@@ -803,13 +741,8 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                           Submitted: {audit.uploadedAt?.seconds ? new Date(audit.uploadedAt.seconds * 1000).toLocaleString() : "Recently"}
                         </div>
                       </div>
-
-                      <span style={{
-                        ...styles.pendingBadge,
-                        backgroundColor: isPassed ? "#dcfce7" : isRejected ? "#fee2e2" : "#fef9c3",
-                        color: isPassed ? "#15803d" : isRejected ? "#b91c1c" : "#854d0e",
-                      }}>
-                        {isPassed ? "Verified & Passed" : isRejected ? "Rejected" : "Under Review"}
+                      <span style={{ ...styles.statusPillBadge, backgroundColor: statusBg, color: statusColor }}>
+                        {audit.status || "Under Review"}
                       </span>
                     </div>
 
@@ -851,27 +784,16 @@ export default function HotelPartnerDashboard({ onNavigate }) {
 
       {/* TIER UPGRADE MODAL - FEE TYPING + FILE UPLOAD WORKFLOW */}
       {showUpgradeModal && (
-        <div style={styles.modalBackdrop}>
-          <div style={styles.modalContent}>
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalBox}>
             <div style={styles.modalHeader}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <TrendingUp size={22} color="#16a34a" />
-                <h2 style={{ fontSize: 18, fontWeight: 800, color: "#111827", margin: 0 }}>
-                  Apply for {targetNextTier} Tier Upgrade
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowUpgradeModal(false)}
-                style={styles.closeModalBtn}
-              >
-                <X size={18} />
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: "#111827", margin: 0 }}>
+                Apply for {targetNextTier} Tier Upgrade
+              </h3>
+              <button onClick={() => setShowUpgradeModal(false)} style={styles.closeModalBtn}>
+                <X size={18} color="#4b5563" />
               </button>
             </div>
-
-            <p style={{ fontSize: 13, color: "#4b5563", marginTop: 8, marginBottom: 16 }}>
-              Submit your latest decreased consumption numbers and utility bill statements. Once approved, your certification tier updates immediately.
-            </p>
 
             <form onSubmit={handleUpgradeSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               
@@ -950,42 +872,15 @@ export default function HotelPartnerDashboard({ onNavigate }) {
               </div>
 
               <div>
-                <label style={styles.modalLabel}>Implemented Green Upgrades</label>
+                <label style={styles.modalLabel}>Green Initiatives Implemented</label>
                 <textarea
-                  rows={3}
-                  placeholder="e.g. Added rooftop solar panels, installed keycard power cuts in all 120 rooms..."
+                  placeholder="Describe measures taken (e.g., LED retrofits, keycard power cut switches)..."
                   value={upgradeForm.implementedInitiatives}
                   onChange={(e) => setUpgradeForm({ ...upgradeForm, implementedInitiatives: e.target.value })}
                   style={{ ...styles.modalInput, height: 60, resize: "vertical" }}
                 />
               </div>
 
-<<<<<<< HEAD
-              <div>
-                <label style={styles.modalLabel}>Latest Utility Statement Evidence (Mandatory)</label>
-                <label style={styles.filePickerBox}>
-                  <Upload size={16} color="#4b5563" />
-                  <span style={{ fontWeight: 600, fontSize: 13, color: "#374151" }}>
-                    {upgradeFile ? upgradeFile.name : "Choose File (PDF, PNG < 800KB)"}
-                  </span>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={(e) => {
-                      const f = e.target.files[0];
-                      if (f && f.size > 800 * 1024) {
-                        alert("File exceeds 800KB limit.");
-                        return;
-                      }
-                      setUpgradeFile(f);
-                    }}
-                    style={{ display: "none" }}
-                  />
-                </label>
-              </div>
-
-=======
->>>>>>> main
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 10 }}>
                 <button
                   type="button"
@@ -997,9 +892,9 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                 <button
                   type="submit"
                   disabled={submittingUpgrade}
-                  style={styles.submitModalBtn}
+                  style={styles.submitGreenBtn}
                 >
-                  {submittingUpgrade ? "Submitting..." : `Submit for ${targetNextTier} Promotion`}
+                  {submittingUpgrade ? "Submitting..." : "Submit Upgrade Application"}
                 </button>
               </div>
             </form>
@@ -1013,14 +908,14 @@ export default function HotelPartnerDashboard({ onNavigate }) {
 const styles = {
   container: {
     minHeight: "100vh",
-    backgroundColor: "#f3f4f6",
+    backgroundColor: "#f8fafc",
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     paddingBottom: 60,
   },
   header: {
     backgroundColor: "#fff",
     height: 64,
-    borderBottom: "1px solid #e5e7eb",
+    borderBottom: "1px solid #e2e8f0",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
@@ -1036,71 +931,61 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
   },
-  brandTitle: { fontSize: 18, fontWeight: 800, color: "#111827" },
+  brandTitle: { fontSize: 18, fontWeight: 800, color: "#0f172a" },
   profileBadge: {
     display: "flex",
     alignItems: "center",
     gap: 12,
     cursor: "pointer",
     padding: "4px 8px",
-    borderRadius: 10,
-    transition: "background 0.15s ease",
+    borderRadius: 8,
   },
-  profileName: { fontSize: 14, fontWeight: 700, color: "#111827" },
-  profileScore: { fontSize: 11.5, color: "#6b7280" },
+  profileName: { fontSize: 13.5, fontWeight: 700, color: "#1e293b" },
+  profileScore: { fontSize: 11.5, color: "#64748b" },
   avatar: {
     width: 38,
     height: 38,
     borderRadius: "50%",
-    backgroundColor: "#e5e7eb",
+    backgroundColor: "#e2e8f0",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 20,
+    fontSize: 18,
   },
-  main: { maxWidth: 860, margin: "0 auto", padding: "20px 20px 0 20px" },
-  topNavRow: {
-    marginBottom: 14,
-    display: "flex",
-    alignItems: "center",
-  },
+  main: { maxWidth: 980, margin: "0 auto", padding: "24px 20px 0 20px" },
+  topNavRow: { marginBottom: 14 },
   topBackBtn: {
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
-    border: "none",
     background: "transparent",
-    fontSize: 13.5,
-    fontWeight: 600,
+    border: "none",
     color: "#4b5563",
-    cursor: "pointer",
-    padding: "4px 0",
-  },
-  titleRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 20,
-  },
-  heading: { fontSize: 24, fontWeight: 800, color: "#111827", margin: 0 },
-  subheading: { fontSize: 13, color: "#6b7280", marginTop: 4, margin: 0 },
-  tierBadge: {
-    fontWeight: 700,
     fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+    padding: 0,
+  },
+  titleRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
+  heading: { fontSize: 26, fontWeight: 800, color: "#0f172a", margin: 0 },
+  subheading: { fontSize: 13.5, color: "#64748b", margin: "4px 0 0 0" },
+  tierBadge: {
     padding: "6px 14px",
     borderRadius: 20,
+    fontSize: 12.5,
+    fontWeight: 800,
     display: "flex",
     alignItems: "center",
     gap: 6,
   },
   suspensionBanner: {
-    backgroundColor: "#fee2e2",
+    backgroundColor: "#fef2f2",
     border: "2px solid #ef4444",
     borderRadius: 14,
     padding: "18px 22px",
     display: "flex",
-    alignItems: "flex-start",
     gap: 16,
+    alignItems: "flex-start",
     marginBottom: 20,
   },
   suspensionTitle: { fontSize: 15, fontWeight: 800, color: "#991b1b" },
@@ -1129,229 +1014,145 @@ const styles = {
   reminderBanner: {
     backgroundColor: "#fef3c7",
     border: "1px solid #fde68a",
-    borderRadius: 10,
+    borderRadius: 12,
     padding: "12px 18px",
     display: "flex",
-    alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 16,
-    fontSize: 13.5,
-  },
-  closeBannerBtn: {
-    background: "transparent",
-    border: "none",
-    cursor: "pointer",
-    padding: 4,
-    display: "flex",
     alignItems: "center",
-    justifyContent: "center",
+    marginBottom: 20,
   },
+  closeBannerBtn: { background: "transparent", border: "none", cursor: "pointer", padding: 4 },
   banner: {
-    border: "1px solid #86efac",
-    borderRadius: 14,
-    padding: "16px 20px",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  bannerLeft: { display: "flex", alignItems: "center", gap: 12 },
-  bannerTitle: { fontSize: 14, fontWeight: 700 },
-  bannerSubtitle: { fontSize: 12.5, fontWeight: 600 },
-  bannerProgressTrack: {
-    width: 140,
-    height: 10,
-    backgroundColor: "#cbd5e1",
-    borderRadius: 10,
-    overflow: "hidden",
-  },
-  bannerProgressBar: { height: "100%", backgroundColor: "#111827", transition: "width 0.3s" },
-  statsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, 1fr)",
-    gap: 16,
-    marginBottom: 20,
-  },
-  statCard: {
-    backgroundColor: "#fff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    padding: "18px 14px",
+    borderRadius: 16,
+    border: "1px solid",
+    padding: "20px 24px",
+    marginBottom: 24,
     display: "flex",
     flexDirection: "column",
-    alignItems: "center",
-    textAlign: "center",
+    gap: 14,
+  },
+  bannerLeft: { display: "flex", alignItems: "flex-start", gap: 14 },
+  bannerTitle: { fontSize: 15, fontWeight: 800 },
+  bannerSubtitle: { fontSize: 13, marginTop: 3, lineHeight: 1.45 },
+  bannerProgressTrack: { width: "100%", height: 6, backgroundColor: "rgba(0,0,0,0.06)", borderRadius: 3, overflow: "hidden" },
+  bannerProgressBar: { height: "100%", backgroundColor: "#16a34a", borderRadius: 3 },
+  statsGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 },
+  statCard: {
+    backgroundColor: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: 14,
+    padding: "16px 18px",
+    display: "flex",
+    flexDirection: "column",
     gap: 4,
   },
-  statValue: { fontSize: 24, fontWeight: 800, color: "#111827", marginTop: 4 },
-  statTitle: { fontSize: 12, fontWeight: 600, color: "#6b7280" },
-  statCompare: { fontSize: 11, fontWeight: 600, color: "#22c55e" },
+  statValue: { fontSize: 22, fontWeight: 800, color: "#0f172a", marginTop: 4 },
+  statTitle: { fontSize: 12, color: "#64748b", fontWeight: 600 },
+  statCompare: { fontSize: 11, color: "#94a3b8", marginTop: 2 },
   progressSection: {
     backgroundColor: "#fff",
-    border: "1px solid #86efac",
-    borderRadius: 14,
+    border: "1px solid #e2e8f0",
+    borderRadius: 16,
     padding: "20px 24px",
-    marginBottom: 16,
+    marginBottom: 20,
   },
-  progressHeader: { display: "flex", justifyContent: "space-between", alignItems: "center" },
-  progressTitle: { fontSize: 14, fontWeight: 700, color: "#111827" },
-  bronzePillBadge: {
-    backgroundColor: "#fed7aa",
-    color: "#9a3412",
-    fontWeight: 700,
-    fontSize: 12,
-    padding: "4px 12px",
-    borderRadius: 14,
-  },
+  progressHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  progressTitle: { fontSize: 15, fontWeight: 700, color: "#0f172a" },
+  bronzePillBadge: { fontSize: 11.5, fontWeight: 700, backgroundColor: "#ffedd5", color: "#9a3412", padding: "2px 10px", borderRadius: 10 },
   applyUpgradeBtn: {
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#16a34a",
+    backgroundColor: "#0f172a",
     color: "#fff",
     border: "none",
+    padding: "7px 14px",
     borderRadius: 8,
-    padding: "6px 14px",
     fontSize: 12.5,
-    fontWeight: 700,
+    fontWeight: 600,
     cursor: "pointer",
   },
-  progressSub: {
-    display: "flex",
-    justifyContent: "space-between",
-    fontSize: 12.5,
-    color: "#4b5563",
-    fontWeight: 500,
-    marginTop: 10,
-    marginBottom: 8,
-  },
-  progressTrack: {
-    width: "100%",
-    height: 14,
-    backgroundColor: "#e5e7eb",
-    borderRadius: 10,
-    overflow: "hidden",
-  },
-  progressBarFill: { height: "100%", backgroundColor: "#111827", transition: "width 0.3s" },
+  progressSub: { display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#6b7280", marginBottom: 6 },
+  progressTrack: { width: "100%", height: 8, backgroundColor: "#f1f5f9", borderRadius: 4, overflow: "hidden" },
+  progressBarFill: { height: "100%", backgroundColor: "#16a34a", borderRadius: 4 },
   suggestionSection: {
-    backgroundColor: "#fffbeb",
+    backgroundColor: "#fefce8",
     border: "1px solid #fef08a",
-    borderRadius: 14,
-    padding: "18px 22px",
-    marginBottom: 22,
+    borderRadius: 16,
+    padding: "20px 24px",
+    marginBottom: 24,
   },
-  suggestionHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 14,
-  },
+  suggestionHeader: { display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 16 },
   suggestionIconWrapper: {
     width: 36,
     height: 36,
-    borderRadius: 8,
-    backgroundColor: "#fef9c3",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  suggestionTitle: {
-    fontSize: 14.5,
-    fontWeight: 700,
-    color: "#854d0e",
-    margin: 0,
-  },
-  suggestionSubtitle: {
-    fontSize: 12.5,
-    color: "#a16207",
-    margin: "3px 0 0 0",
-  },
-  suggestionList: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 12,
-  },
-  suggestionItem: {
-    backgroundColor: "#fff",
-    border: "1px solid #fef08a",
     borderRadius: 10,
-    padding: "12px 14px",
-    display: "flex",
-    gap: 10,
-    alignItems: "flex-start",
-  },
-  suggestionBullet: {
-    width: 22,
-    height: 22,
-    borderRadius: "50%",
-    backgroundColor: "#fef08a",
-    color: "#854d0e",
-    fontSize: 11,
-    fontWeight: 800,
+    backgroundColor: "#fef9c3",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
-  suggestionItemTitle: {
-    fontSize: 13,
-    fontWeight: 700,
-    color: "#1f2937",
-  },
-  suggestionItemDesc: {
+  suggestionTitle: { fontSize: 15, fontWeight: 700, color: "#713f12", margin: 0 },
+  suggestionSubtitle: { fontSize: 13, color: "#854d0e", margin: "3px 0 0 0", lineHeight: 1.4 },
+  suggestionList: { display: "flex", flexDirection: "column", gap: 12 },
+  suggestionItem: { display: "flex", gap: 12, alignItems: "flex-start" },
+  suggestionBullet: {
+    width: 24,
+    height: 24,
+    borderRadius: "50%",
+    backgroundColor: "#fef08a",
+    color: "#713f12",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
     fontSize: 12,
-    color: "#6b7280",
-    marginTop: 3,
-    lineHeight: 1.4,
+    fontWeight: 800,
+    flexShrink: 0,
   },
-  docHeaderRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
+  suggestionItemTitle: { fontSize: 13.5, fontWeight: 700, color: "#713f12" },
+  suggestionItemDesc: { fontSize: 12.5, color: "#854d0e", marginTop: 2, lineHeight: 1.35 },
+  docHeaderRow: { marginBottom: 12 },
   docFilterBtn: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    border: "1.5px solid #111827",
-    background: "#fff",
-    borderRadius: 8,
-    padding: "6px 14px",
-    fontSize: 13,
-    fontWeight: 700,
-    color: "#111827",
-  },
-  filterPillContainer: {
     display: "inline-flex",
-    backgroundColor: "#e5e7eb",
-    borderRadius: 8,
-    padding: 3,
-    gap: 4,
+    alignItems: "center",
+    gap: 8,
+    background: "transparent",
+    border: "none",
+    fontSize: 16,
+    fontWeight: 800,
+    color: "#0f172a",
+    padding: 0,
   },
+  filterPillContainer: { display: "inline-flex", backgroundColor: "#e2e8f0", borderRadius: 10, padding: 3, gap: 4 },
   filterPill: {
     border: "none",
-    padding: "6px 18px",
-    borderRadius: 6,
-    fontSize: 12.5,
-    cursor: "pointer",
     background: "transparent",
+    padding: "7px 16px",
+    borderRadius: 8,
+    fontSize: 12.5,
+    fontWeight: 600,
     color: "#4b5563",
-    fontWeight: 500,
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
+    cursor: "pointer",
   },
-  filterPillActive: {
-    backgroundColor: "#fff",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-    fontWeight: 700,
-    color: "#111827",
+  filterPillActive: { backgroundColor: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.08)", color: "#0f172a", fontWeight: 700 },
+  redBadge: {
+    backgroundColor: "#ef4444",
+    color: "#fff",
+    borderRadius: "50%",
+    width: 17,
+    height: 17,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 10,
+    fontWeight: 800,
+    marginLeft: 6,
   },
   statusFilterDropdown: {
     padding: "6px 12px",
     borderRadius: 8,
-    border: "1px solid #d1d5db",
+    border: "1px solid #cbd5e1",
     backgroundColor: "#fff",
     fontSize: 12.5,
     fontWeight: 600,
@@ -1359,22 +1160,10 @@ const styles = {
     outline: "none",
     cursor: "pointer",
   },
-  redBadge: {
-    backgroundColor: "#ef4444",
-    color: "#fff",
-    borderRadius: "50%",
-    width: 16,
-    height: 16,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 10,
-    fontWeight: 800,
-  },
   actionCard: {
     backgroundColor: "#fff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
+    border: "1.5px solid #cbd5e1",
+    borderRadius: 16,
     padding: "20px 24px",
     display: "flex",
     flexDirection: "column",
@@ -1391,61 +1180,12 @@ const styles = {
   instructionsBox: { backgroundColor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 14px", fontSize: 13, color: "#334155", lineHeight: 1.4 },
   spotCheckUploadBtn: {
     display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-  },
-  actionCardTitle: { fontSize: 16, fontWeight: 700, color: "#111827", margin: 0 },
-  strikePill: {
-    backgroundColor: "#fee2e2",
-    color: "#b91c1c",
-    fontSize: 11.5,
-    fontWeight: 800,
-    padding: "3px 8px",
-    borderRadius: 6,
-  },
-  spotBadge: {
-    backgroundColor: "#fee2e2",
-    color: "#ef4444",
-    fontSize: 11.5,
-    fontWeight: 700,
-    padding: "4px 10px",
-    borderRadius: 6,
-    border: "1px solid #fca5a5",
-  },
-  renewalBadge: {
-    backgroundColor: "#dbeafe",
-    color: "#1e40af",
-    fontSize: 11.5,
-    fontWeight: 700,
-    padding: "4px 10px",
-    borderRadius: 6,
-    border: "1px solid #93c5fd",
-  },
-  pendingBadge: {
-    backgroundColor: "#fef9c3",
-    color: "#854d0e",
-    fontSize: 11.5,
-    fontWeight: 700,
-    padding: "4px 10px",
-    borderRadius: 6,
-  },
-  metaNoticeRow: { display: "flex", gap: 20, alignItems: "center" },
-  metaItem: { display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "#6b7280" },
-  instructionsBox: {
-    backgroundColor: "#e5e7eb",
-    borderRadius: 10,
-    padding: "16px 20px",
-    fontSize: 13,
-    color: "#4b5563",
-    lineHeight: 1.5,
-  },
-  filePickerBox: {
-    display: "inline-flex",
     alignItems: "center",
     justifyContent: "space-between",
     border: "1.5px dashed #cbd5e1",
-    padding: "12px 18px",
-    borderRadius: 8,
+    borderRadius: 10,
+    padding: "12px 16px",
+    backgroundColor: "#f8fafc",
     cursor: "pointer",
   },
   filePickerBtnCustom: {
@@ -1461,43 +1201,51 @@ const styles = {
     color: "#334155",
   },
   submitGreenBtn: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
     backgroundColor: "#16a34a",
     color: "#fff",
-    padding: "10px 20px",
-    borderRadius: 8,
-    fontSize: 13,
-    fontWeight: 700,
     border: "none",
-    alignSelf: "flex-start",
+    padding: "10px 18px",
+    borderRadius: 8,
+    fontWeight: 700,
+    fontSize: 13.5,
     cursor: "pointer",
-  },
-  viewLinkBtn: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#f0f9ff",
-    border: "1px solid #bae6fd",
-    color: "#0284c7",
-    padding: "6px 14px",
-    borderRadius: 6,
-    fontSize: 12.5,
-    fontWeight: 600,
-    cursor: "pointer",
-    alignSelf: "flex-start",
+    textAlign: "center",
   },
   emptyPromptCard: {
     backgroundColor: "#fff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    padding: "24px",
+    border: "1px solid #e2e8f0",
+    borderRadius: 16,
+    padding: 32,
+    textAlign: "center",
     display: "flex",
+    flexDirection: "column",
     alignItems: "center",
-    gap: 16,
+    gap: 10,
   },
-  modalBackdrop: {
+  auditLogCard: {
+    backgroundColor: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: 14,
+    padding: "16px 20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  statusPillBadge: { fontSize: 11.5, fontWeight: 700, padding: "3px 10px", borderRadius: 12 },
+  previewBtnSmall: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#f0f9ff",
+    border: "1px solid #bae6fd",
+    borderRadius: 6,
+    padding: "5px 10px",
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#0284c7",
+    cursor: "pointer",
+  },
+  modalOverlay: {
     position: "fixed",
     top: 0,
     left: 0,
@@ -1508,11 +1256,10 @@ const styles = {
     justifyContent: "center",
     alignItems: "center",
     zIndex: 1000,
-    padding: 20,
   },
-  modalContent: {
+  modalBox: {
     backgroundColor: "#fff",
-    borderRadius: 16,
+    borderRadius: 18,
     padding: "24px 28px",
     width: "100%",
     maxWidth: 520,
@@ -1525,40 +1272,19 @@ const styles = {
     width: "100%",
     padding: "8px 12px",
     borderRadius: 8,
-    border: "1px solid #d1d5db",
+    border: "1px solid #cbd5e1",
     fontSize: 13,
-    boxSizing: "border-box",
     outline: "none",
-  },
-  modalTextarea: {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 8,
-    border: "1px solid #d1d5db",
-    fontSize: 13,
     boxSizing: "border-box",
-    outline: "none",
-    resize: "vertical",
-    fontFamily: "inherit",
   },
   cancelModalBtn: {
-    padding: "8px 16px",
-    borderRadius: 8,
-    border: "1px solid #d1d5db",
     backgroundColor: "#fff",
-    color: "#374151",
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  submitModalBtn: {
-    padding: "8px 18px",
+    color: "#4b5563",
+    border: "1px solid #cbd5e1",
+    padding: "10px 16px",
     borderRadius: 8,
-    border: "none",
-    backgroundColor: "#16a34a",
-    color: "#fff",
+    fontWeight: 600,
     fontSize: 13,
-    fontWeight: 700,
     cursor: "pointer",
   },
 };

@@ -1,12 +1,11 @@
-import { useEffect, useState } from "react";
-import {
-  Leaf,
-  ChevronLeft,
-  Upload,
-  AlertCircle,
-  CheckCircle2,
-  Calculator,
-  Calendar
+import React, { useEffect, useState } from "react";
+import { 
+  Leaf, 
+  ChevronLeft, 
+  Upload, 
+  AlertCircle, 
+  CheckCircle2, 
+  FileText 
 } from "lucide-react";
 import { auth, db } from "../firebase/config";
 import { doc, getDoc } from "firebase/firestore";
@@ -24,29 +23,8 @@ export default function CertificationApply({ onNavigate }) {
     sustainabilityInitiatives: "",
   });
 
-  // 3-Month Electricity Data & Files
-  const [electricityMonths, setElectricityMonths] = useState({
-    m1_kwh: "",
-    m2_kwh: "",
-    m3_kwh: "",
-  });
-  const [electricityFiles, setElectricityFiles] = useState({
-    m1_file: null,
-    m2_file: null,
-    m3_file: null,
-  });
-
-  // 3-Month Water Data & Files
-  const [waterMonths, setWaterMonths] = useState({
-    m1_liters: "",
-    m2_liters: "",
-    m3_liters: "",
-  });
-  const [waterFiles, setWaterFiles] = useState({
-    m1_file: null,
-    m2_file: null,
-    m3_file: null,
-  });
+  const [electricityFile, setElectricityFile] = useState(null);
+  const [waterFile, setWaterFile] = useState(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
@@ -117,57 +95,22 @@ export default function CertificationApply({ onNavigate }) {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleElecMonthChange = (e) => {
-    const { name, value } = e.target;
-    setElectricityMonths((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleWaterMonthChange = (e) => {
-    const { name, value } = e.target;
-    setWaterMonths((prev) => ({ ...prev, [name]: value }));
-  };
-
-  // Calculate 3-month averages
-  const calcElecAverage = () => {
-    const v1 = parseFloat(electricityMonths.m1_kwh) || 0;
-    const v2 = parseFloat(electricityMonths.m2_kwh) || 0;
-    const v3 = parseFloat(electricityMonths.m3_kwh) || 0;
-    const count = [electricityMonths.m1_kwh, electricityMonths.m2_kwh, electricityMonths.m3_kwh].filter(Boolean).length;
-    return count > 0 ? Math.round((v1 + v2 + v3) / count) : 0;
-  };
-
-  const calcWaterAverage = () => {
-    const v1 = parseFloat(waterMonths.m1_liters) || 0;
-    const v2 = parseFloat(waterMonths.m2_liters) || 0;
-    const v3 = parseFloat(waterMonths.m3_liters) || 0;
-    const count = [waterMonths.m1_liters, waterMonths.m2_liters, waterMonths.m3_liters].filter(Boolean).length;
-    return count > 0 ? Math.round((v1 + v2 + v3) / count) : 0;
-  };
-
-  // Helper for file sizes
-  const handleFileSelection = (file, setFunction, keyName) => {
+  // Helper for file sizes (Keep under 800KB for Firestore)
+  const handleFileSelection = (file, setFileFunction) => {
     if (!file) return;
     if (file.size > 800 * 1024) {
-      alert("File exceeds 800KB. Please compress the file.");
+      alert("File exceeds 800KB limit. Please choose a smaller file or compress it.");
       return;
     }
-    setFunction((prev) => ({ ...prev, [keyName]: file }));
+    setFileFunction(file);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMessage("");
 
-    // Verification: ensure all 3 electricity bills are provided
-    if (!electricityFiles.m1_file || !electricityFiles.m2_file || !electricityFiles.m3_file) {
-      setErrorMessage("Please upload all 3 consecutive electricity bills for baseline verification.");
-      return;
-    }
-
-    // Duplicate detection check
-    const elecNames = [electricityFiles.m1_file?.name, electricityFiles.m2_file?.name, electricityFiles.m3_file?.name];
-    if (new Set(elecNames).size !== elecNames.length) {
-      setErrorMessage("Duplicate files detected in electricity uploads. Please provide 3 distinct consecutive monthly statements.");
+    if (!electricityFile) {
+      setErrorMessage("Please upload your electricity utility bill for verification.");
       return;
     }
 
@@ -185,8 +128,8 @@ export default function CertificationApply({ onNavigate }) {
           status: "Pending Review",
           certificationTier: null,
         },
-        electricityFiles.m1_file,
-        waterFiles.m1_file || electricityFiles.m1_file
+        electricityFile,
+        waterFile
       );
 
       alert("Application submitted successfully! It is now under review by Admin.");
@@ -337,7 +280,7 @@ export default function CertificationApply({ onNavigate }) {
             </div>
           </section>
 
-          {/* Card 2: 3-Month Electricity Data & Uploads */}
+          {/* Card 2: Utility Usage & Files */}
           <section style={styles.card}>
             <h2 style={styles.cardTitle}>Utility Pricing & Documents</h2>
             <p style={styles.cardSubtitle}>Enter monthly billing fees (RM) and attach your statements (&lt; 800KB)</p>
@@ -356,21 +299,6 @@ export default function CertificationApply({ onNavigate }) {
                   style={styles.input}
                 />
               </div>
-              <div style={{ flex: 1.5 }}>
-                <label style={styles.fileUploadBox}>
-                  <input
-                    type="file"
-                    accept=".png,.jpg,.jpeg,.pdf"
-                    style={{ display: "none" }}
-                    onChange={(e) => handleFileSelection(e.target.files[0], setElectricityFiles, "m1_file")}
-                  />
-                  <span style={styles.chooseFilesBtn}>
-                    {electricityFiles.m1_file ? electricityFiles.m1_file.name : "Upload Month 1 Bill"}
-                  </span>
-                  <Upload size={16} color="#4b5563" />
-                </label>
-              </div>
-            </div>
 
               <div>
                 <label style={styles.label}>Water Bill Fee (RM/mo, Optional)</label>
@@ -384,159 +312,36 @@ export default function CertificationApply({ onNavigate }) {
                   style={styles.input}
                 />
               </div>
-              <div style={{ flex: 1.5 }}>
-                <label style={styles.fileUploadBox}>
-                  <input
-                    type="file"
-                    accept=".png,.jpg,.jpeg,.pdf"
-                    style={{ display: "none" }}
-                    onChange={(e) => handleFileSelection(e.target.files[0], setElectricityFiles, "m2_file")}
-                  />
-                  <span style={styles.chooseFilesBtn}>
-                    {electricityFiles.m2_file ? electricityFiles.m2_file.name : "Upload Month 2 Bill"}
-                  </span>
-                  <Upload size={16} color="#4b5563" />
-                </label>
-              </div>
             </div>
 
-            {/* Month 3 */}
-            <div style={styles.monthUploadRow}>
-              <div style={styles.monthLabelCol}>
-                <Calendar size={14} color="#6b7280" />
-                <strong>Month 3 (Oldest)</strong>
-              </div>
-              <div style={{ flex: 1 }}>
-                <input
-                  type="number"
-                  name="m3_kwh"
-                  placeholder="Usage (kWh)"
-                  value={electricityMonths.m3_kwh}
-                  onChange={handleElecMonthChange}
-                  required
-                  style={styles.input}
-                />
-              </div>
-              <div style={{ flex: 1.5 }}>
-                <label style={styles.fileUploadBox}>
-                  <input
-                    type="file"
-                    accept=".png,.jpg,.jpeg,.pdf"
-                    style={{ display: "none" }}
-                    onChange={(e) => handleFileSelection(e.target.files[0], setElectricityFiles, "m3_file")}
-                  />
-                  <span style={styles.chooseFilesBtn}>
-                    {electricityFiles.m3_file ? electricityFiles.m3_file.name : "Upload Month 3 Bill"}
-                  </span>
-                  <Upload size={16} color="#4b5563" />
-                </label>
-              </div>
-            </div>
-          </section>
-
-          {/* Card 3: 3-Month Water Data & Uploads */}
-          <section style={styles.card}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <div style={{ ...styles.twoColumnGrid, marginTop: 16 }}>
               <div>
-                <h2 style={styles.cardTitle}>Water Utility Audit (Last 3 Months)</h2>
-                <p style={styles.cardSubtitle}>Submit 3 consecutive statements for baseline water benchmarking</p>
-              </div>
-              <div style={styles.averagePill}>
-                <Calculator size={14} color="#0284c7" />
-                <span>Average: <strong>{calcWaterAverage().toLocaleString()} L/mo</strong></span>
-              </div>
-            </div>
-
-            {/* Month 1 */}
-            <div style={styles.monthUploadRow}>
-              <div style={styles.monthLabelCol}>
-                <Calendar size={14} color="#6b7280" />
-                <strong>Month 1 (Latest)</strong>
-              </div>
-              <div style={{ flex: 1 }}>
-                <input
-                  type="number"
-                  name="m1_liters"
-                  placeholder="Usage (Liters)"
-                  value={waterMonths.m1_liters}
-                  onChange={handleWaterMonthChange}
-                  style={styles.input}
-                />
-              </div>
-              <div style={{ flex: 1.5 }}>
+                <label style={styles.label}>Electricity Bill (Mandatory)</label>
                 <label style={styles.fileUploadBox}>
                   <input
                     type="file"
                     accept=".png,.jpg,.jpeg,.pdf"
                     style={{ display: "none" }}
-                    onChange={(e) => handleFileSelection(e.target.files[0], setWaterFiles, "m1_file")}
+                    onChange={(e) => handleFileSelection(e.target.files[0], setElectricityFile)}
                   />
                   <span style={styles.chooseFilesBtn}>
-                    {waterFiles.m1_file ? waterFiles.m1_file.name : "Upload Month 1 Bill"}
+                    {electricityFile ? electricityFile.name : "Choose Electricity Bill"}
                   </span>
                   <Upload size={16} color="#4b5563" />
                 </label>
               </div>
-            </div>
 
-            {/* Month 2 */}
-            <div style={styles.monthUploadRow}>
-              <div style={styles.monthLabelCol}>
-                <Calendar size={14} color="#6b7280" />
-                <strong>Month 2 (Prior)</strong>
-              </div>
-              <div style={{ flex: 1 }}>
-                <input
-                  type="number"
-                  name="m2_liters"
-                  placeholder="Usage (Liters)"
-                  value={waterMonths.m2_liters}
-                  onChange={handleWaterMonthChange}
-                  style={styles.input}
-                />
-              </div>
-              <div style={{ flex: 1.5 }}>
+              <div>
+                <label style={styles.label}>Water Bill (Optional)</label>
                 <label style={styles.fileUploadBox}>
                   <input
                     type="file"
                     accept=".png,.jpg,.jpeg,.pdf"
                     style={{ display: "none" }}
-                    onChange={(e) => handleFileSelection(e.target.files[0], setWaterFiles, "m2_file")}
+                    onChange={(e) => handleFileSelection(e.target.files[0], setWaterFile)}
                   />
                   <span style={styles.chooseFilesBtn}>
-                    {waterFiles.m2_file ? waterFiles.m2_file.name : "Upload Month 2 Bill"}
-                  </span>
-                  <Upload size={16} color="#4b5563" />
-                </label>
-              </div>
-            </div>
-
-            {/* Month 3 */}
-            <div style={styles.monthUploadRow}>
-              <div style={styles.monthLabelCol}>
-                <Calendar size={14} color="#6b7280" />
-                <strong>Month 3 (Oldest)</strong>
-              </div>
-              <div style={{ flex: 1 }}>
-                <input
-                  type="number"
-                  name="m3_liters"
-                  placeholder="Usage (Liters)"
-                  value={waterMonths.m3_liters}
-                  onChange={handleWaterMonthChange}
-                  style={styles.input}
-                />
-              </div>
-              <div style={{ flex: 1.5 }}>
-                <label style={styles.fileUploadBox}>
-                  <input
-                    type="file"
-                    accept=".png,.jpg,.jpeg,.pdf"
-                    style={{ display: "none" }}
-                    onChange={(e) => handleFileSelection(e.target.files[0], setWaterFiles, "m3_file")}
-                  />
-                  <span style={styles.chooseFilesBtn}>
-                    {waterFiles.m3_file ? waterFiles.m3_file.name : "Upload Month 3 Bill"}
+                    {waterFile ? waterFile.name : "Choose Water Bill"}
                   </span>
                   <Upload size={16} color="#4b5563" />
                 </label>
@@ -544,7 +349,7 @@ export default function CertificationApply({ onNavigate }) {
             </div>
           </section>
 
-          {/* Card 4: Eco Practices */}
+          {/* Card 3: Eco Practices */}
           <section style={styles.card}>
             <h2 style={styles.cardTitle}>Sustainability Initiatives</h2>
             <p style={styles.cardSubtitle}>Describe property green credentials</p>
@@ -572,7 +377,7 @@ export default function CertificationApply({ onNavigate }) {
                 cursor: submitting ? "not-allowed" : "pointer",
               }}
             >
-              {submitting ? "Processing 3-Month Audit..." : "Submit Application"}
+              {submitting ? "Submitting Application..." : "Submit Application"}
             </button>
             <button
               type="button"
@@ -682,31 +487,6 @@ const styles = {
   },
   cardTitle: { fontSize: 15, fontWeight: 700, color: "#111827", margin: 0 },
   cardSubtitle: { fontSize: 12.5, color: "#9ca3af", margin: "4px 0 16px 0" },
-  averagePill: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#f0f9ff",
-    border: "1px solid #bae6fd",
-    color: "#0369a1",
-    padding: "4px 12px",
-    borderRadius: 12,
-    fontSize: 12,
-  },
-  monthUploadRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 14,
-    marginBottom: 12,
-  },
-  monthLabelCol: {
-    width: 140,
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    fontSize: 12.5,
-    color: "#374151",
-  },
   fullWidthGroup: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 },
   twoColumnGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px 20px" },
   label: { fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 4, display: "block" },
