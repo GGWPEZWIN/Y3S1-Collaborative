@@ -21,7 +21,7 @@ export function evaluateNudges(rows) {
       icon: Droplet,
       tone: "text-blue-600",
       title: "Your plastic count is running above the national average",
-      body: `You logged ${totals.plastic} single-use items over ${days} days. Three refill points are within walking distance of your route.`,
+      body: `You logged ${totals.plastic} single-use items, which is above the national average. Consider visiting a water refill station nearby to help reduce plastic waste.`,
       poiKind: "refill",
     });
   }
@@ -32,7 +32,7 @@ export function evaluateNudges(rows) {
       icon: ShoppingBag,
       tone: "text-orange-600",
       title: "Plate waste is trending high",
-      body: `Averaging ${Math.round(totals.foodWaste / days)}g a day against a ${benchmarks.foodWaste}g baseline. Requesting a smaller rice portion when you order can cut most of it.`,
+      body: `Averaging ${Math.round(totals.foodWaste / days)}g a day against a ${benchmarks.foodWaste}g baseline. Consider ordering a smaller portion of food to help reduce food waste.`,
       poiKind: null,
     });
   }

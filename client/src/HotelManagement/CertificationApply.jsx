@@ -24,12 +24,7 @@ export default function CertificationApply({ onNavigate }) {
     sustainabilityInitiatives: "",
   });
 
-  // 3-Month Electricity Data & Files
-  const [electricityMonths, setElectricityMonths] = useState({
-    m1_kwh: "",
-    m2_kwh: "",
-    m3_kwh: "",
-  });
+  // 3-Month Electricity Files
   const [electricityFiles, setElectricityFiles] = useState({
     m1_file: null,
     m2_file: null,
@@ -117,25 +112,12 @@ export default function CertificationApply({ onNavigate }) {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleElecMonthChange = (e) => {
-    const { name, value } = e.target;
-    setElectricityMonths((prev) => ({ ...prev, [name]: value }));
-  };
-
   const handleWaterMonthChange = (e) => {
     const { name, value } = e.target;
     setWaterMonths((prev) => ({ ...prev, [name]: value }));
   };
 
-  // Calculate 3-month averages
-  const calcElecAverage = () => {
-    const v1 = parseFloat(electricityMonths.m1_kwh) || 0;
-    const v2 = parseFloat(electricityMonths.m2_kwh) || 0;
-    const v3 = parseFloat(electricityMonths.m3_kwh) || 0;
-    const count = [electricityMonths.m1_kwh, electricityMonths.m2_kwh, electricityMonths.m3_kwh].filter(Boolean).length;
-    return count > 0 ? Math.round((v1 + v2 + v3) / count) : 0;
-  };
-
+  // Calculate 3-month average
   const calcWaterAverage = () => {
     const v1 = parseFloat(waterMonths.m1_liters) || 0;
     const v2 = parseFloat(waterMonths.m2_liters) || 0;
@@ -185,8 +167,8 @@ export default function CertificationApply({ onNavigate }) {
           status: "Pending Review",
           certificationTier: null,
         },
-        electricityFiles.m1_file,
-        waterFiles.m1_file || electricityFiles.m1_file
+        electricityFiles,
+        waterFiles
       );
 
       alert("Application submitted successfully! It is now under review by Admin.");
@@ -372,6 +354,7 @@ export default function CertificationApply({ onNavigate }) {
               </div>
             </div>
 
+            <div style={styles.twoColumnGrid}>
               <div>
                 <label style={styles.label}>Water Bill Fee (RM/mo, Optional)</label>
                 <input
@@ -405,17 +388,6 @@ export default function CertificationApply({ onNavigate }) {
               <div style={styles.monthLabelCol}>
                 <Calendar size={14} color="#6b7280" />
                 <strong>Month 3 (Oldest)</strong>
-              </div>
-              <div style={{ flex: 1 }}>
-                <input
-                  type="number"
-                  name="m3_kwh"
-                  placeholder="Usage (kWh)"
-                  value={electricityMonths.m3_kwh}
-                  onChange={handleElecMonthChange}
-                  required
-                  style={styles.input}
-                />
               </div>
               <div style={{ flex: 1.5 }}>
                 <label style={styles.fileUploadBox}>

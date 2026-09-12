@@ -37,9 +37,23 @@ export function varianceLabel(pct, key) {
   return `${pct < 0 ? "↓" : "↑"} ${rounded}% vs ${against}`;
 }
 
-/** 0–100 per category: 50 sits exactly on the benchmark. */
+/**
+ * 0–100 per category: 50 sits exactly on the benchmark.
+ *
+ * Below the benchmark (pct <= 0) stays linear — it was already well-bounded,
+ * capping at 100 once usage reaches zero.
+ *
+ * Above the benchmark (pct > 0) uses an asymptotic curve instead of the old
+ * linear `50 - pct`, which clamped to a hard 0 at just pct >= 50. That was
+ * fine for categories with a large baseline (food waste, water) but for one
+ * with a tiny baseline — plastic is 0.35 items/person/day — a single
+ * ordinary day of usage already exceeds +50%, so the score floored to 0
+ * regardless of how the user was actually doing. This curve only approaches
+ * 0 as usage grows without bound, so no single reading zeroes it out.
+ */
 export function categoryScore(pct) {
-  return Math.max(0, Math.min(100, 50 - pct));
+  if (pct <= 0) return Math.min(100, 50 - pct);
+  return 50 / (1 + pct / 100);
 }
 
 export function compositeScore(rows) {
