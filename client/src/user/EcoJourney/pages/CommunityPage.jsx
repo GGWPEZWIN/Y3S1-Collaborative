@@ -20,6 +20,8 @@ import {
   LineChart,
   Line,
   XAxis,
+  YAxis,
+  CartesianGrid,
   ResponsiveContainer,
   Tooltip,
 } from "recharts";
@@ -44,17 +46,13 @@ import {
 import {
   collection,
   onSnapshot,
-  // query,    // unused: the orderBy query below is commented out
-  // orderBy,  // unused: see the note in the travel-history effect
+  query,
+  where,
 } from "firebase/firestore";
 
 import { db } from "../../../firebase/config";
 
-
-
-
 const FEATURE_CARDS = [
-
   {
     icon: Calendar,
     iconColor: "#7c3aed",
@@ -108,9 +106,7 @@ const FEATURE_CARDS = [
     cta: "View More",
     variant: "filled",
   },
-
 ];
-
 
 function FeatureCard({
   icon: Icon,
@@ -124,16 +120,13 @@ function FeatureCard({
 }) {
   return (
     <div style={styles.featureCard}>
-
       <div style={styles.featureHeader}>
-
         <Icon
           size={18}
           color={iconColor}
         />
 
         <div style={styles.featureTitleRow}>
-
           <span style={styles.featureTitle}>
             {title}
           </span>
@@ -144,16 +137,12 @@ function FeatureCard({
                 style={styles.unreadDot}
               />
             )}
-
         </div>
-
       </div>
-
 
       <p style={styles.featureDesc}>
         {desc}
       </p>
-
 
       <button
         style={
@@ -165,81 +154,129 @@ function FeatureCard({
       >
         {cta}
       </button>
-
     </div>
   );
 }
 
-
-
 function formatTripDate(trip) {
-  if (trip?.dateRange) return trip.dateRange;
-
   const formatDate = (value) => {
     if (!value) return null;
 
     if (value?.toDate) {
-      return value.toDate().toLocaleDateString("en-MY", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      });
+      return value.toDate().toLocaleDateString(
+        "en-MY",
+        {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        }
+      );
     }
 
     if (value instanceof Date) {
-      return value.toLocaleDateString("en-MY", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      });
+      return value.toLocaleDateString(
+        "en-MY",
+        {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        }
+      );
     }
 
     if (typeof value === "string") {
       const parsed = new Date(value);
+
       if (!Number.isNaN(parsed.getTime())) {
-        return parsed.toLocaleDateString("en-MY", {
-          day: "numeric",
-          month: "short",
-          year: "numeric",
-        });
+        return parsed.toLocaleDateString(
+          "en-MY",
+          {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          }
+        );
       }
     }
 
     return null;
   };
 
-  const start = formatDate(trip?.startDate);
-  const end = formatDate(trip?.endDate);
+  const start =
+    formatDate(trip?.startDate);
 
-  if (start && end && start !== end) {
-    return `${start} - ${end}`;
+  const end =
+    formatDate(trip?.endDate);
+
+  if (start && end) {
+    return start === end
+      ? start
+      : `${start} - ${end}`;
   }
 
-  return start || end || "Date unavailable";
+  if (
+    trip?.dateRange &&
+    trip.dateRange !== "Date unavailable"
+  ) {
+    return trip.dateRange;
+  }
+
+  const completed =
+    formatDate(trip?.completedAt);
+
+  return (
+    completed ||
+    "Date unavailable"
+  );
 }
 
-function SnapshotTooltip({ active, payload }) {
-  if (!active || !payload?.length) return null;
+function SnapshotTooltip({
+  active,
+  payload,
+}) {
+  if (
+    !active ||
+    !payload?.length
+  ) {
+    return null;
+  }
 
-  const point = payload[0]?.payload;
+  const point =
+    payload[0]?.payload;
+
   if (!point) return null;
 
   return (
-    <div style={styles.chartTooltip}>
-      <div style={styles.tooltipTrip}>
+    <div
+      style={styles.chartTooltip}
+    >
+      <div
+        style={styles.tooltipTrip}
+      >
         Trip {point.tripNumber}
       </div>
 
-      <div style={styles.tooltipTitle}>
-        {point.name || point.title || "Untitled Trip"}
+      <div
+        style={styles.tooltipTitle}
+      >
+        {point.name ||
+          point.title ||
+          "Untitled Trip"}
       </div>
 
-      <div style={styles.tooltipDate}>
+      <div
+        style={styles.tooltipDate}
+      >
         {formatTripDate(point)}
       </div>
 
-      <div style={styles.tooltipScore}>
-        Eco Score: <strong>{point.score}</strong>
+      <div
+        style={styles.tooltipScore}
+      >
+        Eco Score:{" "}
+        <strong>
+          {point.score}
+        </strong>
       </div>
     </div>
   );
@@ -248,32 +285,26 @@ function SnapshotTooltip({ active, payload }) {
 export default function CommunityPage({
   onNavigate,
 }) {
-
   const {
     authUser,
     profile,
     loading,
   } = useCurrentUser();
 
-
   const [chats, setChats] =
     useState([]);
-
 
   const [achievements, setAchievements] =
     useState([]);
 
-  // User travel history for the Progress Snapshot only
   const [travelHistory, setTravelHistory] =
     useState([]);
-
 
   // ============================================================
   // CHAT LISTENER
   // ============================================================
 
   useEffect(() => {
-
     if (!authUser?.uid) {
       return undefined;
     }
@@ -285,16 +316,13 @@ export default function CommunityPage({
       );
 
     return unsubscribe;
-
   }, [authUser?.uid]);
-
 
   // ============================================================
   // ADMIN ACHIEVEMENTS
   // ============================================================
 
   useEffect(() => {
-
     const unsubscribe =
       listenToPublishedAchievements(
         (list) => {
@@ -303,62 +331,76 @@ export default function CommunityPage({
       );
 
     return unsubscribe;
-
   }, []);
 
   // ============================================================
-  // USER TRAVEL HISTORY - PROGRESS SNAPSHOT ONLY
+  // USER TRAVEL HISTORY
   // ============================================================
-  // No setState in the effect body: state is only written from
-  // the Firestore callback and from cleanup. Also no orderBy,
-  // because Firestore excludes docs missing the ordered field.
-  // completedHistory sorts client side anyway.
+  //
+  // NEW STRUCTURE:
+  //
+  // travelHistory/{itineraryId}
+  //
+  // We query only the current user's documents.
   // ============================================================
 
   useEffect(() => {
-    if (!authUser?.uid) return undefined;
+    if (!authUser?.uid) {
+      return undefined;
+    }
 
-    const travelHistoryRef = collection(
-      db,
-      "users",
-      authUser.uid,
-      "travelHistory"
-    );
+    const travelHistoryRef =
+      collection(
+        db,
+        "travelHistory"
+      );
 
-    // Kept for reference. Firestore EXCLUDES documents that are
-    // missing the ordered field instead of sorting them last, so
-    // any trip without a startDate disappeared from the snapshot.
-    // completedHistory sorts client side anyway.
-    //
-    // const travelHistoryQuery = query(
-    //   travelHistoryRef,
-    //   orderBy("startDate", "asc")
-    // );
+    const travelHistoryQuery =
+      query(
+        travelHistoryRef,
+        where(
+          "userId",
+          "==",
+          authUser.uid
+        )
+      );
 
-    const unsubscribe = onSnapshot(
-      travelHistoryRef,
-      (snapshot) => {
-        setTravelHistory(
-          snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-          }))
-        );
-      },
-      (error) => {
-        console.error(
-          "Failed to listen to travel history:",
-          error
-        );
-      }
-    );
+    const unsubscribe =
+      onSnapshot(
+        travelHistoryQuery,
+        (snapshot) => {
+          const trips =
+            snapshot.docs.map(
+              (doc) => ({
+                id: doc.id,
+                ...doc.data(),
+              })
+            );
+
+          console.log(
+            "Community travel history:",
+            trips
+          );
+
+          setTravelHistory(
+            trips
+          );
+        },
+        (error) => {
+          console.error(
+            "Failed to listen to top-level travel history:",
+            error
+          );
+
+          setTravelHistory([]);
+        }
+      );
 
     return () => {
       unsubscribe();
       setTravelHistory([]);
     };
   }, [authUser?.uid]);
-
 
   // ============================================================
   // UNREAD CHAT
@@ -367,11 +409,12 @@ export default function CommunityPage({
   const hasUnreadChat =
     chats.some(
       (chat) =>
-        (chat.unreadCounts?.[
-          authUser?.uid
-        ] || 0) > 0
+        (
+          chat.unreadCounts?.[
+            authUser?.uid
+          ] || 0
+        ) > 0
     );
-
 
   // ============================================================
   // LOADING
@@ -379,23 +422,36 @@ export default function CommunityPage({
 
   if (loading) {
     return (
-      <div style={styles.loadingPage}>
-        <p style={{ color: "#6b7280" }}>
+      <div
+        style={
+          styles.loadingPage
+        }
+      >
+        <p
+          style={{
+            color: "#6b7280",
+          }}
+        >
           Loading...
         </p>
       </div>
     );
   }
 
-
   // ============================================================
   // LOGIN
   // ============================================================
 
-  if (!authUser || !profile) {
+  if (
+    !authUser ||
+    !profile
+  ) {
     return (
-      <div style={styles.loadingPage}>
-
+      <div
+        style={
+          styles.loadingPage
+        }
+      >
         <p
           style={{
             color: "#6b7280",
@@ -408,7 +464,9 @@ export default function CommunityPage({
         <button
           type="button"
           onClick={() =>
-            onNavigate?.("/login")
+            onNavigate?.(
+              "/login"
+            )
           }
           style={
             styles.loginRedirectBtn
@@ -416,11 +474,145 @@ export default function CommunityPage({
         >
           Go to Login
         </button>
-
       </div>
     );
   }
 
+  // ============================================================
+  // COMPLETED TRIPS
+  // ============================================================
+  //
+  // Source of truth:
+  // travelHistory
+  //
+  // A trip is completed when:
+  //
+  // status = "Completed"
+  // OR status = "complete"
+  // OR completed = true
+  // OR isCompleted = true
+  // ============================================================
+
+  const completedHistory =
+    [...travelHistory]
+      .filter((trip) => {
+        if (!trip) {
+          return false;
+        }
+
+        const status =
+          typeof trip.status === "string"
+            ? trip.status.toLowerCase()
+            : "";
+
+        return (
+          status === "completed" ||
+          status === "complete" ||
+          trip.completed === true ||
+          trip.isCompleted === true
+        );
+      })
+      .sort((a, b) => {
+        const getTime = (
+          trip
+        ) => {
+          const value =
+            trip?.startDate ||
+            trip?.completedAt ||
+            trip?.createdAt ||
+            trip?.date;
+
+          if (
+            value?.toMillis
+          ) {
+            return value.toMillis();
+          }
+
+          if (
+            value?.toDate
+          ) {
+            return value
+              .toDate()
+              .getTime();
+          }
+
+          if (
+            value instanceof Date
+          ) {
+            return value.getTime();
+          }
+
+          if (
+            typeof value ===
+            "string"
+          ) {
+            const parsed =
+              new Date(
+                value
+              ).getTime();
+
+            return Number.isNaN(
+              parsed
+            )
+              ? 0
+              : parsed;
+          }
+
+          return 0;
+        };
+
+        return (
+          getTime(a) -
+          getTime(b)
+        );
+      });
+
+  // ============================================================
+  // TOTAL COMPLETED TRIPS
+  // ============================================================
+
+  const totalTrips =
+    completedHistory.length;
+
+  // ============================================================
+  // CUMULATIVE ECO SCORE
+  // ============================================================
+  //
+  // Example:
+  //
+  // Trip 1 = 93
+  // Trip 2 = 94
+  //
+  // Total = 187
+  //
+  // This is NOT limited to 100 because this is the
+  // user's accumulated Eco Score.
+  // ============================================================
+
+  const cumulativeEcoScore =
+    completedHistory.reduce(
+      (total, trip) => {
+        const score =
+          Number(
+            trip?.finalEcoScore ??
+              trip?.ecoScore ??
+              trip?.eco_score ??
+              0
+          );
+
+        return (
+          total +
+          Math.max(
+            0,
+            Math.min(
+              100,
+              score
+            )
+          )
+        );
+      },
+      0
+    );
 
   // ============================================================
   // USER
@@ -429,49 +621,44 @@ export default function CommunityPage({
   const user = {
     name: profile.name,
 
+    // Header uses cumulative Eco Score.
     ecoScore:
-      profile.eco_score ?? 0,
+      cumulativeEcoScore,
 
     profile_photo_url:
-      profile.profile_photo_url || "",
+      profile.profile_photo_url ||
+      "",
   };
-
 
   // ============================================================
   // USER PROGRESS
   // ============================================================
 
   const userProgress = {
-
     trips_completed:
-      Number(
-        profile.trips_completed ??
-          profile.completed_trips ??
-          0
-      ),
+      totalTrips,
 
     eco_score:
-      Number(
-        profile.eco_score ?? 0
-      ),
+      cumulativeEcoScore,
 
     challenges_completed:
       Number(
-        profile.challenges_completed ?? 0
+        profile.challenges_completed ??
+          0
       ),
 
     community_posts:
       Number(
-        profile.community_posts ?? 0
+        profile.community_posts ??
+          0
       ),
 
     waste_reduced:
       Number(
-        profile.waste_reduced ?? 0
+        profile.waste_reduced ??
+          0
       ),
-
   };
-
 
   // ============================================================
   // ACHIEVEMENT STATUS
@@ -480,26 +667,24 @@ export default function CommunityPage({
   const achievementsWithStatus =
     achievements.map(
       (achievement) => {
-
         const ruleType =
           achievement.ruleType ||
           "trips_completed";
 
-
-        const target = Math.max(
-          Number(
-            achievement.ruleTarget
-          ) || 1,
-          1
-        );
-
+        const target =
+          Math.max(
+            Number(
+              achievement.ruleTarget
+            ) || 1,
+            1
+          );
 
         const progress =
-          userProgress[ruleType] ?? 0;
-
+          userProgress[
+            ruleType
+          ] ?? 0;
 
         return {
-
           ...achievement,
 
           unlocked:
@@ -511,21 +696,19 @@ export default function CommunityPage({
             target,
 
           ruleUnit:
-            achievement.ruleUnit || "",
-
+            achievement.ruleUnit ||
+            "",
         };
       }
     );
 
-
   // ============================================================
-  // SORT
+  // SORT ACHIEVEMENTS
   // ============================================================
 
   const sortedAchievements =
     [...achievementsWithStatus]
       .sort((a, b) => {
-
         if (
           a.unlocked &&
           !b.unlocked
@@ -541,161 +724,245 @@ export default function CommunityPage({
         }
 
         const dateA =
-          a.createdAt?.toMillis?.() || 0;
+          a.createdAt?.toMillis?.() ||
+          0;
 
         const dateB =
-          b.createdAt?.toMillis?.() || 0;
+          b.createdAt?.toMillis?.() ||
+          0;
 
-        return dateB - dateA;
-
+        return (
+          dateB - dateA
+        );
       });
-
-
-  const unlockedCount =
-    sortedAchievements.filter(
-      (achievement) =>
-        achievement.unlocked
-    ).length;
-
-
 
   // ============================================================
   // PROGRESS SNAPSHOT DATA
   // ============================================================
-  // Latest 4 completed trips:
-  // 4 trips -> T1 T2 T3 T4
-  // 5 trips -> T2 T3 T4 T5
-  // 6 trips -> T3 T4 T5 T6
+  //
+  // Latest 4 completed trips.
+  //
+  // X-axis:
+  // Trip date/date range
+  //
+  // Y-axis:
+  // finalEcoScore
   // ============================================================
-
-  const completedHistory =
-    [...travelHistory]
-      .filter((trip) => {
-        if (!trip) return false;
-
-        if (trip.status) {
-          const status = String(trip.status).toLowerCase();
-
-          return (
-            status === "completed" ||
-            status === "complete"
-          );
-        }
-
-        return true;
-      })
-      .sort((a, b) => {
-        const getTime = (trip) => {
-          const value =
-            trip?.startDate ||
-            trip?.createdAt ||
-            trip?.date;
-
-          if (value?.toMillis) {
-            return value.toMillis();
-          }
-
-          if (value instanceof Date) {
-            return value.getTime();
-          }
-
-          if (typeof value === "string") {
-            const parsed = new Date(value).getTime();
-            return Number.isNaN(parsed) ? 0 : parsed;
-          }
-
-          return 0;
-        };
-
-        return getTime(a) - getTime(b);
-      });
 
   const snapshotData =
-    completedHistory.slice(-4).map((trip, index, window) => {
-      const tripNumber =
-        completedHistory.length - window.length + index + 1;
+    completedHistory
+      .slice(-4)
+      .map(
+        (
+          trip,
+          index,
+          window
+        ) => {
+          const tripNumber =
+            completedHistory.length -
+            window.length +
+            index +
+            1;
 
-      const score = Math.max(
-        0,
-        Math.min(
-          100,
-          Number(
-            trip?.ecoScore ??
-              trip?.eco_score ??
-              0
-          )
-        )
+          const score =
+            Math.max(
+              0,
+              Math.min(
+                100,
+                Number(
+                  trip?.finalEcoScore ??
+                    trip?.ecoScore ??
+                    trip?.eco_score ??
+                    0
+                )
+              )
+            );
+
+          return {
+            ...trip,
+
+            tripNumber,
+
+            name:
+              trip?.name ||
+              trip?.title ||
+              "Untitled Trip",
+
+            score,
+
+            dateLabel:
+              formatTripDate(
+                trip
+              ),
+          };
+        }
       );
 
-      return {
-        ...trip,
-        tripNumber,
-        name:
-          trip?.name ||
-          trip?.title ||
-          "Untitled Trip",
-        nameLabel: `T${tripNumber}`,
-        score,
-      };
-    });
+  // ============================================================
+  // ECO SCORE LEVEL
+  // ============================================================
+  //
+  // Cumulative score:
+  //
+  // Level 1: 0 - 499
+  // Level 2: 500 - 1499
+  // Level 3: 1500 - 2999
+  // Level 4: 3000 - 4999
+  // Level 5: 5000+
+  // ============================================================
 
+  const ECO_LEVELS = [
+    {
+      level: 1,
+      min: 0,
+      max: 499,
+    },
+
+    {
+      level: 2,
+      min: 500,
+      max: 1499,
+    },
+
+    {
+      level: 3,
+      min: 1500,
+      max: 2999,
+    },
+
+    {
+      level: 4,
+      min: 3000,
+      max: 4999,
+    },
+
+    {
+      level: 5,
+      min: 5000,
+      max: Infinity,
+    },
+  ];
+
+  const currentLevel =
+    [...ECO_LEVELS]
+      .reverse()
+      .find(
+        (item) =>
+          cumulativeEcoScore >=
+          item.min
+      ) ||
+    ECO_LEVELS[0];
+
+  const nextLevel =
+    ECO_LEVELS.find(
+      (item) =>
+        item.level ===
+        currentLevel.level +
+          1
+    ) || null;
+
+  const levelProgress =
+    nextLevel
+      ? Math.min(
+          1,
+          Math.max(
+            0,
+            (
+              cumulativeEcoScore -
+              currentLevel.min
+            ) /
+              (
+                nextLevel.min -
+                currentLevel.min
+              )
+          )
+        )
+      : 1;
+
+  const levelText =
+    nextLevel
+      ? `Level ${currentLevel.level} • ${cumulativeEcoScore.toLocaleString()} / ${nextLevel.min.toLocaleString()} XP`
+      : `Level ${currentLevel.level} • ${cumulativeEcoScore.toLocaleString()} XP • Max Level`;
 
   // ============================================================
-  // STATS
+  // TOP STAT CARDS
   // ============================================================
-  // Declared after unlockedCount and completedHistory so the
-  // trip and badge counts can use the real values.
+  //
+  // Only:
+  //
+  // Eco Score
+  // Global Rank
+  // Trips Completed
+  //
+  // No Badges Earned card.
   // ============================================================
 
   const stats = [
-
     {
       label: "Eco Score",
+
       icon: Leaf,
-      iconColor: "#22c55e",
-      value: (
-        profile.eco_score ?? 0
-      ).toLocaleString(),
-      sub: `Level ${
-        profile.level ?? 1
-      }`,
-      progress: 0.72,
+
+      iconColor:
+        "#22c55e",
+
+      value:
+        cumulativeEcoScore.toLocaleString(),
+
+      sub:
+        levelText,
+
+      progress:
+        levelProgress,
     },
 
     {
-      label: "Global Rank",
-      icon: TrendingUp,
-      iconColor: "#3b82f6",
-      value: "-",
-      trendLabel: "Coming soon",
-      trendDirection: "up",
+      label:
+        "Global Rank",
+
+      icon:
+        TrendingUp,
+
+      iconColor:
+        "#3b82f6",
+
+      value:
+        "-",
+
+      trendLabel:
+        "Coming soon",
+
+      trendDirection:
+        "up",
     },
 
     {
-      label: "Total trips",
-      icon: Calendar,
-      iconColor: "#7c3aed",
-      value: String(completedHistory.length),
-      sub: "Completed journeys",
-    },
+      label:
+        "Trips Completed",
 
-    {
-      label: "Badges Earned",
-      icon: Award,
-      iconColor: "#f97316",
-      value: String(unlockedCount),
-      sub: "Achievements",
-    },
+      icon:
+        Calendar,
 
+      iconColor:
+        "#7c3aed",
+
+      value:
+        String(
+          totalTrips
+        ),
+
+      sub:
+        totalTrips === 1
+          ? "Completed journey"
+          : "Completed journeys",
+    },
   ];
-
 
   // ============================================================
   // ROUTES
   // ============================================================
 
   const routeFor = {
-
     "Travel History":
       "/community/history",
 
@@ -713,9 +980,7 @@ export default function CommunityPage({
 
     "Challenge Team":
       "/community/challenges",
-
   };
-
 
   // ============================================================
   // PAGE
@@ -725,40 +990,61 @@ export default function CommunityPage({
     <Layout
       active="community"
       user={user}
-      onNavigate={onNavigate}
+      onNavigate={
+        onNavigate
+      }
     >
+      <div
+        style={
+          styles.content
+        }
+      >
+        {/* ====================================================
+            PAGE HEADER
+            ==================================================== */}
 
-      <div style={styles.content}>
-
-        <h1 style={styles.pageTitle}>
+        <h1
+          style={
+            styles.pageTitle
+          }
+        >
           Eco Journey & Community
         </h1>
 
-        <p style={styles.pageSubtitle}>
-          Connect with fellow eco-travelers
-          and track your impact
+        <p
+          style={
+            styles.pageSubtitle
+          }
+        >
+          Connect with fellow
+          eco-travelers and track
+          your impact
         </p>
 
-
-        {/* ======================================================
+        {/* ====================================================
             STATS
-            ====================================================== */}
+            ==================================================== */}
 
-        <div style={styles.statGrid}>
-
-          {stats.map((stat) => (
-            <StatCard
-              key={stat.label}
-              {...stat}
-            />
-          ))}
-
+        <div
+          style={
+            styles.statGrid
+          }
+        >
+          {stats.map(
+            (stat) => (
+              <StatCard
+                key={
+                  stat.label
+                }
+                {...stat}
+              />
+            )
+          )}
         </div>
 
-
-        {/* ======================================================
+        {/* ====================================================
             PROGRESS SNAPSHOT
-            ====================================================== */}
+            ==================================================== */}
 
         <div
           style={{
@@ -766,81 +1052,160 @@ export default function CommunityPage({
             marginTop: 24,
           }}
         >
-          <div style={styles.featureHeader}>
+          <div
+            style={
+              styles.featureHeader
+            }
+          >
             <BarChart2
               size={18}
               color="#22c55e"
             />
 
-            <span style={styles.featureTitle}>
+            <span
+              style={
+                styles.featureTitle
+              }
+            >
               Progress Snapshot
             </span>
           </div>
 
-          <p style={styles.featureDesc}>
-            Your Eco Score trend across recent trips
+          <p
+            style={
+              styles.featureDesc
+            }
+          >
+            Your final Eco Score
+            across recent trips
           </p>
 
           <div
             style={{
               width: "100%",
-              height: 200,
+              height: 300,
+              marginTop: 8,
             }}
           >
-            {snapshotData.length === 0 ? (
-              <div style={styles.snapshotEmpty}>
-                <BarChart2 size={30} />
+            {snapshotData.length ===
+            0 ? (
+              <div
+                style={
+                  styles.snapshotEmpty
+                }
+              >
+                <BarChart2
+                  size={30}
+                />
 
                 <div>
-                  No completed trips yet.
+                  No completed trips
+                  yet.
                 </div>
 
                 <p>
-                  Complete a trip to see your Eco Score trend here.
+                  Complete a trip to
+                  see your Eco Score
+                  trend here.
                 </p>
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+              >
                 <LineChart
-                  data={snapshotData}
+                  data={
+                    snapshotData
+                  }
                   margin={{
                     top: 20,
-                    right: 20,
-                    left: 20,
-                    bottom: 0,
+                    right: 30,
+                    left: 10,
+                    bottom: 55,
                   }}
                 >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                  />
+
+                  {/* Y AXIS */}
+                  <YAxis
+                    domain={[
+                      0,
+                      100,
+                    ]}
+                    ticks={[
+                      0,
+                      20,
+                      40,
+                      60,
+                      80,
+                      100,
+                    ]}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{
+                      fontSize: 12,
+                      fill:
+                        "#6b7280",
+                    }}
+                    width={35}
+                  />
+
+                  {/* X AXIS */}
                   <XAxis
-                    dataKey="nameLabel"
+                    dataKey={
+                      "dateLabel"
+                    }
                     axisLine={{
-                      stroke: "#111827",
+                      stroke:
+                        "#d1d5db",
                     }}
                     tickLine={false}
                     tick={{
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: 600,
-                      fill: "#111827",
+                      fill:
+                        "#374151",
+                    }}
+                    angle={-20}
+                    textAnchor="end"
+                    height={65}
+                  />
+
+                  {/* TOOLTIP */}
+                  <Tooltip
+                    content={
+                      <SnapshotTooltip />
+                    }
+                    cursor={{
+                      stroke:
+                        "#d1d5db",
+                      strokeDasharray:
+                        "4 4",
                     }}
                   />
 
-                  <Tooltip
-                    content={<SnapshotTooltip />}
-                    cursor={false}
-                  />
-
+                  {/* SCORE LINE */}
                   <Line
                     type="monotone"
                     dataKey="score"
                     stroke="#22c55e"
-                    strokeWidth={2.5}
+                    strokeWidth={3}
                     dot={{
-                      r: 5,
-                      fill: "#22c55e",
-                      strokeWidth: 0,
+                      r: 6,
+                      fill:
+                        "#22c55e",
+                      stroke:
+                        "#ffffff",
+                      strokeWidth: 2,
                     }}
                     activeDot={{
-                      r: 7,
+                      r: 8,
                     }}
+                    connectNulls
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -848,38 +1213,38 @@ export default function CommunityPage({
           </div>
         </div>
 
-
-        {/* ======================================================
+        {/* ====================================================
             FEATURE CARDS
-            ====================================================== */}
+            ==================================================== */}
 
-        <div style={styles.featureGrid}>
-
-          {FEATURE_CARDS.map((f) => (
-
-            <FeatureCard
-              key={f.title}
-              {...f}
-
-              hasUnreadChat={
-                hasUnreadChat
-              }
-
-              onClick={() =>
-                onNavigate?.(
-                  routeFor[f.title]
-                )
-              }
-            />
-
-          ))}
-
+        <div
+          style={
+            styles.featureGrid
+          }
+        >
+          {FEATURE_CARDS.map(
+            (f) => (
+              <FeatureCard
+                key={f.title}
+                {...f}
+                hasUnreadChat={
+                  hasUnreadChat
+                }
+                onClick={() =>
+                  onNavigate?.(
+                    routeFor[
+                      f.title
+                    ]
+                  )
+                }
+              />
+            )
+          )}
         </div>
 
-
-        {/* ======================================================
+        {/* ====================================================
             RECENT ACHIEVEMENTS
-            ====================================================== */}
+            ==================================================== */}
 
         <div
           style={{
@@ -888,15 +1253,11 @@ export default function CommunityPage({
             marginBottom: 32,
           }}
         >
-
-          {/* HEADER */}
-
           <div
             style={
               styles.achievementsHeader
             }
           >
-
             <span
               style={
                 styles.featureTitle
@@ -905,15 +1266,13 @@ export default function CommunityPage({
               Recent Achievements
             </span>
 
-
-            {/* VIEW MORE */}
-
             {sortedAchievements.length >
               0 && (
-
               <button
                 type="button"
-                style={styles.viewMore}
+                style={
+                  styles.viewMore
+                }
                 onClick={() =>
                   onNavigate?.(
                     "/community/achievements"
@@ -921,34 +1280,32 @@ export default function CommunityPage({
                 }
               >
                 View More
-                <ChevronRight size={16} />
+
+                <ChevronRight
+                  size={16}
+                />
               </button>
-
             )}
-
           </div>
-
-
-          {/* ====================================================
-              EMPTY
-              ==================================================== */}
 
           {sortedAchievements.length ===
           0 ? (
-
             <div
               style={{
-                textAlign: "center",
-                padding: "35px 20px",
+                textAlign:
+                  "center",
+                padding:
+                  "35px 20px",
               }}
             >
-
               <div
                 style={
                   styles.noAchievementIcon
                 }
               >
-                <Award size={28} />
+                <Award
+                  size={28}
+                />
               </div>
 
               <div
@@ -956,7 +1313,8 @@ export default function CommunityPage({
                   styles.noAchievementTitle
                 }
               >
-                No achievements available yet
+                No achievements
+                available yet
               </div>
 
               <div
@@ -964,116 +1322,102 @@ export default function CommunityPage({
                   styles.noAchievementText
                 }
               >
-                Check back later for new
+                Check back later
+                for new
                 achievements.
               </div>
-
             </div>
-
           ) : (
-
-            /* ==================================================
-               ONLY 3
-               ================================================== */
-
             <div
               style={
                 styles.achievementGrid
               }
             >
-
               {sortedAchievements
                 .slice(0, 3)
                 .map(
-                  (achievement) => (
-
+                  (
+                    achievement
+                  ) => (
                     <AchievementCard
-                      key={achievement.id}
-
+                      key={
+                        achievement.id
+                      }
                       title={
                         achievement.title
                       }
-
                       description={
                         achievement.description
                       }
-
                       category={
                         achievement.category
                       }
-
                       icon={
                         achievement.icon
                       }
-
                       iconUrl={
                         achievement.iconUrl ||
                         ""
                       }
-
                       points={
                         achievement.points
                       }
-
                       unlocked={
                         achievement.unlocked
                       }
-
                       progress={
                         achievement.progress
                       }
-
                       ruleTarget={
                         achievement.ruleTarget
                       }
-
                       ruleUnit={
                         achievement.ruleUnit
                       }
                     />
-
                   )
                 )}
-
             </div>
-
           )}
-
         </div>
-
       </div>
-
     </Layout>
   );
 }
-
 
 /* ================================================================
    STYLES
    ================================================================ */
 
 const styles = {
-
   snapshotEmpty: {
     height: "100%",
     display: "flex",
-    flexDirection: "column",
+    flexDirection:
+      "column",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent:
+      "center",
     color: "#9ca3af",
     fontSize: 14,
     textAlign: "center",
   },
 
   chartTooltip: {
-    background: "#ffffff",
-    border: "1px solid #e5e7eb",
+    background:
+      "#ffffff",
+    border:
+      "1px solid #e5e7eb",
     borderRadius: 8,
-    boxShadow: "0 8px 20px rgba(0, 0, 0, 0.10)",
-    padding: "10px 12px",
-    fontFamily: "Arial, sans-serif",
+    boxShadow:
+      "0 8px 20px rgba(0, 0, 0, 0.10)",
+    padding:
+      "10px 12px",
+    fontFamily:
+      "Arial, sans-serif",
     width: 190,
-    boxSizing: "border-box",
+    boxSizing:
+      "border-box",
   },
 
   tooltipTrip: {
@@ -1103,28 +1447,35 @@ const styles = {
     fontWeight: 500,
   },
 
-
   loadingPage: {
-    minHeight: "100vh",
+    minHeight:
+      "100vh",
     display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "#f9fafb",
+    flexDirection:
+      "column",
+    alignItems:
+      "center",
+    justifyContent:
+      "center",
+    background:
+      "#f9fafb",
   },
 
   loginRedirectBtn: {
-    background: "#16a34a",
+    background:
+      "#16a34a",
     color: "#fff",
     border: "none",
     borderRadius: 10,
-    padding: "10px 20px",
+    padding:
+      "10px 20px",
     fontWeight: 600,
     cursor: "pointer",
   },
 
   content: {
-    padding: "28px 32px",
+    padding:
+      "28px 32px",
     maxWidth: 1180,
     width: "100%",
     margin: "0 auto",
@@ -1146,12 +1497,13 @@ const styles = {
   statGrid: {
     display: "grid",
     gridTemplateColumns:
-      "repeat(4, 1fr)",
+      "repeat(3, 1fr)",
     gap: 16,
   },
 
   card: {
-    background: "#fff",
+    background:
+      "#fff",
     border:
       "1px solid #e5e7eb",
     borderRadius: 14,
@@ -1160,13 +1512,15 @@ const styles = {
 
   featureHeader: {
     display: "flex",
-    alignItems: "center",
+    alignItems:
+      "center",
     gap: 8,
   },
 
   featureTitleRow: {
     display: "flex",
-    alignItems: "center",
+    alignItems:
+      "center",
     gap: 7,
   },
 
@@ -1179,9 +1533,12 @@ const styles = {
     width: 8,
     height: 8,
     minWidth: 8,
-    borderRadius: "50%",
-    background: "#ef4444",
-    display: "inline-block",
+    borderRadius:
+      "50%",
+    background:
+      "#ef4444",
+    display:
+      "inline-block",
   },
 
   featureDesc: {
@@ -1201,7 +1558,8 @@ const styles = {
   },
 
   featureCard: {
-    background: "#fff",
+    background:
+      "#fff",
     border:
       "1px solid #e5e7eb",
     borderRadius: 14,
@@ -1210,11 +1568,13 @@ const styles = {
 
   btnOutline: {
     width: "100%",
-    padding: "9px 0",
+    padding:
+      "9px 0",
     borderRadius: 8,
     border:
       "1px solid #d1d5db",
-    background: "#fff",
+    background:
+      "#fff",
     fontSize: 14,
     fontWeight: 600,
     cursor: "pointer",
@@ -1222,10 +1582,12 @@ const styles = {
 
   btnFilled: {
     width: "100%",
-    padding: "9px 0",
+    padding:
+      "9px 0",
     borderRadius: 8,
     border: "none",
-    background: "#22c55e",
+    background:
+      "#22c55e",
     color: "#fff",
     fontSize: 14,
     fontWeight: 600,
@@ -1234,19 +1596,23 @@ const styles = {
 
   achievementsHeader: {
     display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
+    justifyContent:
+      "space-between",
+    alignItems:
+      "center",
   },
 
   viewMore: {
     display: "flex",
-    alignItems: "center",
+    alignItems:
+      "center",
     gap: 4,
     fontSize: 13.5,
     fontWeight: 600,
     cursor: "pointer",
     color: "#374151",
-    background: "transparent",
+    background:
+      "transparent",
     border: "none",
     padding: 0,
   },
@@ -1262,13 +1628,17 @@ const styles = {
   noAchievementIcon: {
     width: 56,
     height: 56,
-    margin: "0 auto 12px",
+    margin:
+      "0 auto 12px",
     borderRadius: 14,
-    background: "#f3f4f6",
+    background:
+      "#f3f4f6",
     color: "#9ca3af",
     display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems:
+      "center",
+    justifyContent:
+      "center",
   },
 
   noAchievementTitle: {
@@ -1282,5 +1652,4 @@ const styles = {
     color: "#9ca3af",
     fontSize: 12.5,
   },
-
 };
