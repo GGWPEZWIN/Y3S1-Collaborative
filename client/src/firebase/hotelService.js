@@ -72,9 +72,7 @@ export async function submitHotelApplication(formData, elecFiles = {}, waterFile
   const waterM2Url = waterFiles.m2_file ? await fileToBase64(waterFiles.m2_file) : null;
   const waterM3Url = waterFiles.m3_file ? await fileToBase64(waterFiles.m3_file) : null;
 
-  const initialStatus = fraudCheckPassed ? "Pending Review" : "Flagged";
-
-  // Set default certification expiration (1 year from now)
+  const initialStatus = "Pending Review";
   const oneYearFromNow = new Date();
   oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
 
@@ -87,8 +85,11 @@ export async function submitHotelApplication(formData, elecFiles = {}, waterFile
     contactEmail: formData.contactEmail || user.email || "",
     waterUsage: Number(formData.waterUsage) || 0,
     electricityUsage: Number(formData.electricityUsage) || 0,
+    electricityBillFee: Number(formData.electricityBillFee || formData.newBillFee) || 4500.00, // Stored as trusted initial "Before" fee
+    waterBillFee: Number(formData.waterBillFee || formData.newWaterFee) || 0,
     sustainabilityInitiatives: formData.sustainabilityInitiatives || "",
     status: initialStatus,
+    rejectionReason: null,
     fraudFlags: {
       hasSuspicion: !fraudCheckPassed,
       reason: fraudReason,
@@ -117,10 +118,19 @@ export async function submitHotelApplication(formData, elecFiles = {}, waterFile
     updatedAt: serverTimestamp(),
   };
 
-  // Write directly to the "hotel_applications" collection using user UID
   await setDoc(doc(db, "hotel_applications", user.uid), applicationData, { merge: true });
 
-  // Update user doc flag
+  const auditRef = collection(db, "hotel_applications", user.uid, "audits");
+  await addDoc(auditRef, {
+    type: "initial_application",
+    fileName: "Initial Certification Application",
+    elecUrl: elecM1Url || null,
+    waterUrl: waterM1Url || null,
+    uploadedAt: serverTimestamp(),
+    status: initialStatus,
+    fraudFlags: applicationData.fraudFlags,
+  });
+
   await updateDoc(doc(db, "users", user.uid), {
     hasCompletedApplication: true,
   });
@@ -155,30 +165,77 @@ export async function updateHotelStatus(hotelDocId, updateData) {
   });
 }
 
-// 5. Submit Spot-Check or Renewal Evidence directly into Firestore via Base64
-export async function uploadSpotCheckEvidence(userId, file, auditType = "spot_check") {
+// 5. Submit Tier Upgrade, Spot-Check, or Renewal Evidence as independent audit records
+export async function uploadSpotCheckEvidence(userId, file, auditType = "spot_check", extraFiles = {}) {
   if (!file) throw new Error("No file provided");
 
-  // 1. Convert file to Base64 string
   const fileUrl = await fileToBase64(file);
+  const waterFileUrl = extraFiles.waterFile ? await fileToBase64(extraFiles.waterFile) : null;
 
-  // 2. Add an entry to the hotel's audit subcollection
+  let aiAnalysis = {
+    isLower: false,
+    savingsPercent: 0,
+    note: "Pending manual admin inspection.",
+    hasSuspicion: false,
+  };
+
+  // If this is a Tier Upgrade, calculate fee difference against database baseline fee safely without hard auto-rejections
+  if (auditType === "tier_upgrade" && extraFiles.upgradeForm) {
+    const newFee = Number(extraFiles.upgradeForm.newBillFee) || 0;
+    
+    const hotelDocSnap = await getDoc(doc(db, "hotel_applications", userId));
+    const hotelBaseData = hotelDocSnap.exists() ? hotelDocSnap.data() : {};
+    const baselineFee = Number(hotelBaseData.electricityBillFee) || 4500.00;
+
+    if (baselineFee > 0) {
+      const diff = baselineFee - newFee;
+      aiAnalysis.savingsPercent = Math.round((diff / baselineFee) * 100);
+      aiAnalysis.isLower = diff > 0;
+    }
+
+    aiAnalysis.note = aiAnalysis.isLower
+      ? `AI Verified: Bill fee decreased by ${aiAnalysis.savingsPercent}% (Before: RM ${baselineFee.toFixed(2)} -> After: RM ${newFee.toFixed(2)}). Awaiting Admin Approval.`
+      : `AI Notice: Bill fee is higher than or equal to baseline (Before: RM ${baselineFee.toFixed(2)} -> After: RM ${newFee.toFixed(2)}). Awaiting Admin Approval.`;
+  }
+
+  // Add standalone entry to audit subcollection as Pending Review
   const auditRef = collection(db, "hotel_applications", userId, "audits");
   await addDoc(auditRef, {
     type: auditType,
     fileName: file.name,
     fileUrl,
+    waterFileUrl,
     uploadedAt: serverTimestamp(),
-    status: "Submitted",
+    status: "Pending Review",
+    aiAnalysis,
   });
 
-  // 3. Update the main hotel application document
-  await updateDoc(doc(db, "hotel_applications", userId), {
-    "spotCheck.status": "Submitted",
-    "spotCheck.submittedFileName": file.name,
-    "spotCheck.submittedFileUrl": fileUrl,
-    "spotCheck.submittedAt": serverTimestamp(),
-  });
+  // Update main hotel application document reference state
+  if (auditType === "spot_check" || auditType === "renewal") {
+    await updateDoc(doc(db, "hotel_applications", userId), {
+      "spotCheck.status": "Submitted",
+      "spotCheck.submittedFileName": file.name,
+      "spotCheck.submittedFileUrl": fileUrl,
+      "spotCheck.submittedAt": serverTimestamp(),
+    });
+  } else if (auditType === "tier_upgrade") {
+    const newFee = Number(extraFiles.upgradeForm?.newBillFee) || 0;
+    const newWaterFee = Number(extraFiles.upgradeForm?.newWaterFee) || 0;
+
+    await updateDoc(doc(db, "hotel_applications", userId), {
+      upgradeRequest: {
+        status: "Pending Review",
+        targetTier: extraFiles.upgradeForm?.targetTier,
+        newBillFee: newFee,
+        newWaterFee: newWaterFee,
+        initiatives: extraFiles.upgradeForm?.initiatives || "",
+        submittedFileName: file.name,
+        submittedFileUrl: fileUrl,
+        aiAnalysis,
+        requestedAt: new Date().toISOString(),
+      }
+    });
+  }
 
   return fileUrl;
 }

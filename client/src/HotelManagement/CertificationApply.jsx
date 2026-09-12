@@ -7,7 +7,8 @@ import {
   CheckCircle2,
   FileText
 } from "lucide-react";
-import { auth } from "../firebase/config";
+import { auth, db } from "../firebase/config";
+import { doc, getDoc } from "firebase/firestore";
 import { submitHotelApplication } from "../firebase/hotelService";
 
 export default function CertificationApply({ onNavigate }) {
@@ -17,8 +18,8 @@ export default function CertificationApply({ onNavigate }) {
     state: "",
     roomCount: "",
     contactEmail: "",
-    electricityUsage: "",
-    waterUsage: "",
+    electricityUsage: "", // Acts as Electricity Bill Fee (RM)
+    waterUsage: "",       // Acts as Water Bill Fee (RM)
     sustainabilityInitiatives: "",
   });
 
@@ -29,12 +30,64 @@ export default function CertificationApply({ onNavigate }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Pre-fill contact email if hotel user is logged in
-  useEffect(() => {
-    const user = auth.currentUser;
-    if (user && user.email) {
-      setFormData((prev) => ({ ...prev, contactEmail: user.email }));
+  const [partnerDisplayName, setPartnerDisplayName] = useState("Hotel Partner");
+  const [partnerEmail, setPartnerEmail] = useState("");
+
+  // Generate a consistent placeholder based on the user's UID (matches HotelProfile & Dashboard)
+  const getAccountSpecificPlaceholder = (uid) => {
+    if (!uid) return "Hotel-1234";
+    let hash = 0;
+    for (let i = 0; i < uid.length; i++) {
+      hash = (hash << 5) - hash + uid.charCodeAt(i);
+      hash |= 0;
     }
+    const randomNum = Math.abs(hash % 9000) + 1000;
+    return `Hotel-${randomNum}`;
+  };
+
+  // Pre-fill email, header display name, and default hotel name placeholder
+  useEffect(() => {
+    const fetchUserData = async () => {
+      const user = auth.currentUser;
+      if (user) {
+        const email = user.email || "";
+        setPartnerEmail(email);
+
+        const defaultTag = getAccountSpecificPlaceholder(user.uid);
+
+        setFormData((prev) => ({ 
+          ...prev, 
+          contactEmail: email,
+          hotelName: defaultTag 
+        }));
+
+        try {
+          const userRef = doc(db, "users", user.uid);
+          const userSnap = await getDoc(userRef);
+          const customUsername = userSnap.exists()
+            ? userSnap.data().username || userSnap.data().displayName
+            : null;
+
+          const appRef = doc(db, "hotel_applications", user.uid);
+          const appSnap = await getDoc(appRef);
+
+          if (appSnap.exists()) {
+            const existingName = appSnap.data().hotelName;
+            setPartnerDisplayName(existingName || customUsername || defaultTag);
+            if (existingName) {
+              setFormData((prev) => ({ ...prev, hotelName: existingName }));
+            }
+          } else {
+            setPartnerDisplayName(customUsername || defaultTag);
+          }
+        } catch (err) {
+          console.error("Error loading application status header:", err);
+          setPartnerDisplayName(defaultTag);
+        }
+      }
+    };
+
+    fetchUserData();
   }, []);
 
   const handleInputChange = (e) => {
@@ -62,14 +115,16 @@ export default function CertificationApply({ onNavigate }) {
     }
 
     setSubmitting(true);
-    setStatusMessage("Running AI fraud detection & OCR audit scan...");
+    setStatusMessage("Running AI OCR audit scan...");
 
     try {
-      // Pass single files to submitHotelApplication
-      const result = await submitHotelApplication(
+      // Map electricityUsage/waterUsage input values directly into bill fee fields expected by backend/admin
+      await submitHotelApplication(
         {
           ...formData,
           rooms: formData.roomCount,
+          electricityBillFee: Number(formData.electricityUsage) || 4500.00,
+          waterBillFee: Number(formData.waterUsage) || 0,
           status: "Pending Review",
           certificationTier: null,
         },
@@ -77,16 +132,12 @@ export default function CertificationApply({ onNavigate }) {
         waterFile
       );
 
-      if (result?.status === "Flagged") {
-        alert(
-          `Application Submitted with Discrepancies:\n${result.reason}\n\nYour application has been flagged for human review and spot-checking.`
-        );
-      } else {
-        alert("Application submitted successfully! Baseline under review.");
-      }
+      alert("Application submitted successfully! It is now under review by Admin.");
 
       if (onNavigate) {
-        onNavigate("/hotel-dashboard");
+        onNavigate("/hotel/partner-dashboard");
+      } else {
+        window.location.hash = "/hotel/partner-dashboard";
       }
     } catch (err) {
       console.error(err);
@@ -96,6 +147,8 @@ export default function CertificationApply({ onNavigate }) {
       setStatusMessage("");
     }
   };
+
+  const avatarLetter = (partnerEmail || "u").charAt(0).toUpperCase();
 
   return (
     <div style={styles.container}>
@@ -110,11 +163,11 @@ export default function CertificationApply({ onNavigate }) {
         <div style={styles.profileBadge}>
           <div style={{ textAlign: "right" }}>
             <div style={styles.profileName}>
-              {auth.currentUser?.email?.split("@")[0] || "Partner"}
+              {partnerDisplayName}
             </div>
             <div style={styles.profileScore}>Hotel Partner Portal</div>
           </div>
-          <div style={styles.avatar}>🏨</div>
+          <div style={styles.avatar}>{avatarLetter}</div>
         </div>
       </header>
 
@@ -122,12 +175,12 @@ export default function CertificationApply({ onNavigate }) {
       <main style={styles.main}>
         <div style={styles.titleSection}>
           <h1 style={styles.heading}>Green Certification Application</h1>
-          <p style={styles.subheading}>Submit your property metrics and utility bills for verified audit</p>
+          <p style={styles.subheading}>Submit your property billing details and utility statements for verified audit</p>
         </div>
 
         <button
           type="button"
-          onClick={() => onNavigate?.("/hotel-dashboard")}
+          onClick={() => (onNavigate ? onNavigate("/hotel/partner-dashboard") : (window.location.hash = "/hotel/partner-dashboard"))}
           style={styles.backBtn}
         >
           <ChevronLeft size={16} />
@@ -159,7 +212,6 @@ export default function CertificationApply({ onNavigate }) {
               <input
                 type="text"
                 name="hotelName"
-                placeholder="e.g. Rainforest Haven Resort"
                 value={formData.hotelName}
                 onChange={handleInputChange}
                 required
@@ -208,15 +260,21 @@ export default function CertificationApply({ onNavigate }) {
               </div>
 
               <div>
-                <label style={styles.label}>Contact Email</label>
+                <label style={styles.label}>
+                  Contact Email
+                  <span style={styles.lockedHint}>Locked (Account Identifier)</span>
+                </label>
                 <input
                   type="email"
                   name="contactEmail"
-                  placeholder="partner@hotel.com"
                   value={formData.contactEmail}
-                  onChange={handleInputChange}
-                  required
-                  style={styles.input}
+                  disabled
+                  style={{
+                    ...styles.input,
+                    backgroundColor: "#f3f4f6",
+                    color: "#6b7280",
+                    cursor: "not-allowed",
+                  }}
                 />
               </div>
             </div>
@@ -224,16 +282,17 @@ export default function CertificationApply({ onNavigate }) {
 
           {/* Card 2: Utility Usage & Files */}
           <section style={styles.card}>
-            <h2 style={styles.cardTitle}>Utility Metrics & Documents</h2>
-            <p style={styles.cardSubtitle}>Enter monthly consumption and attach your statements (&lt; 800KB)</p>
+            <h2 style={styles.cardTitle}>Utility Pricing & Documents</h2>
+            <p style={styles.cardSubtitle}>Enter monthly billing fees (RM) and attach your statements (&lt; 800KB)</p>
 
             <div style={styles.twoColumnGrid}>
               <div>
-                <label style={styles.label}>Electricity Usage (kWh/mo)</label>
+                <label style={styles.label}>Electricity Bill Fee (RM/mo)</label>
                 <input
                   type="number"
+                  step="0.01"
                   name="electricityUsage"
-                  placeholder="e.g. 12000"
+                  placeholder="e.g. 4500.00"
                   value={formData.electricityUsage}
                   onChange={handleInputChange}
                   required
@@ -242,14 +301,14 @@ export default function CertificationApply({ onNavigate }) {
               </div>
 
               <div>
-                <label style={styles.label}>Water Usage (Liters/mo)</label>
+                <label style={styles.label}>Water Bill Fee (RM/mo, Optional)</label>
                 <input
                   type="number"
+                  step="0.01"
                   name="waterUsage"
-                  placeholder="e.g. 30000"
+                  placeholder="e.g. 1200.00"
                   value={formData.waterUsage}
                   onChange={handleInputChange}
-                  required
                   style={styles.input}
                 />
               </div>
@@ -322,7 +381,7 @@ export default function CertificationApply({ onNavigate }) {
             </button>
             <button
               type="button"
-              onClick={() => onNavigate?.("/hotel-dashboard")}
+              onClick={() => (onNavigate ? onNavigate("/hotel/partner-dashboard") : (window.location.hash = "/hotel/partner-dashboard"))}
               style={styles.btnCancel}
             >
               Cancel
@@ -344,7 +403,7 @@ const styles = {
   header: {
     backgroundColor: "#fff",
     height: 64,
-    borderBottom: "1px solid #e5e7eb",
+    borderBottom: "1px solid #e2e8f0",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
@@ -368,11 +427,13 @@ const styles = {
     width: 38,
     height: 38,
     borderRadius: "50%",
-    backgroundColor: "#fef3c7",
+    backgroundColor: "#fed7aa",
+    color: "#9a3412",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 18,
+    fontSize: 16,
+    fontWeight: 800,
   },
   main: { maxWidth: 780, margin: "0 auto", padding: "36px 20px 0 20px" },
   titleSection: { marginBottom: 16 },
@@ -429,6 +490,7 @@ const styles = {
   fullWidthGroup: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 },
   twoColumnGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px 20px" },
   label: { fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 4, display: "block" },
+  lockedHint: { fontSize: 11, fontWeight: 600, color: "#9ca3af", marginLeft: 8 },
   input: {
     width: "100%",
     backgroundColor: "#f3f4f6",
@@ -467,7 +529,7 @@ const styles = {
     backgroundColor: "#e5e7eb",
     color: "#374151",
     fontSize: 12,
-    fontWeight: 600,
+    fontWeight: "600",
     padding: "6px 12px",
     borderRadius: 6,
     maxWidth: "85%",
