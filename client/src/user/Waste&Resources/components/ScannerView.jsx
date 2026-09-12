@@ -4,7 +4,7 @@ import DetectionCanvas from "./DetectionCanvas";
 import NumberField from "./NumberField";
 import { PLATE_DIAMETER_CM } from "../constants/waste";
 import { getBenchmarks } from "../services/baselineService";
-import { VisionInputError, runInference } from "../services/visionService";
+import { runInference } from "../services/visionService";
 import {
   CAMERA_DENIED_MESSAGE,
   NO_CAMERA_MESSAGE,
@@ -72,7 +72,10 @@ export default function ScannerView({ onBack, onCommit }) {
       } catch {
         if (!cancelled) {
           setHasLiveCamera(false);
-          setError(CAMERA_DENIED_MESSAGE);
+          // This effect re-fires whenever `phase` returns to "camera" —
+          // including right after a failed upload/analyse attempt. Don't
+          // clobber that more specific error with the generic camera one.
+          setError((prev) => prev || CAMERA_DENIED_MESSAGE);
         }
       }
     })();
@@ -101,9 +104,7 @@ export default function ScannerView({ onBack, onCommit }) {
       setPhase("result");
     } catch (err) {
       if (!aliveRef.current) return;
-      // VisionInputError carries actionable guidance from the service.
-      // Anything else is an infrastructure problem, phrased differently.
-      setError(err instanceof VisionInputError ? err.message : err.message);
+      setError(err.message);
       setManualOpen(true);
       setPhase("camera");
     }

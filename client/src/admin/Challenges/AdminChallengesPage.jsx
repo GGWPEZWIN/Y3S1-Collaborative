@@ -15,6 +15,7 @@ import {
   Users,
   Check,
   Tag,
+  Award,
 } from "lucide-react";
 import {
   listenToChallenges,
@@ -60,6 +61,7 @@ const DUMMY_CHALLENGES = [
     startDate: "2026-09-12",
     endDate: "2026-09-13",
     allowedVerification: ["image", "gps"],
+    badge: { name: "Transit Pioneer", icon: "🚌" },
     rules: [
       "Must take place within Kuala Lumpur central transit zones.",
       "Photo proof of transit ticket/ride or GPS check-in required.",
@@ -88,6 +90,7 @@ const DUMMY_CHALLENGES = [
     startDate: "2026-09-15",
     endDate: "2026-09-15",
     allowedVerification: ["image"],
+    badge: { name: "Zero Waste Hero", icon: "♻️" },
     rules: [
       "Applicable to any registered night market across Malaysia.",
       "Upload a photo showing your food haul inside reusable containers or tiffins.",
@@ -116,6 +119,7 @@ const DUMMY_CHALLENGES = [
     startDate: "2026-09-18",
     endDate: "2026-09-18",
     allowedVerification: ["gps", "image"],
+    badge: { name: "Heritage Strider", icon: "🏛️" },
     rules: [
       "Check in via GPS within the George Town UNESCO World Heritage Zone.",
       "Alternatively, upload a photo of your walking or cycling trip at a heritage landmark.",
@@ -144,6 +148,7 @@ const DUMMY_CHALLENGES = [
     startDate: "2026-09-20",
     endDate: "2026-09-20",
     allowedVerification: ["image", "gps"],
+    badge: { name: "Forest Defender", icon: "🌳" },
     rules: [
       "Must be performed in coordination with registered park authorities or NGO drives.",
       "Upload photo proof of planted saplings or GPS check-in at the park site.",
@@ -172,6 +177,7 @@ const DUMMY_CHALLENGES = [
     startDate: "2026-09-22",
     endDate: "2026-09-22",
     allowedVerification: ["image", "gps"],
+    badge: { name: "River Guardian", icon: "🌊" },
     rules: [
       "Collect at least 1 bag of recyclable/plastic waste along designated river stretches.",
       "Sort collected waste into designated recycling bins provided at the site.",
@@ -200,6 +206,7 @@ const DUMMY_CHALLENGES = [
     startDate: "2026-09-25",
     endDate: "2026-09-25",
     allowedVerification: ["image", "gps"],
+    badge: { name: "Coastal Protector", icon: "🏝️" },
     rules: [
       "Follow ranger safety guidelines when working along tidal coastal areas.",
       "Upload a photo of your mangrove planting or marine debris collection effort.",
@@ -227,6 +234,9 @@ const emptyForm = {
   allowedVerification: ["image"],
   rules: "",
   participants: 0,
+  hasBadge: false,
+  badgeName: "",
+  badgeIcon: "🏆",
 };
 
 const DIFFICULTY_COLORS = {
@@ -246,7 +256,6 @@ export default function AdminChallengesPage() {
   const [modalError, setModalError] = useState("");
   const [copiedId, setCopiedId] = useState(null);
 
-  // Track deleted dummy challenge IDs so deleted dummy items remain hidden
   const [deletedIds, setDeletedIds] = useState(() => {
     try {
       const saved = localStorage.getItem("greentrip_deleted_challenge_ids");
@@ -267,14 +276,12 @@ export default function AdminChallengesPage() {
       const firestoreList = list || [];
       const firestoreIds = new Set(firestoreList.map((item) => String(item.id)));
 
-      // Keep dummy challenges that aren't overridden by Firestore or deleted by admin
       const activeDummies = DUMMY_CHALLENGES.filter(
         (dummy) =>
           !firestoreIds.has(String(dummy.id)) &&
           !deletedIds.includes(String(dummy.id))
       );
 
-      // Merge Firestore challenges with active dummy challenges
       setChallenges([...firestoreList, ...activeDummies]);
       setLoading(false);
     });
@@ -314,6 +321,9 @@ export default function AdminChallengesPage() {
       rules: Array.isArray(challenge.rules)
         ? challenge.rules.join("\n")
         : challenge.rules || "",
+      hasBadge: Boolean(challenge.badge),
+      badgeName: challenge.badge?.name || "",
+      badgeIcon: challenge.badge?.icon || "🏆",
     });
     setShowForm(true);
   };
@@ -347,9 +357,7 @@ export default function AdminChallengesPage() {
           url: shareUrl,
         });
         return;
-      } catch (e) {
-        // Fallback to clipboard
-      }
+      } catch (e) {}
     }
     await navigator.clipboard.writeText(shareUrl);
     setCopiedId(challenge.id);
@@ -360,7 +368,6 @@ export default function AdminChallengesPage() {
     e.preventDefault();
     setModalError("");
 
-    // --- DATE VALIDATION CHECK ---
     if (form.startDate && form.endDate) {
       const start = new Date(form.startDate);
       const end = new Date(form.endDate);
@@ -369,6 +376,11 @@ export default function AdminChallengesPage() {
         setModalError("End date cannot be before start date.");
         return;
       }
+    }
+
+    if (form.hasBadge && !form.badgeName.trim()) {
+      setModalError("Please enter a badge name or uncheck badge creation.");
+      return;
     }
 
     setSaving(true);
@@ -389,7 +401,17 @@ export default function AdminChallengesPage() {
       rules: rulesArray,
       overview: form.overview || form.description,
       description: form.description || form.overview,
+      badge: form.hasBadge
+        ? {
+            name: form.badgeName.trim(),
+            icon: form.badgeIcon.trim() || "🏆",
+          }
+        : null,
     };
+
+    delete payload.hasBadge;
+    delete payload.badgeName;
+    delete payload.badgeIcon;
 
     try {
       if (editingId) {
@@ -471,6 +493,15 @@ export default function AdminChallengesPage() {
 
                   <div style={styles.cardTitle}>{c.title}</div>
 
+                  {c.badge && (
+                    <div style={styles.badgeIndicator}>
+                      <Award size={13} color="#f59e0b" />
+                      <span>
+                        Reward Badge: <strong>{c.badge.icon} {c.badge.name}</strong>
+                      </span>
+                    </div>
+                  )}
+
                   {c.organizer && (
                     <div style={styles.cardMetaItem}>
                       <User size={13} color="#6b7280" />
@@ -505,7 +536,6 @@ export default function AdminChallengesPage() {
                     )}
                   </div>
 
-                  {/* Metrics */}
                   <div style={styles.metricsRow}>
                     <div style={styles.metricBadge}>
                       <span style={styles.metricValue}>+{c.points}</span>
@@ -561,7 +591,6 @@ export default function AdminChallengesPage() {
         </div>
       )}
 
-      {/* CREATE / EDIT FORM MODAL */}
       {showForm && (
         <div style={styles.modalOverlay} onClick={closeForm}>
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
@@ -572,7 +601,6 @@ export default function AdminChallengesPage() {
               </button>
             </div>
 
-            {/* In-Modal Warning Notification */}
             {modalError && (
               <div style={styles.modalErrorBanner}>
                 ⚠️ {modalError}
@@ -580,7 +608,6 @@ export default function AdminChallengesPage() {
             )}
 
             <form onSubmit={handleSubmit} style={styles.form}>
-              {/* Title & Organizer */}
               <div style={styles.formRow}>
                 <label style={styles.label}>
                   Title *
@@ -607,7 +634,6 @@ export default function AdminChallengesPage() {
                 </label>
               </div>
 
-              {/* Theme & Category */}
               <div style={styles.formRow}>
                 <label style={styles.label}>
                   Theme *
@@ -636,7 +662,6 @@ export default function AdminChallengesPage() {
                 </label>
               </div>
 
-              {/* Overview */}
               <label style={styles.label}>
                 Overview Summary *
                 <textarea
@@ -648,7 +673,6 @@ export default function AdminChallengesPage() {
                 />
               </label>
 
-              {/* Header Image URL & Live Preview */}
               <label style={styles.label}>
                 Header Image URL (Optional)
                 <input
@@ -671,7 +695,6 @@ export default function AdminChallengesPage() {
                 </div>
               </div>
 
-              {/* Location & Difficulty */}
               <div style={styles.formRow}>
                 <label style={styles.label}>
                   Location / Zone
@@ -698,7 +721,6 @@ export default function AdminChallengesPage() {
                 </label>
               </div>
 
-              {/* Duration & Start/End Dates */}
               <div style={styles.formRow}>
                 <label style={styles.label}>
                   Duration
@@ -746,7 +768,6 @@ export default function AdminChallengesPage() {
                 </label>
               </div>
 
-              {/* Points & CO2 Savings */}
               <div style={styles.formRow}>
                 <label style={styles.label}>
                   Reward Points (+pts) *
@@ -774,7 +795,44 @@ export default function AdminChallengesPage() {
                 </label>
               </div>
 
-              {/* Verification Options */}
+              {/* Badge Creation Section */}
+              <div style={styles.badgeSectionBox}>
+                <label style={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={form.hasBadge}
+                    onChange={(e) => setForm({ ...form, hasBadge: e.target.checked })}
+                  />
+                  <Award size={16} color="#f59e0b" />
+                  <strong>Attach Reward Badge to this Challenge</strong>
+                </label>
+
+                {form.hasBadge && (
+                  <div style={{ ...styles.formRow, marginTop: 10 }}>
+                    <label style={styles.label}>
+                      Badge Name *
+                      <input
+                        type="text"
+                        value={form.badgeName}
+                        onChange={(e) => setForm({ ...form, badgeName: e.target.value })}
+                        style={styles.input}
+                        placeholder="e.g., Forest Guardian"
+                      />
+                    </label>
+                    <label style={{ ...styles.label, flex: "0 0 100px" }}>
+                      Icon / Emoji
+                      <input
+                        type="text"
+                        value={form.badgeIcon}
+                        onChange={(e) => setForm({ ...form, badgeIcon: e.target.value })}
+                        style={{ ...styles.input, textAlign: "center" }}
+                        placeholder="🏆"
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+
               <div style={styles.label}>
                 Allowed Verification Methods
                 <div style={styles.checkboxGroup}>
@@ -797,7 +855,6 @@ export default function AdminChallengesPage() {
                 </div>
               </div>
 
-              {/* Rules & Guidelines */}
               <label style={styles.label}>
                 Rules & Guidelines (One per line)
                 <textarea
@@ -808,7 +865,6 @@ export default function AdminChallengesPage() {
                 />
               </label>
 
-              {/* Form Actions */}
               <div style={styles.formActions}>
                 <button type="button" onClick={closeForm} style={styles.cancelBtn}>
                   Cancel
@@ -911,6 +967,17 @@ const styles = {
   },
   difficultyPill: { fontSize: 11, fontWeight: 700, borderRadius: 20, padding: "3px 9px" },
   cardTitle: { fontSize: 15.5, fontWeight: 800, color: "#111827", marginTop: 2 },
+  badgeIndicator: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    fontSize: 12,
+    color: "#92400e",
+    background: "#fef3c7",
+    padding: "4px 8px",
+    borderRadius: 6,
+    width: "fit-content",
+  },
   cardOverview: { fontSize: 12.5, color: "#4b5563", lineHeight: 1.4, marginTop: 2 },
   cardMetaGroup: { display: "flex", flexDirection: "column", gap: 3, marginTop: 6 },
   cardMetaItem: { display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#4b5563" },
@@ -1032,6 +1099,12 @@ const styles = {
     padding: "3px 8px",
     borderRadius: 6,
     backdropFilter: "blur(4px)",
+  },
+  badgeSectionBox: {
+    background: "#fef8ee",
+    border: "1px solid #fcd34d",
+    borderRadius: 10,
+    padding: 12,
   },
   checkboxGroup: {
     display: "flex",

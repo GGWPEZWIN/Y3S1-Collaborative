@@ -45,7 +45,7 @@ import { buildEcoReportSnapshot } from "../user/AIRecommendation/services/report
  *   tripSessions/{sessionId}/completedSegments/{segmentId}
  *   tripSessions/{sessionId}/skippedSegments/{segmentId}
  *   activeTripLocks/{uid}        — deterministic one-active-trip lock
- *   users/{uid}/travelHistory/{itineraryId}/ecoReport/report
+ *   travelHistory/{itineraryId}/ecoReport/report
  * ============================================================
  */
 
@@ -54,7 +54,6 @@ const TRIP_SESSIONS = "tripSessions";
 const ACTIVE_LOCKS = "activeTripLocks";
 const COMPLETED_SEGMENTS = "completedSegments";
 const SKIPPED_SEGMENTS = "skippedSegments";
-const USERS = "users";
 const TRAVEL_HISTORY = "travelHistory";
 const ECO_REPORT = "ecoReport";
 
@@ -813,11 +812,11 @@ export async function skipCurrentDestination({
 }
 
 function reportRefFor(uid, itineraryId) {
-  return doc(db, USERS, uid, TRAVEL_HISTORY, itineraryId, ECO_REPORT, REPORT_DOCUMENT_ID);
+  return doc(db, TRAVEL_HISTORY, itineraryId, ECO_REPORT, REPORT_DOCUMENT_ID);
 }
 
 function historyRefFor(uid, itineraryId) {
-  return doc(db, USERS, uid, TRAVEL_HISTORY, itineraryId);
+  return doc(db, TRAVEL_HISTORY, itineraryId);
 }
 
 function asExistingReport(snap) {
@@ -868,13 +867,19 @@ export async function finishTripSession(sessionId) {
       const historyRef = historyRefFor(user.uid, session.itineraryId);
       const reportRef = reportRefFor(user.uid, session.itineraryId);
       const itinerarySnap = await transaction.get(itineraryRef);
-      const historySnap = await transaction.get(historyRef);
-      const reportSnap = await transaction.get(reportRef);
       const lock = lockSnap.exists() ? asLock(lockSnap.data()) : null;
       const itinerary = itinerarySnap.exists()
         ? { id: itinerarySnap.id, ...itinerarySnap.data() }
         : null;
-      const existingReport = asExistingReport(reportSnap);
+      // A new Module 2 finish creates the history + report documents.
+      // Do not read missing pre-finish documents here.
+      // A completed session is the only case where an existing report is
+      // needed for an idempotent retry.
+      let existingReport = null;
+      if (session.status === "completed") {
+        const reportSnap = await transaction.get(reportRef);
+        existingReport = asExistingReport(reportSnap);
+      }
 
       const completions = [];
       const skips = [];
@@ -969,17 +974,14 @@ export async function finishTripSession(sessionId) {
         completedAt: now,
         updatedAt: now,
       };
-      if (historySnap.exists()) {
-        transaction.update(historyRef, historyUpdate);
-      } else {
-        transaction.set(historyRef, {
-          itineraryId: session.itineraryId,
-          title: session.itineraryTitle || itinerary?.title || "",
-          name: session.itineraryTitle || itinerary?.title || "",
-          ...historyUpdate,
-          createdAt: now,
-        });
-      }
+      transaction.set(historyRef, {
+        userId: user.uid,
+        itineraryId: session.itineraryId,
+        title: session.itineraryTitle || itinerary?.title || "",
+        name: session.itineraryTitle || itinerary?.title || "",
+        ...historyUpdate,
+        createdAt: now,
+      }, { merge: true });
 
       transaction.set(reportRef, report);
       transaction.delete(lockRef);

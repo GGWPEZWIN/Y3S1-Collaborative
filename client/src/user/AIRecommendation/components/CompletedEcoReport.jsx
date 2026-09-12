@@ -7,9 +7,12 @@ import {
   travelModeLabel,
   visibilityLabel,
 } from "../services/report/reportDisplay.js";
+import ResourceImpactCard from "./ResourceImpactCard";
 
 export default function CompletedEcoReport({
   reportView,
+  wasteImpact = null,
+  wasteImpactStatus = "idle",
   publishing = false,
   publishError = null,
   onPublish,
@@ -134,6 +137,8 @@ export default function CompletedEcoReport({
         </ol>
         )}
       </article>
+
+      <ResourceImpactCard impact={wasteImpact} status={wasteImpactStatus} />
 
       <div className="m2-live" aria-live="polite">
         {publishError ? (

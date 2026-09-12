@@ -5,7 +5,6 @@ import {
   ensureServiceWorker,
   haversineM,
   isGeolocationSupported,
-  notify,
   watchPosition,
 } from "../services/geoService";
 
@@ -62,12 +61,12 @@ export default function useGeofenceReminder({ enabled, hasLoggedToday, onTrigger
         setWatch({ denied: false, distance: Math.round(metres) });
 
         const inside = metres <= lodging.radiusM;
+        // The OS notification itself is fired once, on page visit, by
+        // WastePage — not here. Every mount starts wasOutside as true, so
+        // treating that as a fresh "arrival" would fire a second, duplicate
+        // notification alongside the visit-triggered one on every page load.
         if (inside && wasOutside.current && !latest.current.hasLoggedToday) {
           latest.current.onTrigger();
-          notify("GreenTrip Malaysia", {
-            body: "Back at your lodging. Complete today's waste ledger.",
-            tag: "greentrip-daily-ledger",
-          });
         }
         wasOutside.current = !inside;
       },

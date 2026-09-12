@@ -1,4 +1,4 @@
-import React, {
+import {
   useEffect,
   useState,
 } from "react";
@@ -44,8 +44,8 @@ import {
 import {
   collection,
   onSnapshot,
-  query,
-  orderBy,
+  // query,    // unused: the orderBy query below is commented out
+  // orderBy,  // unused: see the note in the travel-history effect
 } from "firebase/firestore";
 
 import { db } from "../../../firebase/config";
@@ -275,7 +275,7 @@ export default function CommunityPage({
   useEffect(() => {
 
     if (!authUser?.uid) {
-      return;
+      return undefined;
     }
 
     const unsubscribe =
@@ -309,12 +309,14 @@ export default function CommunityPage({
   // ============================================================
   // USER TRAVEL HISTORY - PROGRESS SNAPSHOT ONLY
   // ============================================================
+  // No setState in the effect body: state is only written from
+  // the Firestore callback and from cleanup. Also no orderBy,
+  // because Firestore excludes docs missing the ordered field.
+  // completedHistory sorts client side anyway.
+  // ============================================================
 
   useEffect(() => {
-    if (!authUser?.uid) {
-      setTravelHistory([]);
-      return;
-    }
+    if (!authUser?.uid) return undefined;
 
     const travelHistoryRef = collection(
       db,
@@ -323,31 +325,38 @@ export default function CommunityPage({
       "travelHistory"
     );
 
-    const travelHistoryQuery = query(
-      travelHistoryRef,
-      orderBy("startDate", "asc")
-    );
+    // Kept for reference. Firestore EXCLUDES documents that are
+    // missing the ordered field instead of sorting them last, so
+    // any trip without a startDate disappeared from the snapshot.
+    // completedHistory sorts client side anyway.
+    //
+    // const travelHistoryQuery = query(
+    //   travelHistoryRef,
+    //   orderBy("startDate", "asc")
+    // );
 
     const unsubscribe = onSnapshot(
-      travelHistoryQuery,
+      travelHistoryRef,
       (snapshot) => {
-        const history = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-
-        setTravelHistory(history);
+        setTravelHistory(
+          snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }))
+        );
       },
       (error) => {
         console.error(
           "Failed to listen to travel history:",
           error
         );
-        setTravelHistory([]);
       }
     );
 
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      setTravelHistory([]);
+    };
   }, [authUser?.uid]);
 
 
@@ -426,53 +435,6 @@ export default function CommunityPage({
     profile_photo_url:
       profile.profile_photo_url || "",
   };
-
-
-  // ============================================================
-  // STATS
-  // ============================================================
-
-  const stats = [
-
-    {
-      label: "Eco Score",
-      icon: Leaf,
-      iconColor: "#22c55e",
-      value: (
-        profile.eco_score ?? 0
-      ).toLocaleString(),
-      sub: `Level ${
-        profile.level ?? 1
-      }`,
-      progress: 0.72,
-    },
-
-    {
-      label: "Global Rank",
-      icon: TrendingUp,
-      iconColor: "#3b82f6",
-      value: "—",
-      trendLabel: "Coming soon",
-      trendDirection: "up",
-    },
-
-    {
-      label: "Total trips",
-      icon: Calendar,
-      iconColor: "#7c3aed",
-      value: "0",
-      sub: "Completed journeys",
-    },
-
-    {
-      label: "Badges Earned",
-      icon: Award,
-      iconColor: "#f97316",
-      value: "0",
-      sub: "Achievements",
-    },
-
-  ];
 
 
   // ============================================================
@@ -649,9 +611,9 @@ export default function CommunityPage({
       });
 
   const snapshotData =
-    completedHistory.slice(-4).map((trip) => {
+    completedHistory.slice(-4).map((trip, index, window) => {
       const tripNumber =
-        completedHistory.indexOf(trip) + 1;
+        completedHistory.length - window.length + index + 1;
 
       const score = Math.max(
         0,
@@ -676,6 +638,57 @@ export default function CommunityPage({
         score,
       };
     });
+
+
+  // ============================================================
+  // STATS
+  // ============================================================
+  // Declared after unlockedCount and completedHistory so the
+  // trip and badge counts can use the real values.
+  // ============================================================
+
+  const stats = [
+
+    {
+      label: "Eco Score",
+      icon: Leaf,
+      iconColor: "#22c55e",
+      value: (
+        profile.eco_score ?? 0
+      ).toLocaleString(),
+      sub: `Level ${
+        profile.level ?? 1
+      }`,
+      progress: 0.72,
+    },
+
+    {
+      label: "Global Rank",
+      icon: TrendingUp,
+      iconColor: "#3b82f6",
+      value: "-",
+      trendLabel: "Coming soon",
+      trendDirection: "up",
+    },
+
+    {
+      label: "Total trips",
+      icon: Calendar,
+      iconColor: "#7c3aed",
+      value: String(completedHistory.length),
+      sub: "Completed journeys",
+    },
+
+    {
+      label: "Badges Earned",
+      icon: Award,
+      iconColor: "#f97316",
+      value: String(unlockedCount),
+      sub: "Achievements",
+    },
+
+  ];
+
 
   // ============================================================
   // ROUTES

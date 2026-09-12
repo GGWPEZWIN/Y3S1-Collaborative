@@ -3,31 +3,32 @@ import {
   doc,
   getDoc,
   getDocs,
-  setDoc,
-  deleteDoc,
+  query,
+  where,
+  runTransaction,
   serverTimestamp,
-  Timestamp,
 } from "firebase/firestore";
 
-import { onAuthStateChanged } from "firebase/auth";
+import {
+  onAuthStateChanged,
+} from "firebase/auth";
 
-import { db, auth } from "./config";
+import {
+  db,
+  auth,
+} from "./config";
 
-/*
- * ============================================================
- * GET CURRENT FIREBASE USER
- * ============================================================
- */
+// ============================================================
+// GET CURRENT FIREBASE USER
+// ============================================================
 
 function getLoggedInUser() {
   return new Promise((resolve, reject) => {
-    // Firebase already knows the current user
     if (auth.currentUser) {
       resolve(auth.currentUser);
       return;
     }
 
-    // Wait for Firebase authentication to finish restoring
     const unsubscribe = onAuthStateChanged(
       auth,
       (user) => {
@@ -37,7 +38,9 @@ function getLoggedInUser() {
           resolve(user);
         } else {
           reject(
-            new Error("No user is currently logged in.")
+            new Error(
+              "No user is currently logged in."
+            )
           );
         }
       },
@@ -49,81 +52,81 @@ function getLoggedInUser() {
   });
 }
 
-/*
- * ============================================================
- * FORMAT FIRESTORE DATE
- * ============================================================
- */
+// ============================================================
+// DATE FORMAT
+// ============================================================
 
 function formatDate(timestamp) {
   if (!timestamp) {
     return "";
   }
 
-  // Firestore Timestamp
-  if (typeof timestamp.toDate === "function") {
-    return timestamp.toDate().toLocaleDateString("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
+  if (
+    typeof timestamp.toDate === "function"
+  ) {
+    return timestamp
+      .toDate()
+      .toLocaleDateString(
+        "en-GB",
+        {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        }
+      );
   }
 
-  // JavaScript Date
   if (timestamp instanceof Date) {
-    return timestamp.toLocaleDateString("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
+    return timestamp.toLocaleDateString(
+      "en-GB",
+      {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      }
+    );
   }
 
-  // String date
   if (typeof timestamp === "string") {
     const date = new Date(timestamp);
 
     if (!Number.isNaN(date.getTime())) {
-      return date.toLocaleDateString("en-GB", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      });
+      return date.toLocaleDateString(
+        "en-GB",
+        {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        }
+      );
     }
   }
 
   return "";
 }
 
-/*
- * ============================================================
- * CALCULATE ECO GRADE
- * ============================================================
- *
- * Score:
- * 90 - 100 = A+
- * 80 - 89  = A
- * 70 - 79  = B
- * 60 - 69  = C
- * below 60 = D
- */
+// ============================================================
+// CALCULATE GRADE
+// ============================================================
 
 function calculateGrade(score) {
-  const numericScore =
-    Number(score) || 0;
+  const numericScore = Number(score) || 0;
 
   if (numericScore >= 90) return "A+";
   if (numericScore >= 80) return "A";
-  if (numericScore >= 70) return "B";
-  if (numericScore >= 60) return "C";
-
-  return "D";
+  if (numericScore >= 70) return "A-";
+  if (numericScore >= 65) return "B+";
+  if (numericScore >= 60) return "B";
+  if (numericScore >= 55) return "C+";
+  if (numericScore >= 50) return "C";
+  if (numericScore >= 45) return "D";
+  if (numericScore >= 40) return "E";
+  return "G";
 }
 
-/*
- * ============================================================
- * CONVERT TRIP DOCUMENT
- * ============================================================
- */
+// ============================================================
+// CONVERT TRIP
+// ============================================================
 
 function convertTrip(docSnapshot) {
   const data =
@@ -135,38 +138,40 @@ function convertTrip(docSnapshot) {
   const endDate =
     data.endDate || null;
 
+  // Travel History stores the completed-trip score as finalEcoScore.
+  // Fall back to older fields for compatibility.
   const ecoScore =
     Number(
+      data.finalEcoScore ??
+      data.final_eco_score ??
       data.ecoScore ??
       data.eco_score ??
+      data.planEcoScore ??
+      data.plan_eco_score ??
       0
     );
 
+  // Completed trips store actual confirmed transport carbon here.
   const carbonKg =
     Number(
+      data.confirmedTransportationCarbonKg ??
+      data.confirmed_transportation_carbon_kg ??
       data.carbonKg ??
       data.carbon_kg ??
       data.carbon ??
       0
     );
 
-  const badgesEarned =
-    Number(
-      data.badgesEarned ??
-      data.badges_earned ??
-      data.badges ??
-      0
-    );
-
   const grade =
     data.grade ||
-    calculateGrade(ecoScore);
+    calculateGrade(
+      ecoScore
+    );
 
   return {
     id:
       docSnapshot.id,
 
-    // Support both "name" and "title"
     name:
       data.name ||
       data.title ||
@@ -193,8 +198,6 @@ function convertTrip(docSnapshot) {
 
     carbonKg,
 
-    badgesEarned,
-
     grade,
 
     status:
@@ -207,455 +210,9 @@ function convertTrip(docSnapshot) {
   };
 }
 
-/*
- * ============================================================
- * ITINERARY → TRAVEL HISTORY SYNC
- * ============================================================
- *
- * The itinerary collection is the source of truth.
- *
- * Travel History mirrors each user's itinerary at:
- *
- * users/{uid}/travelHistory/{itineraryId}
- *
- * The SAME itinerary ID is used as the Travel History ID.
- *
- * Therefore:
- *
- * Save itinerary
- *      ↓
- * Travel History created
- *
- * Edit itinerary
- *      ↓
- * Same Travel History document updated
- *
- * Change status
- *      ↓
- * Same Travel History document updated
- *
- * Completed
- *      ↓
- * Travel History becomes Completed
- *      ↓
- * Achievement checking can run automatically
- * ============================================================
- */
-
-/*
- * ============================================================
- * CONVERT VALUE TO FIRESTORE TIMESTAMP
- * ============================================================
- */
-
-function toFirestoreDate(value) {
-  if (!value) {
-    return null;
-  }
-
-  // Already a Firestore Timestamp
-  if (value instanceof Timestamp) {
-    return value;
-  }
-
-  // Firestore Timestamp-like object
-  if (
-    value?.toDate &&
-    typeof value.toDate === "function"
-  ) {
-    return value;
-  }
-
-  // JavaScript Date
-  if (value instanceof Date) {
-    return Timestamp.fromDate(value);
-  }
-
-  // String such as:
-  // 2026-09-09
-  if (typeof value === "string") {
-    const date =
-      new Date(`${value}T00:00:00`);
-
-    if (
-      !Number.isNaN(
-        date.getTime()
-      )
-    ) {
-      return Timestamp.fromDate(
-        date
-      );
-    }
-  }
-
-  return null;
-}
-
-/*
- * ============================================================
- * GET ITINERARY LOCATION
- * ============================================================
- *
- * Example:
- *
- * Kuala Lumpur
- * →
- * Melaka
- * →
- * Johor Bahru
- *
- * If no destinations exist, use the start location.
- * ============================================================
- */
-
-function getItineraryLocation(
-  itinerary
-) {
-  const destinations =
-    Array.isArray(
-      itinerary?.destinations
-    )
-      ? itinerary.destinations
-          .map(
-            (destination) =>
-              destination?.name
-          )
-          .filter(Boolean)
-      : [];
-
-  if (
-    destinations.length > 0
-  ) {
-    return destinations.join(
-      " → "
-    );
-  }
-
-  return (
-    itinerary?.startLocation?.name ||
-    ""
-  );
-}
-
-/*
- * ============================================================
- * NUMBER HELPER
- * ============================================================
- */
-
-const MODULE2_REPORT_SOURCE = "module2_finish_trip";
-
-function ecoReportRef(uid, itineraryId) {
-  return doc(
-    db,
-    "users",
-    uid,
-    "travelHistory",
-    itineraryId,
-    "ecoReport",
-    "report"
-  );
-}
-
-function isModule2HistoryRecord(data) {
-  if (!data || typeof data !== "object") {
-    return false;
-  }
-
-  return (
-    data.finalEcoScore != null ||
-    data.confirmedTransportationCarbonKg != null ||
-    data.transportationEcoScore != null ||
-    data.carbonScope != null
-  );
-}
-
-async function hasModule2EcoReport(uid, itineraryId) {
-  const reportSnapshot = await getDoc(
-    ecoReportRef(uid, itineraryId)
-  );
-
-  return (
-    reportSnapshot.exists() &&
-    reportSnapshot.data()?.source === MODULE2_REPORT_SOURCE
-  );
-}
-
-function getNumber(...values) {
-  for (
-    const value of values
-  ) {
-    if (
-      value !== undefined &&
-      value !== null &&
-      value !== ""
-    ) {
-      const number =
-        Number(value);
-
-      if (
-        Number.isFinite(number)
-      ) {
-        return number;
-      }
-    }
-  }
-
-  return 0;
-}
-
-/*
- * ============================================================
- * SYNC ITINERARY TO TRAVEL HISTORY
- * ============================================================
- */
-
-export async function syncTravelHistoryFromItinerary(
-  itinerary,
-  statusOverride = null
-) {
-  const firebaseUser =
-    await getLoggedInUser();
-
-  const itineraryId =
-    itinerary?.id ||
-    itinerary?.itineraryId;
-
-  if (!itineraryId) {
-    throw new Error(
-      "Itinerary ID is required to sync travel history."
-    );
-  }
-
-  const status =
-    statusOverride ||
-    itinerary.status ||
-    "Planning";
-
-  /*
-   * ==========================================================
-   * TRAVEL HISTORY RULE
-   * ==========================================================
-   *
-   * Travel History must contain ONLY completed trips.
-   *
-   * Planning / Active:
-   *   - revoke/remove any existing history record
-   *
-   * Completed:
-   *   - create/update the history record
-   *
-   * This also protects against an old history record remaining
-   * when a user changes a completed itinerary back to Planning
-   * or Active.
-   * ==========================================================
-   */
-
-  const historyRef =
-    doc(
-      db,
-      "users",
-      firebaseUser.uid,
-      "travelHistory",
-      itineraryId
-    );
-
-  const existingSnapshot =
-    await getDoc(
-      historyRef
-    );
-
-  const preserveModule2 =
-    isModule2HistoryRecord(
-      existingSnapshot.data()
-    ) ||
-    await hasModule2EcoReport(
-      firebaseUser.uid,
-      itineraryId
-    );
-
-  if (status !== "Completed") {
-    /*
-     * Incoming rule: Planning / Active trips are not kept in
-     * Travel History. Module 2 Finish records are an exception:
-     * deleting the parent would drop final scores / carbon and
-     * orphan the private eco report.
-     */
-    if (
-      existingSnapshot.exists() &&
-      !preserveModule2
-    ) {
-      await deleteDoc(historyRef);
-    }
-
-    return null;
-  }
-
-  /*
-   * IMPORTANT:
-   *
-   * Your itinerary stores Eco Score inside:
-   *
-   * itinerary.meta.ecoScore
-   *
-   * so we support BOTH:
-   *
-   * itinerary.ecoScore
-   * itinerary.meta.ecoScore
-   */
-
-  const ecoScore =
-    getNumber(
-      itinerary.ecoScore,
-      itinerary.eco_score,
-      itinerary.meta?.ecoScore,
-      itinerary.meta?.eco_score
-    );
-
-  /*
-   * Support both direct dates and nested dates.
-   */
-
-  const startDate =
-    toFirestoreDate(
-      itinerary.startDate ??
-      itinerary.dates?.startDate
-    );
-
-  const endDate =
-    toFirestoreDate(
-      itinerary.endDate ??
-      itinerary.dates?.endDate
-    );
-
-  /*
-   * Carbon may not exist during Module 1.
-   *
-   * Module 2 can later update this value.
-   */
-
-  const carbonKg =
-    getNumber(
-      itinerary.carbonKg,
-      itinerary.carbon_kg,
-      itinerary.carbon,
-      itinerary.totalCarbonKg,
-      itinerary.meta?.carbonKg,
-      itinerary.meta?.carbon_kg
-    );
-
-  /*
-   * Badges may also be populated later.
-   */
-
-  const badgesEarned =
-    getNumber(
-      itinerary.badgesEarned,
-      itinerary.badges_earned,
-      itinerary.badges,
-      itinerary.meta?.badgesEarned,
-      itinerary.meta?.badges_earned
-    );
-
-  /*
-   * Build Travel History document.
-   */
-
-  const payload = {
-    itineraryId,
-
-    title:
-      itinerary.title ||
-      itinerary.name ||
-      "Untitled Trip",
-
-    name:
-      itinerary.name ||
-      itinerary.title ||
-      "Untitled Trip",
-
-    /*
-     * Firestore Timestamp
-     */
-    startDate,
-
-    /*
-     * Firestore Timestamp
-     */
-    endDate,
-
-    location:
-      getItineraryLocation(
-        itinerary
-      ),
-
-    badgesEarned,
-
-    status,
-
-    updatedAt:
-      serverTimestamp(),
-  };
-
-  /*
-   * Only create createdAt for a NEW history document.
-   */
-
-  if (
-    !existingSnapshot.exists()
-  ) {
-    payload.createdAt =
-      serverTimestamp();
-  }
-
-  /*
-   * Completed status fields.
-   *
-   * This function only creates/updates Travel History for
-   * Completed itineraries.
-   */
-
-  payload.completed = true;
-
-  payload.isCompleted = true;
-
-  if (!preserveModule2) {
-    payload.ecoScore = ecoScore;
-    payload.carbonKg = carbonKg;
-  }
-
-  if (!existingSnapshot.exists()) {
-    payload.completedAt = serverTimestamp();
-  }
-
-  /*
-   * merge:true means:
-   *
-   * existing Eco Report fields or Module 2 fields
-   * are not unnecessarily deleted.
-   */
-
-  await setDoc(
-    historyRef,
-    payload,
-    {
-      merge: true,
-    }
-  );
-
-  return {
-    id:
-      itineraryId,
-
-    ...payload,
-  };
-}
-
-/*
- * ============================================================
- * GET CURRENT USER PROFILE
- * ============================================================
- */
+// ============================================================
+// CURRENT USER
+// ============================================================
 
 export async function getCurrentUser() {
   const firebaseUser =
@@ -668,29 +225,25 @@ export async function getCurrentUser() {
       firebaseUser.uid
     );
 
-  const userSnapshot =
+  const snapshot =
     await getDoc(
       userRef
     );
 
-  if (
-    !userSnapshot.exists()
-  ) {
+  if (!snapshot.exists()) {
     return {
       name:
         firebaseUser.displayName ||
         "User",
 
-      ecoScore:
-        0,
+      ecoScore: 0,
 
-      profilePhotoUrl:
-        "",
+      profilePhotoUrl: "",
     };
   }
 
   const data =
-    userSnapshot.data();
+    snapshot.data();
 
   return {
     name:
@@ -712,11 +265,18 @@ export async function getCurrentUser() {
   };
 }
 
-/*
- * ============================================================
- * GET TRAVEL HISTORY
- * ============================================================
- */
+// ============================================================
+// TRAVEL HISTORY
+// ============================================================
+//
+// NEW FIRESTORE STRUCTURE:
+//
+// travelHistory/{itineraryId}
+//
+// NOT:
+//
+// users/{uid}/travelHistory/{itineraryId}
+// ============================================================
 
 export async function getTravelHistory({
   status = "All Trips",
@@ -726,33 +286,39 @@ export async function getTravelHistory({
   const firebaseUser =
     await getLoggedInUser();
 
+  if (!firebaseUser) {
+    throw new Error(
+      "No user is currently logged in."
+    );
+  }
+
   const travelHistoryRef =
     collection(
       db,
-      "users",
-      firebaseUser.uid,
       "travelHistory"
     );
 
-  /*
-   * Do NOT use:
-   *
-   * orderBy("startDate")
-   *
-   * here.
-   *
-   * If one old Firestore document does not have startDate,
-   * Firestore can cause the query to exclude it.
-   *
-   * Instead:
-   *
-   * 1. Get all documents
-   * 2. Sort in JavaScript
-   */
+  // IMPORTANT:
+  // Firestore rules only allow users to read their own
+  // travel history. Therefore the query MUST include
+  // userId == current user's UID.
+  //
+  // We do NOT use orderBy here because we already sort
+  // the results below in JavaScript. This also avoids
+  // requiring a composite Firestore index.
+  const travelQuery =
+    query(
+      travelHistoryRef,
+      where(
+        "userId",
+        "==",
+        firebaseUser.uid
+      )
+    );
 
   const snapshot =
     await getDocs(
-      travelHistoryRef
+      travelQuery
     );
 
   let trips =
@@ -760,14 +326,13 @@ export async function getTravelHistory({
       convertTrip
     );
 
-  /*
-   * ==========================================================
-   * STATUS FILTER
-   * ==========================================================
-   */
+  // ==========================================================
+  // STATUS FILTER
+  // ==========================================================
 
   if (
-    status !== "All Trips"
+    status !==
+    "All Trips"
   ) {
     trips =
       trips.filter(
@@ -777,11 +342,9 @@ export async function getTravelHistory({
       );
   }
 
-  /*
-   * ==========================================================
-   * SEARCH
-   * ==========================================================
-   */
+  // ==========================================================
+  // SEARCH FILTER
+  // ==========================================================
 
   if (
     queryText.trim() !== ""
@@ -794,19 +357,15 @@ export async function getTravelHistory({
     trips =
       trips.filter(
         (trip) =>
-          trip.name
+          trip.title
             .toLowerCase()
-            .includes(
-              searchText
-            )
+            .includes(searchText)
       );
   }
 
-  /*
-   * ==========================================================
-   * SORT
-   * ==========================================================
-   */
+  // ==========================================================
+  // SORT - NEWEST FIRST
+  // ==========================================================
 
   if (
     sortBy ===
@@ -828,12 +387,14 @@ export async function getTravelHistory({
                 .getTime()
             : 0;
 
-        return (
-          dateB - dateA
-        );
+        return dateB - dateA;
       }
     );
   }
+
+  // ==========================================================
+  // SORT - OLDEST FIRST
+  // ==========================================================
 
   if (
     sortBy ===
@@ -855,12 +416,14 @@ export async function getTravelHistory({
                 .getTime()
             : 0;
 
-        return (
-          dateA - dateB
-        );
+        return dateA - dateB;
       }
     );
   }
+
+  // ==========================================================
+  // SORT - HIGHEST ECO SCORE
+  // ==========================================================
 
   if (
     sortBy ===
@@ -876,40 +439,41 @@ export async function getTravelHistory({
   return trips;
 }
 
-/*
- * ============================================================
- * GET TRAVEL HISTORY SUMMARY
- * ============================================================
- *
- * tripsCompleted:
- *     Number of completed trips
- *
- * avgEcoScore:
- *     Average eco score across all trips
- *
- * totalCarbonKg:
- *     Total carbon recorded
- *
- * badgesEarned:
- *     Total badges earned
- * ============================================================
- */
+// ============================================================
+// TRAVEL HISTORY SUMMARY
+// ============================================================
 
 export async function getTravelHistorySummary() {
   const firebaseUser =
     await getLoggedInUser();
 
+  if (!firebaseUser) {
+    throw new Error(
+      "No user is currently logged in."
+    );
+  }
+
   const travelHistoryRef =
     collection(
       db,
-      "users",
-      firebaseUser.uid,
       "travelHistory"
+    );
+
+  // IMPORTANT:
+  // Only read the current user's travel history.
+  const summaryQuery =
+    query(
+      travelHistoryRef,
+      where(
+        "userId",
+        "==",
+        firebaseUser.uid
+      )
     );
 
   const snapshot =
     await getDocs(
-      travelHistoryRef
+      summaryQuery
     );
 
   const trips =
@@ -917,20 +481,12 @@ export async function getTravelHistorySummary() {
       convertTrip
     );
 
-  /*
-   * Completed trips
-   */
-
   const completedTrips =
     trips.filter(
       (trip) =>
         trip.status ===
         "Completed"
     );
-
-  /*
-   * Average Eco Score
-   */
 
   const avgEcoScore =
     trips.length > 0
@@ -948,10 +504,6 @@ export async function getTravelHistorySummary() {
         )
       : 0;
 
-  /*
-   * Total carbon
-   */
-
   const totalCarbonKg =
     trips.reduce(
       (
@@ -960,21 +512,6 @@ export async function getTravelHistorySummary() {
       ) =>
         total +
         trip.carbonKg,
-      0
-    );
-
-  /*
-   * Total badges
-   */
-
-  const badgesEarned =
-    trips.reduce(
-      (
-        total,
-        trip
-      ) =>
-        total +
-        trip.badgesEarned,
       0
     );
 
@@ -991,65 +528,392 @@ export async function getTravelHistorySummary() {
         )
       ),
 
-    badgesEarned,
   };
 }
 
-/*
- * ============================================================
- * GET / CREATE ECO REPORT CARD
- * ============================================================
- *
- * Each trip gets its own report:
- *
- * users/{uid}/travelHistory/{tripId}/ecoReport/report
- *
- * If the report already exists:
- *     return it.
- *
- * If it does not exist:
- *     return null. Reports are created only by Module 2 Finish Trip.
- * ============================================================
- */
+// ============================================================
+// SYNC ITINERARY -> TRAVEL HISTORY
+// ============================================================
+//
+// IMPORTANT:
+//
+// itineraryService.js imports this function:
+//
+// syncTravelHistoryFromItinerary
+//
+// We KEEP the function so itineraryService.js does not
+// produce an import/export error.
+//
+// HOWEVER:
+//
+// We DO NOT create a travelHistory document here.
+//
+// Module 2 "Finish Trip" is responsible for creating:
+//
+// travelHistory/{itineraryId}
+//
+// and:
+//
+// travelHistory/{itineraryId}/ecoReport/report
+//
+// atomically inside its transaction.
+//
+// This prevents duplicate Travel History documents.
+// ============================================================
+
+export async function syncTravelHistoryFromItinerary(
+  itinerary,
+  status = "Planning"
+) {
+  const itineraryId =
+    itinerary?.id ||
+    itinerary?.itineraryId ||
+    null;
+
+  if (!itineraryId) {
+    return null;
+  }
+
+  // ----------------------------------------------------------
+  // Planning / Draft / other statuses:
+  // Do nothing.
+  // ----------------------------------------------------------
+
+  if (
+    status !==
+    "Completed"
+  ) {
+    return itineraryId;
+  }
+
+  // ----------------------------------------------------------
+  // Completed:
+  //
+  // Module 2 Finish Trip already creates the history
+  // document atomically.
+  //
+  // Do not create it again here.
+  // ----------------------------------------------------------
+
+  return itineraryId;
+}
+
+// ============================================================
+// ECO REPORT ERRORS
+// ============================================================
+
+export const ECO_REPORT_ERROR = {
+  AUTH_REQUIRED:
+    "AUTH_REQUIRED",
+
+  NOT_FOUND:
+    "REPORT_NOT_FOUND",
+
+  UNAUTHORIZED:
+    "UNAUTHORIZED",
+
+  NOT_MODULE2_REPORT:
+    "NOT_MODULE2_REPORT",
+
+  UNAVAILABLE:
+    "UNAVAILABLE",
+};
+
+// ============================================================
+// ECO REPORT ERROR CLASS
+// ============================================================
+
+export class EcoReportError
+  extends Error {
+  constructor(code) {
+    super(code);
+
+    this.name =
+      "EcoReportError";
+
+    this.code =
+      code;
+  }
+}
+
+// ============================================================
+// ECO REPORT REFERENCE
+// ============================================================
+//
+// NEW STRUCTURE:
+//
+// travelHistory/{tripId}/ecoReport/report
+//
+// NOT:
+//
+// users/{uid}/travelHistory/{tripId}/ecoReport/report
+// ============================================================
+
+function reportDocRef(
+  tripId
+) {
+  return doc(
+    db,
+    "travelHistory",
+    tripId,
+    "ecoReport",
+    "report"
+  );
+}
+
+// ============================================================
+// ECO REPORT ERROR MAPPING
+// ============================================================
+
+function mapEcoReportFailure(
+  error
+) {
+  if (
+    error instanceof
+    EcoReportError
+  ) {
+    return error;
+  }
+
+  const code =
+    typeof error?.code ===
+    "string"
+      ? error.code
+      : "";
+
+  if (
+    code ===
+      "permission-denied" ||
+    code ===
+      "unauthenticated"
+  ) {
+    return new EcoReportError(
+      ECO_REPORT_ERROR.UNAUTHORIZED
+    );
+  }
+
+  return new EcoReportError(
+    ECO_REPORT_ERROR.UNAVAILABLE
+  );
+}
+
+// ============================================================
+// GET ECO REPORT
+// ============================================================
+
+export async function getEcoReport(
+  tripId
+) {
+  try {
+    const firebaseUser =
+      await getLoggedInUser();
+
+    const id =
+      typeof tripId ===
+      "string"
+        ? tripId.trim()
+        : "";
+
+    if (!id) {
+      throw new EcoReportError(
+        ECO_REPORT_ERROR.NOT_FOUND
+      );
+    }
+
+    const snapshot =
+      await getDoc(
+        reportDocRef(id)
+      );
+
+    if (
+      !snapshot.exists()
+    ) {
+      return null;
+    }
+
+    const data =
+      snapshot.data();
+
+    // Security check on client side.
+    if (
+      data.userId &&
+      data.userId !==
+        firebaseUser.uid
+    ) {
+      throw new EcoReportError(
+        ECO_REPORT_ERROR.UNAUTHORIZED
+      );
+    }
+
+    return {
+      id:
+        snapshot.id,
+
+      ...data,
+    };
+  } catch (error) {
+    throw mapEcoReportFailure(
+      error
+    );
+  }
+}
+
+// ============================================================
+// GET OR CREATE ECO REPORT
+// ============================================================
+//
+// IMPORTANT:
+//
+// This function is intentionally READ-ONLY.
+//
+// We do NOT automatically create reports here.
+//
+// Reports are created only when Module 2 Finish Trip
+// successfully completes.
+// ============================================================
 
 export async function getOrCreateEcoReport(
   tripId
 ) {
-  const firebaseUser =
-    await getLoggedInUser();
+  return getEcoReport(
+    tripId
+  );
+}
 
-  if (!tripId) {
-    throw new Error(
-      "Trip ID is required to generate the Eco-Report Card."
-    );
-  }
+// ============================================================
+// PUBLISH ECO REPORT
+// ============================================================
 
-  const reportRef =
-    doc(
+export async function publishEcoReport(
+  tripId
+) {
+  try {
+    const firebaseUser =
+      await getLoggedInUser();
+
+    const id =
+      typeof tripId ===
+      "string"
+        ? tripId.trim()
+        : "";
+
+    if (!id) {
+      throw new EcoReportError(
+        ECO_REPORT_ERROR.NOT_FOUND
+      );
+    }
+
+    return await runTransaction(
       db,
-      "users",
-      firebaseUser.uid,
-      "travelHistory",
-      tripId,
-      "ecoReport",
-      "report"
+      async (transaction) => {
+        const reportRef =
+          reportDocRef(id);
+
+        const snapshot =
+          await transaction.get(
+            reportRef
+          );
+
+        if (
+          !snapshot.exists()
+        ) {
+          throw new EcoReportError(
+            ECO_REPORT_ERROR.NOT_FOUND
+          );
+        }
+
+        const data =
+          snapshot.data();
+
+        // ------------------------------------------------------
+        // OWNER CHECK
+        // ------------------------------------------------------
+
+        if (
+          data.userId !==
+          firebaseUser.uid
+        ) {
+          throw new EcoReportError(
+            ECO_REPORT_ERROR.UNAUTHORIZED
+          );
+        }
+
+        // ------------------------------------------------------
+        // ONLY MODULE 2 REPORTS CAN BE PUBLISHED
+        // ------------------------------------------------------
+
+        if (
+          data.source !==
+          "module2_finish_trip"
+        ) {
+          throw new EcoReportError(
+            ECO_REPORT_ERROR.NOT_MODULE2_REPORT
+          );
+        }
+
+        // ------------------------------------------------------
+        // ALREADY PUBLIC
+        // ------------------------------------------------------
+
+        if (
+          data.visibility ===
+          "public"
+        ) {
+          return {
+            id:
+              snapshot.id,
+
+            ...data,
+
+            alreadyPublic:
+              true,
+          };
+        }
+
+        // ------------------------------------------------------
+        // UPDATE VISIBILITY
+        // ------------------------------------------------------
+
+        const now =
+          serverTimestamp();
+
+        transaction.update(
+          reportRef,
+          {
+            visibility:
+              "public",
+
+            publishedAt:
+              now,
+
+            updatedAt:
+              now,
+          }
+        );
+
+        return {
+          id:
+            snapshot.id,
+
+          ...data,
+
+          visibility:
+            "public",
+
+          publishedAt:
+            now,
+
+          updatedAt:
+            now,
+
+          alreadyPublic:
+            false,
+        };
+      }
     );
-
-  const existingReport =
-    await getDoc(
-      reportRef
+  } catch (error) {
+    throw mapEcoReportFailure(
+      error
     );
-
-  if (
-    existingReport.exists()
-  ) {
-    return {
-      id:
-        existingReport.id,
-
-      ...existingReport.data(),
-    };
   }
-
-  return null;
 }

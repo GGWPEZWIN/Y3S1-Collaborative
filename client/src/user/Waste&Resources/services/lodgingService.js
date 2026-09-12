@@ -47,3 +47,24 @@ export async function saveLodging(uid, lodging) {
 export async function clearLodging(uid) {
   await setDoc(userRef(uid), { lodging: null }, { merge: true });
 }
+
+/* ==================================================================
+   REMINDER TOGGLE  (F4)
+   ------------------------------------------------------------------
+   Whether the geofence should be watching at all. Stored per-user so
+   the toggle survives a reload or a return visit — without this it
+   silently falls back to "off" every time WastePage remounts.
+   ================================================================== */
+
+/** Live subscription to the signed-in user's reminder toggle, defaulting to off. */
+export function subscribeToReminderPref(uid, onData, onError) {
+  return onSnapshot(
+    userRef(uid),
+    (snap) => onData(snap.exists() ? Boolean(snap.data().remindersEnabled) : false),
+    onError
+  );
+}
+
+export async function saveReminderPref(uid, enabled) {
+  await setDoc(userRef(uid), { remindersEnabled: enabled }, { merge: true });
+}

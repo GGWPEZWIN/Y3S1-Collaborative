@@ -993,7 +993,7 @@ export async function getMyItineraryDateRanges() {
  * We intentionally only delete:
  *
  * 1. itineraries/{itineraryId}
- * 2. users/{uid}/travelHistory/{itineraryId}
+ * 2. travelHistory/{itineraryId}
  *
  * We DO NOT delete:
  *
@@ -1068,8 +1068,6 @@ export async function deleteItinerary(
   const historyRef =
     doc(
       db,
-      "users",
-      user.uid,
       "travelHistory",
       itineraryId
     );

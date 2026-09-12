@@ -41,25 +41,43 @@ export default function useNearbyPois(kind, enabled, fallbackCentre = null) {
     if (!kind || !enabled) return undefined;
 
     let cancelled = false;
-    const controller = new AbortController();
     lastQueried.current = null;
     hasFix.current = false;
+
+    // Indoor/desktop fixes from the low-accuracy provider are noisy enough
+    // to "move" 500m between two readings of the same spot, so watchPosition
+    // can call load() again before the previous Overpass round-trip has
+    // finished. Every earlier load() shared one AbortController and raced
+    // to setState independently — a late-arriving request would reset the
+    // UI to "loading" right after an earlier one had already resolved,
+    // which is exactly what made the card look permanently stuck. Track
+    // the latest request and abort/ignore anything older than it.
+    let requestId = 0;
+    let activeController = null;
 
     const load = async (centre, { approximate, live }) => {
       if (cancelled) return;
       lastQueried.current = centre;
+      const id = ++requestId;
+      if (activeController) activeController.abort();
+      activeController = new AbortController();
 
+      // The map only needs a centre, not the POI list — set it immediately
+      // so the map itself renders as soon as we know where the user is,
+      // instead of sitting behind Overpass's slow shared public endpoint.
       // Keep the existing pins visible while refreshing after a move —
       // blanking the map mid-walk would be worse than slightly stale pins.
       setState((prev) => ({
         ...prev,
         status: prev.pois.length ? prev.status : "loading",
+        centre,
+        approximate,
         live,
       }));
 
       try {
-        const pois = await fetchNearbyPois(kind, centre, { signal: controller.signal });
-        if (cancelled) return;
+        const pois = await fetchNearbyPois(kind, centre, { signal: activeController.signal });
+        if (cancelled || id !== requestId) return;
         setState({
           status: pois.length ? "ready" : "empty",
           pois,
@@ -68,7 +86,7 @@ export default function useNearbyPois(kind, enabled, fallbackCentre = null) {
           live,
         });
       } catch {
-        if (cancelled) return;
+        if (cancelled || id !== requestId) return;
         setState((prev) => ({
           ...prev,
           status: prev.pois.length ? "ready" : "error",
@@ -88,14 +106,23 @@ export default function useNearbyPois(kind, enabled, fallbackCentre = null) {
       () => {
         // A later timeout after a good fix is not a failure — ignore it and
         // keep the results already on screen.
-        if (hasFix.current || cancelled || !fallbackCentre) return;
-        load(fallbackCentre, { approximate: true, live: false });
+        if (hasFix.current || cancelled) return;
+        if (fallbackCentre) {
+          load(fallbackCentre, { approximate: true, live: false });
+          return;
+        }
+        // No live fix and no lodging to fall back to — surface an error
+        // instead of leaving the caller stuck on "loading" forever.
+        setState((prev) => ({
+          ...prev,
+          status: prev.pois.length ? prev.status : "error",
+        }));
       }
     );
 
     return () => {
       cancelled = true;
-      controller.abort();
+      if (activeController) activeController.abort();
       unsubscribe();
     };
   }, [kind, enabled, fallbackCentre]);

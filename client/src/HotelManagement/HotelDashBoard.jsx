@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Leaf,
   Hotel,
@@ -16,7 +16,7 @@ export default function GreenCertificationHome({ onNavigate }) {
   const [partnerDisplayName, setPartnerDisplayName] = useState("Hotel Partner");
   const [partnerEmail, setPartnerEmail] = useState("");
   const [hasApplied, setHasApplied] = useState(false);
-  const [checkingStatus, setCheckingStatus] = useState(true);
+  const [, setCheckingStatus] = useState(true);
 
   // Generate a consistent placeholder based on the user's UID (matches HotelProfile.jsx)
   const getAccountSpecificPlaceholder = (uid) => {

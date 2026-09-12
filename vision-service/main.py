@@ -41,6 +41,16 @@ SEG_WEIGHTS = os.environ.get("SEG_WEIGHTS", "weights/food-seg.pt")
 DEPTH_MODEL = os.environ.get("DEPTH_MODEL", "depth-anything/Depth-Anything-V2-Small-hf")
 ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
 
+# Vite falls back to 5174, 5175, ... whenever the default port is already
+# taken by another process, which happens often enough in local dev that a
+# single hard-coded origin above kept breaking the scanner with a "could not
+# reach the service" error that was actually a silent CORS rejection. A
+# regex covering any localhost port fixes that without needing ALLOWED_ORIGINS
+# updated every time Vite picks a different one.
+ALLOWED_ORIGIN_REGEX = os.environ.get(
+    "ALLOWED_ORIGIN_REGEX", r"http://(localhost|127\.0\.0\.1):\d+"
+)
+
 MIN_CONFIDENCE = float(os.environ.get("MIN_CONFIDENCE", "0.45"))
 
 # A region must be mostly ON the plate to count. Filters hands, cutlery
@@ -65,6 +75,7 @@ app = FastAPI(title="GreenTrip Vision Service")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_methods=["POST", "GET"],
     allow_headers=["*"],
 )
@@ -72,7 +83,14 @@ app.add_middleware(
 device = "cuda" if torch.cuda.is_available() else "cpu"
 profile = load_profile()
 
+# Captured once, at the moment the model actually loads — /health must report
+# what this process has in memory, not re-check the filesystem on every call.
+# Re-checking the path let /health claim the fine-tuned weights were active
+# whenever the file existed on disk, even on a stale process that loaded the
+# stock fallback before that file was created and was never restarted.
+_SEG_WEIGHTS_LOADED = SEG_WEIGHTS if os.path.exists(SEG_WEIGHTS) else "yolo11n-seg.pt (NOT fine-tuned)"
 seg_model = YOLO(SEG_WEIGHTS) if os.path.exists(SEG_WEIGHTS) else YOLO("yolo11n-seg.pt")
+logger.info("[startup] segmentation weights: %s", _SEG_WEIGHTS_LOADED)
 depth_processor = AutoImageProcessor.from_pretrained(DEPTH_MODEL)
 depth_model = AutoModelForDepthEstimation.from_pretrained(DEPTH_MODEL).to(device).eval()
 
@@ -82,8 +100,7 @@ def health():
     return {
         "status": "ok",
         "device": device,
-        "segmentation_weights": SEG_WEIGHTS if os.path.exists(SEG_WEIGHTS)
-        else "yolo11n-seg.pt (NOT fine-tuned)",
+        "segmentation_weights": _SEG_WEIGHTS_LOADED,
         "calibrated": os.path.exists(os.environ.get("CALIBRATION_PATH", "calibration.json")),
     }
 

@@ -2,9 +2,6 @@ import React, { useState, useEffect } from "react";
 import Layout from "../../../shared/components/Layout";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
 
-// ============================================================
-// FIREBASE FIRESTORE IMPORTS
-// ============================================================
 import { db } from "../../../firebase/config";
 import { doc, updateDoc, increment, getDoc } from "firebase/firestore";
 
@@ -25,11 +22,9 @@ import {
   AlertCircle,
 } from "lucide-react";
 
-// Default image fallback matching AdminChallengePage
 const DEFAULT_IMAGE_URL =
   "https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?w=800&q=80";
 
-// Database fallback of individual challenges
 const CHALLENGES_DATA = {
   1: {
     id: 1,
@@ -47,6 +42,7 @@ const CHALLENGES_DATA = {
     organizer: "KL City Council & GreenTrip",
     duration: "2 Days (Weekend)",
     allowedVerification: ["image", "gps"],
+    badge: { name: "Transit Pioneer", icon: "🚌" },
     rules: [
       "Must take place within Kuala Lumpur central transit zones.",
       "Photo proof of transit ticket/ride or GPS check-in required.",
@@ -69,6 +65,7 @@ const CHALLENGES_DATA = {
     organizer: "Zero Waste Malaysia",
     duration: "1 Day",
     allowedVerification: ["image"],
+    badge: { name: "Zero Waste Hero", icon: "♻️" },
     rules: [
       "Applicable to any registered night market across Malaysia.",
       "Upload a photo showing your food haul inside reusable containers or tiffins.",
@@ -91,6 +88,7 @@ const CHALLENGES_DATA = {
     organizer: "Penang Heritage Trust & GreenTrip",
     duration: "1 Day",
     allowedVerification: ["gps", "image"],
+    badge: { name: "Heritage Strider", icon: "🏛️" },
     rules: [
       "Check in via GPS within the George Town UNESCO World Heritage Zone.",
       "Alternatively, upload a photo of your walking or cycling trip at a heritage landmark.",
@@ -113,6 +111,7 @@ const CHALLENGES_DATA = {
     organizer: "Sabah Parks & Forestry Department",
     duration: "1 Day",
     allowedVerification: ["image", "gps"],
+    badge: { name: "Forest Defender", icon: "🌳" },
     rules: [
       "Must be performed in coordination with registered park authorities or NGO drives.",
       "Upload photo proof of planted saplings or GPS check-in at the park site.",
@@ -135,6 +134,7 @@ const CHALLENGES_DATA = {
     organizer: "Melaka River Development Corp & EcoVolunteers",
     duration: "1 Day",
     allowedVerification: ["image", "gps"],
+    badge: { name: "River Guardian", icon: "🌊" },
     rules: [
       "Collect at least 1 bag of recyclable/plastic waste along designated river stretches.",
       "Sort collected waste into designated recycling bins provided at the site.",
@@ -157,6 +157,7 @@ const CHALLENGES_DATA = {
     organizer: "Sarawak Forestry Corporation",
     duration: "1 Day",
     allowedVerification: ["image", "gps"],
+    badge: { name: "Coastal Protector", icon: "🏝️" },
     rules: [
       "Follow ranger safety guidelines when working along tidal coastal areas.",
       "Upload a photo of your mangrove planting or marine debris collection effort.",
@@ -166,14 +167,9 @@ const CHALLENGES_DATA = {
 };
 
 export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
-  // ============================================================
-  // 1. FIREBASE AUTH & USER PROFILE
-  // ============================================================
   const { authUser, profile, loading } = useCurrentUser();
-
   const [dbChallenge, setDbChallenge] = useState(null);
 
-  // Fetch challenge directly from Firestore database
   useEffect(() => {
     const fetchChallengeFromDatabase = async () => {
       try {
@@ -217,8 +213,8 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
 
   const [joined, setJoined] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [showToast, setShowToast] = useState(false);
 
-  // Verification States
   const [activeTab, setActiveTab] = useState(
     challenge.allowedVerification[0] || "image"
   );
@@ -226,15 +222,14 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
   const [gpsStatus, setGpsStatus] = useState(null);
+  const [isGeneratingShare, setIsGeneratingShare] = useState(false);
 
-  // Reset tab when active challenge changes
   useEffect(() => {
     if (challenge?.allowedVerification) {
       setActiveTab(challenge.allowedVerification[0]);
     }
   }, [challengeId]);
 
-  // Load saved challenge progress from Firestore profile or User-Scoped LocalStorage fallback
   useEffect(() => {
     const profileChallenge =
       profile?.user_challenges?.[challenge.id] ||
@@ -254,84 +249,14 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
       } else {
         setGpsStatus(null);
       }
-      return;
-    }
-
-    // Key local storage to current user UID so new accounts start completely clean
-    const storageKey = authUser?.uid
-      ? `greentrip_user_challenges_${authUser.uid}`
-      : "greentrip_user_challenges";
-
-    const saved = localStorage.getItem(storageKey);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed[challenge.id]) {
-          setJoined(parsed[challenge.id].joined || false);
-          setCompleted(parsed[challenge.id].completed || false);
-          setImagePreview(parsed[challenge.id].uploadedImage || null);
-          if (parsed[challenge.id].gpsVerified) {
-            setGpsStatus({
-              success: true,
-              message: `Check-in verified at ${challenge.location}`,
-            });
-          } else {
-            setGpsStatus(null);
-          }
-        } else {
-          setJoined(false);
-          setCompleted(false);
-          setImagePreview(null);
-          setGpsStatus(null);
-        }
-      } catch (e) {
-        console.error("Error reading challenge state:", e);
-        setJoined(false);
-        setCompleted(false);
-        setImagePreview(null);
-        setGpsStatus(null);
-      }
     } else {
       setJoined(false);
       setCompleted(false);
       setImagePreview(null);
       setGpsStatus(null);
     }
-  }, [challenge.id, profile, authUser?.uid]);
+  }, [challenge.id, profile]);
 
-  // Helper to persist state to User-Scoped LocalStorage
-  const saveChallengeState = (
-    isJoined,
-    isCompleted,
-    imgData = null,
-    gpsDone = false
-  ) => {
-    const storageKey = authUser?.uid
-      ? `greentrip_user_challenges_${authUser.uid}`
-      : "greentrip_user_challenges";
-
-    const saved = localStorage.getItem(storageKey);
-    let parsed = {};
-    if (saved) {
-      try {
-        parsed = JSON.parse(saved);
-      } catch (e) {}
-    }
-
-    parsed[challenge.id] = {
-      joined: isJoined,
-      completed: isCompleted,
-      progress: isCompleted ? 100 : isJoined ? 50 : 0,
-      uploadedImage: imgData || imagePreview,
-      gpsVerified: gpsDone || (gpsStatus?.success ?? false),
-    };
-
-    localStorage.setItem(storageKey, JSON.stringify(parsed));
-  };
-
-  // ============================================================
-  // DATABASE HELPER: SAVE COMPLETION STATE & INCREMENT ECO POINTS
-  // ============================================================
   const saveCompletionToFirestore = async (
     pointsEarned,
     imgData = null,
@@ -353,10 +278,6 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
           gpsVerified: gpsDone || (gpsStatus?.success ?? false),
         },
       });
-
-      console.log(
-        `Successfully updated user_challenges.${challenge.id} and added +${pointsEarned} eco_score in Firestore.`
-      );
     } catch (err) {
       console.error("Error saving challenge completion to Firestore:", err);
     }
@@ -364,7 +285,6 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
 
   const handleJoin = async () => {
     setJoined(true);
-    saveChallengeState(true, completed);
 
     if (authUser?.uid) {
       try {
@@ -382,7 +302,6 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
     }
   };
 
-  // Image Upload Handlers
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -405,13 +324,12 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
     setTimeout(async () => {
       setIsSubmitting(false);
       setCompleted(true);
-      saveChallengeState(true, true, imagePreview);
+      setShowToast(true);
 
       await saveCompletionToFirestore(challenge.points, imagePreview, false);
     }, 1200);
   };
 
-  // GPS Check-In Handler
   const handleGpsCheckIn = () => {
     setGpsLoading(true);
     setGpsStatus(null);
@@ -423,7 +341,7 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
         message: message,
       });
       setCompleted(true);
-      saveChallengeState(true, true, imagePreview, true);
+      setShowToast(true);
 
       await saveCompletionToFirestore(challenge.points, imagePreview, true);
     };
@@ -448,35 +366,18 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
     }
   };
 
-  // Safe calculation of total participants (guarantees number instead of NA/NaN)
+  const handleNavigateToCompleted = () => {
+    window.location.hash = "#completed";
+    onNavigate?.("/challenges");
+  };
+  
   const baseParticipants = Number(challenge.participants) || 0;
   const currentParticipants = baseParticipants + (joined ? 1 : 0);
 
-  // ============================================================
-  // 2. LOADING STATE
-  // ============================================================
-  if (loading) {
+  if (loading || (authUser && !profile)) {
     return (
       <div style={styles.loadingPage}>
-        <p style={styles.loadingText}>Loading challenge details...</p>
-      </div>
-    );
-  }
-
-  // ============================================================
-  // 3. LOGIN CHECK GUARD
-  // ============================================================
-  if (!authUser || !profile) {
-    return (
-      <div style={styles.loadingPage}>
-        <p style={styles.loadingText}>You're not logged in.</p>
-        <button
-          type="button"
-          onClick={() => onNavigate?.("/login")}
-          style={styles.loginRedirectBtn}
-        >
-          Go to Login
-        </button>
+        <p style={styles.loadingText}>Loading challenge and profile details...</p>
       </div>
     );
   }
@@ -488,13 +389,179 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
     ecoScore: profile.eco_score ?? profile.ecoScore ?? 0,
   };
 
-  // ============================================================
-  // 4. MAIN PAGE CONTENT
-  // ============================================================
+  const handleShareStory = async () => {
+    setIsGeneratingShare(true);
+
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1080;
+      canvas.height = 1920;
+      const ctx = canvas.getContext("2d");
+
+      const bgGradient = ctx.createLinearGradient(0, 0, 1080, 1920);
+      bgGradient.addColorStop(0, "#022c22");
+      bgGradient.addColorStop(1, "#020617");
+      ctx.fillStyle = bgGradient;
+      ctx.fillRect(0, 0, 1080, 1920);
+
+      const orb1 = ctx.createRadialGradient(200, 300, 0, 200, 300, 600);
+      orb1.addColorStop(0, "rgba(16, 185, 129, 0.15)"); 
+      orb1.addColorStop(1, "rgba(16, 185, 129, 0)");
+      ctx.fillStyle = orb1;
+      ctx.fillRect(0, 0, 1080, 1920);
+
+      const orb2 = ctx.createRadialGradient(900, 1500, 0, 900, 1500, 800);
+      orb2.addColorStop(0, "rgba(56, 189, 248, 0.12)"); 
+      orb2.addColorStop(1, "rgba(56, 189, 248, 0)");
+      ctx.fillStyle = orb2;
+      ctx.fillRect(0, 0, 1080, 1920);
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.03)";
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 1080; i += 60) {
+        ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 1920); ctx.stroke();
+      }
+      for (let j = 0; j < 1920; j += 60) {
+        ctx.beginPath(); ctx.moveTo(0, j); ctx.lineTo(1080, j); ctx.stroke();
+      }
+
+      const cardY = 320;
+      const cardH = 1220;
+      ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
+      ctx.shadowBlur = 60;
+      ctx.shadowOffsetY = 20;
+
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(80, cardY, 920, cardH, 48);
+      } else {
+        ctx.rect(80, cardY, 920, cardH);
+      }
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+
+      ctx.shadowColor = "transparent";
+
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(410, cardY + 70, 260, 60, 30);
+      } else {
+        ctx.rect(410, cardY + 70, 260, 60);
+      }
+      ctx.fillStyle = "#dcfce7";
+      ctx.fill();
+      
+      ctx.fillStyle = "#15803d";
+      ctx.font = "bold 24px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("VERIFIED", 540, cardY + 110);
+
+      ctx.fillStyle = "#64748b";
+      ctx.font = "600 28px system-ui, sans-serif";
+      ctx.letterSpacing = "4px";
+      ctx.fillText("IMPACT DRIVEN BY", 540, cardY + 230);
+
+      ctx.fillStyle = "#0f172a";
+      ctx.font = "900 72px system-ui, sans-serif";
+      ctx.letterSpacing = "0px";
+      const userName = (user?.name || "Eco Warrior").toUpperCase();
+      ctx.fillText(userName, 540, cardY + 320);
+
+      ctx.beginPath();
+      ctx.moveTo(340, cardY + 410);
+      ctx.lineTo(740, cardY + 410);
+      ctx.strokeStyle = "#f1f5f9";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+
+      ctx.fillStyle = "#10b981";
+      ctx.font = "800 68px system-ui, sans-serif";
+      const words = challenge.title.split(" ");
+      let line = "";
+      let y = cardY + 540;
+      for (let n = 0; n < words.length; n++) {
+        const testLine = line + words[n] + " ";
+        const metrics = ctx.measureText(testLine);
+        if (metrics.width > 750 && n > 0) {
+          ctx.fillText(line, 540, y);
+          line = words[n] + " ";
+          y += 85;
+        } else {
+          line = testLine;
+        }
+      }
+      ctx.fillText(line, 540, y);
+
+      y += 120;
+      const metricY = y;
+      
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(140, metricY, 380, 240, 32);
+      else ctx.rect(140, metricY, 380, 240);
+      ctx.fillStyle = "#f8fafc";
+      ctx.fill();
+      ctx.strokeStyle = "#e2e8f0";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = "#10b981";
+      ctx.font = "900 80px system-ui, sans-serif";
+      ctx.fillText(`+${challenge.points}`, 330, metricY + 120);
+      ctx.fillStyle = "#64748b";
+      ctx.font = "700 28px system-ui, sans-serif";
+      ctx.fillText("POINTS", 330, metricY + 175);
+
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(560, metricY, 380, 240, 32);
+      else ctx.rect(560, metricY, 380, 240);
+      ctx.fillStyle = "#f8fafc";
+      ctx.fill();
+      ctx.stroke();
+
+      if (challenge.carbonKg) {
+        ctx.fillStyle = "#0ea5e9";
+        ctx.font = "900 76px system-ui, sans-serif";
+        ctx.fillText(`${challenge.carbonKg} KG`, 750, metricY + 120);
+        ctx.fillStyle = "#64748b";
+        ctx.font = "700 28px system-ui, sans-serif";
+        ctx.fillText("CO₂ REDUCED", 750, metricY + 175);
+      } else {
+        ctx.fillStyle = "#0ea5e9";
+        ctx.font = "900 80px system-ui, sans-serif";
+        ctx.fillText(`100%`, 750, metricY + 120);
+        ctx.fillStyle = "#64748b";
+        ctx.font = "700 28px system-ui, sans-serif";
+        ctx.fillText("CLEARED", 750, metricY + 175);
+      }
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "800 44px system-ui, sans-serif";
+      ctx.letterSpacing = "4px";
+      ctx.fillText("GREENTRIP", 540, 1700);
+
+      ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+      ctx.font = "500 26px system-ui, sans-serif";
+      ctx.letterSpacing = "0px";
+      ctx.fillText("Make an impact at greentrip.app", 540, 1750);
+
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
+      const link = document.createElement("a");
+      link.download = `GreenTrip_Story_${challenge.id}.jpg`;
+      link.href = dataUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Error generating share image:", err);
+      alert("Oops! Could not generate the image. Please try again.");
+    } finally {
+      setIsGeneratingShare(false);
+    }
+  };
+
   return (
     <Layout active="challenges" user={user} onNavigate={onNavigate}>
       <div style={styles.content}>
-        {/* Back navigation */}
         <button
           type="button"
           onClick={() => onNavigate?.("/challenges")}
@@ -503,7 +570,6 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
           <ArrowLeft size={16} /> Back to Challenges
         </button>
 
-        {/* Hero banner */}
         <div style={styles.heroCard}>
           <img
             src={challenge.imageUrl || DEFAULT_IMAGE_URL}
@@ -516,6 +582,11 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
           <div style={styles.heroOverlay}>
             <div style={styles.badgeRow}>
               <span style={styles.tagBadge}>{challenge.tag}</span>
+              {challenge.badge && (
+                <span style={styles.badgeRewardTag}>
+                  <Award size={12} /> {challenge.badge.icon} {challenge.badge.name} Badge
+                </span>
+              )}
               <span style={styles.locationBadge}>
                 <MapPin size={12} /> {challenge.location}
               </span>
@@ -525,16 +596,12 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
           </div>
         </div>
 
-        {/* Challenge details layout */}
         <div style={styles.twoColGrid}>
-          {/* Main content column */}
           <div style={styles.mainCol}>
-            {/* Overview */}
             <div style={styles.card}>
               <h2 style={styles.sectionHeader}>Overview</h2>
               <p style={styles.descriptionText}>{challenge.description}</p>
 
-              {/* Stat callouts */}
               <div style={styles.quickStatsRow}>
                 <div style={styles.quickStatBox}>
                   <Award size={18} color="#16a34a" />
@@ -566,7 +633,6 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
               </div>
             </div>
 
-            {/* Verification Section */}
             <div style={{ ...styles.card, marginTop: 20 }}>
               <div style={styles.rowHeader}>
                 <h2 style={styles.sectionHeader}>Verification & Proof</h2>
@@ -599,7 +665,8 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
                       Challenge Verified & Completed!
                     </div>
                     <div style={styles.completedProofSub}>
-                      You earned <strong>+{challenge.points} Eco Points</strong>.
+                      You earned <strong>+{challenge.points} Eco Points</strong>
+                      {challenge.badge ? ` and the "${challenge.badge.name}" badge!` : "."}
                     </div>
                   </div>
 
@@ -624,7 +691,6 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
                 </div>
               ) : (
                 <>
-                  {/* Method Tabs */}
                   {challenge.allowedVerification.length > 1 && (
                     <div style={styles.tabContainer}>
                       {challenge.allowedVerification.includes("image") && (
@@ -654,7 +720,6 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
                     </div>
                   )}
 
-                  {/* TAB 1: IMAGE UPLOAD */}
                   {activeTab === "image" && (
                     <div style={styles.verificationBody}>
                       <p style={styles.methodDescription}>
@@ -712,7 +777,6 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
                     </div>
                   )}
 
-                  {/* TAB 2: GPS CHECK-IN */}
                   {activeTab === "gps" && (
                     <div style={styles.verificationBody}>
                       <p style={styles.methodDescription}>
@@ -744,7 +808,6 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
               )}
             </div>
 
-            {/* Rules */}
             <div style={{ ...styles.card, marginTop: 20 }}>
               <h2 style={styles.sectionHeader}>Rules & Guidelines</h2>
               <ul style={styles.rulesList}>
@@ -758,7 +821,6 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
             </div>
           </div>
 
-          {/* Action sidebar column */}
           <div style={styles.sideCol}>
             <div style={{ ...styles.card, position: "sticky", top: 20 }}>
               <div style={styles.actionCardHeader}>
@@ -786,22 +848,45 @@ export default function ChallengeDetails({ challengeId = 1, onNavigate }) {
 
               <button
                 type="button"
-                style={styles.shareBtn}
-                onClick={() => alert("Challenge link copied to clipboard!")}
+                style={{
+                  ...styles.shareBtn,
+                  ...(isGeneratingShare ? { opacity: 0.7, cursor: "not-allowed" } : {})
+                }}
+                onClick={handleShareStory}
+                disabled={isGeneratingShare}
               >
-                <Share2 size={15} /> Share Challenge
+                <Share2 size={15} /> 
+                {isGeneratingShare ? "Generating Story..." : "Share to IG Story"}
               </button>
             </div>
           </div>
         </div>
+
+        {showToast && (
+          <div style={styles.toastNotification}>
+            <div style={styles.toastHeader}>
+              <CheckCircle2 size={20} color="#16a34a" />
+              <span style={styles.toastTitle}>Challenge Completed!</span>
+            </div>
+            <p style={styles.toastText}>
+              You have successfully completed this challenge and earned {challenge.points} Eco Points!
+            </p>
+            <button
+              onClick={handleNavigateToCompleted}
+              style={styles.toastLinkBtn}
+            >
+              View in Completed Challenges
+            </button>
+            <button onClick={() => setShowToast(false)} style={styles.toastCloseBtn}>
+              <X size={16} />
+            </button>
+          </div>
+        )}
       </div>
     </Layout>
   );
 }
 
-/* ================================================================
-   STYLES
-   ================================================================ */
 const styles = {
   loadingPage: {
     minHeight: "100vh",
@@ -814,22 +899,13 @@ const styles = {
   loadingText: {
     color: "#6b7280",
   },
-  loginRedirectBtn: {
-    marginTop: 10,
-    background: "#16a34a",
-    color: "#fff",
-    border: "none",
-    borderRadius: 10,
-    padding: "10px 20px",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
   content: {
     padding: "28px 32px",
     maxWidth: 1180,
     width: "100%",
     margin: "0 auto",
     boxSizing: "border-box",
+    position: "relative",
   },
   backButton: {
     display: "inline-flex",
@@ -869,6 +945,7 @@ const styles = {
     display: "flex",
     gap: 8,
     marginBottom: 8,
+    alignItems: "center",
   },
   tagBadge: {
     background: "#2563eb",
@@ -877,6 +954,17 @@ const styles = {
     fontWeight: 700,
     padding: "4px 10px",
     borderRadius: 999,
+  },
+  badgeRewardTag: {
+    background: "#f59e0b",
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: 700,
+    padding: "4px 10px",
+    borderRadius: 999,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
   },
   locationBadge: {
     background: "rgba(255,255,255,0.2)",
@@ -1249,5 +1337,55 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
+  },
+  toastNotification: {
+    position: "fixed",
+    bottom: 24,
+    right: 24,
+    background: "#fff",
+    border: "2px solid #bbf7d0",
+    borderRadius: 12,
+    padding: 20,
+    boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
+    zIndex: 1000,
+    width: 320,
+    animation: "slideIn 0.3s ease-out forwards",
+  },
+  toastHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  toastTitle: {
+    fontWeight: 700,
+    color: "#166534",
+    fontSize: 16,
+  },
+  toastText: {
+    color: "#4b5563",
+    fontSize: 13.5,
+    marginBottom: 16,
+    lineHeight: 1.4,
+  },
+  toastLinkBtn: {
+    width: "100%",
+    padding: "10px 0",
+    background: "#16a34a",
+    color: "#fff",
+    border: "none",
+    borderRadius: 8,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontSize: 14,
+  },
+  toastCloseBtn: {
+    position: "absolute",
+    top: 16,
+    right: 16,
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+    color: "#9ca3af",
   },
 };
