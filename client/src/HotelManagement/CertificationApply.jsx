@@ -23,29 +23,8 @@ export default function CertificationApply({ onNavigate }) {
     sustainabilityInitiatives: "",
   });
 
-<<<<<<< HEAD
-  // 3-Month Electricity Files
-  const [electricityFiles, setElectricityFiles] = useState({
-    m1_file: null,
-    m2_file: null,
-    m3_file: null,
-  });
-
-  // 3-Month Water Data & Files
-  const [waterMonths, setWaterMonths] = useState({
-    m1_liters: "",
-    m2_liters: "",
-    m3_liters: "",
-  });
-  const [waterFiles, setWaterFiles] = useState({
-    m1_file: null,
-    m2_file: null,
-    m3_file: null,
-  });
-=======
   const [electricityFile, setElectricityFile] = useState(null);
   const [waterFile, setWaterFile] = useState(null);
->>>>>>> 7ddd9ee7f16516d02a02c54effd21eae26777efc
 
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
@@ -116,27 +95,8 @@ export default function CertificationApply({ onNavigate }) {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-<<<<<<< HEAD
-  const handleWaterMonthChange = (e) => {
-    const { name, value } = e.target;
-    setWaterMonths((prev) => ({ ...prev, [name]: value }));
-  };
-
-  // Calculate 3-month average
-  const calcWaterAverage = () => {
-    const v1 = parseFloat(waterMonths.m1_liters) || 0;
-    const v2 = parseFloat(waterMonths.m2_liters) || 0;
-    const v3 = parseFloat(waterMonths.m3_liters) || 0;
-    const count = [waterMonths.m1_liters, waterMonths.m2_liters, waterMonths.m3_liters].filter(Boolean).length;
-    return count > 0 ? Math.round((v1 + v2 + v3) / count) : 0;
-  };
-
-  // Helper for file sizes
-  const handleFileSelection = (file, setFunction, keyName) => {
-=======
   // Helper for file sizes (Keep under 800KB for Firestore)
   const handleFileSelection = (file, setFileFunction) => {
->>>>>>> 7ddd9ee7f16516d02a02c54effd21eae26777efc
     if (!file) return;
     if (file.size > 800 * 1024) {
       alert("File exceeds 800KB limit. Please choose a smaller file or compress it.");
@@ -168,13 +128,8 @@ export default function CertificationApply({ onNavigate }) {
           status: "Pending Review",
           certificationTier: null,
         },
-<<<<<<< HEAD
-        electricityFiles,
-        waterFiles
-=======
         electricityFile,
         waterFile
->>>>>>> 7ddd9ee7f16516d02a02c54effd21eae26777efc
       );
 
       alert("Application submitted successfully! It is now under review by Admin.");
@@ -345,7 +300,6 @@ export default function CertificationApply({ onNavigate }) {
                 />
               </div>
 
-            <div style={styles.twoColumnGrid}>
               <div>
                 <label style={styles.label}>Water Bill Fee (RM/mo, Optional)</label>
                 <input
@@ -360,36 +314,7 @@ export default function CertificationApply({ onNavigate }) {
               </div>
             </div>
 
-<<<<<<< HEAD
-            {/* Month 3 */}
-            <div style={styles.monthUploadRow}>
-              <div style={styles.monthLabelCol}>
-                <Calendar size={14} color="#6b7280" />
-                <strong>Month 3 (Oldest)</strong>
-              </div>
-              <div style={{ flex: 1.5 }}>
-                <label style={styles.fileUploadBox}>
-                  <input
-                    type="file"
-                    accept=".png,.jpg,.jpeg,.pdf"
-                    style={{ display: "none" }}
-                    onChange={(e) => handleFileSelection(e.target.files[0], setElectricityFiles, "m3_file")}
-                  />
-                  <span style={styles.chooseFilesBtn}>
-                    {electricityFiles.m3_file ? electricityFiles.m3_file.name : "Upload Month 3 Bill"}
-                  </span>
-                  <Upload size={16} color="#4b5563" />
-                </label>
-              </div>
-            </div>
-          </section>
-
-          {/* Card 3: 3-Month Water Data & Uploads */}
-          <section style={styles.card}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-=======
             <div style={{ ...styles.twoColumnGrid, marginTop: 16 }}>
->>>>>>> 7ddd9ee7f16516d02a02c54effd21eae26777efc
               <div>
                 <label style={styles.label}>Electricity Bill (Mandatory)</label>
                 <label style={styles.fileUploadBox}>

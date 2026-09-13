@@ -30,12 +30,13 @@ import { listenToCumulativeEcoScore } from "../../../firebase/ecoScoreService";
 
 import {
   getSummaryStats,
-  getActiveTrips,
+  getRecentTrips,
   getFeaturedChallenges,
 } from "../services/Homedashboard";
 
 import {
   listenToPublishedAchievements,
+  listenToUserAchievements,
 } from "../../../firebase/achievementService";
 
 
@@ -56,7 +57,7 @@ const STAT_ICONS = {
     color: "#8b5cf6",
   },
 
-  "Badges Earned": {
+  "Achievements": {
     icon: Award,
     color: "#f97316",
   },
@@ -80,6 +81,11 @@ export default function MainDashboard({
   const [achievements, setAchievements] =
     useState([]);
 
+  // Actual achievements already earned by this user.
+  // Source: users/{uid}/achievements
+  const [earnedAchievements, setEarnedAchievements] =
+    useState([]);
+
   const [cumulativeEcoScore, setCumulativeEcoScore] =
     useState(0);
 
@@ -92,7 +98,7 @@ export default function MainDashboard({
   useEffect(() => {
     getSummaryStats().then(setStats);
 
-    getActiveTrips().then(setTrips);
+    getRecentTrips().then(setTrips);
 
     getFeaturedChallenges().then(
       setChallenges
@@ -119,17 +125,6 @@ export default function MainDashboard({
   }, [authUser?.uid]);
 
 
-  useEffect(() => {
-    setStats((currentStats) =>
-      currentStats.map((stat) =>
-        stat.label === "Eco Score" || stat.title === "Eco Score"
-          ? { ...stat, value: cumulativeEcoScore }
-          : stat
-      )
-    );
-  }, [cumulativeEcoScore]);
-
-
   // ============================================================
   // LISTEN TO ADMIN-CREATED PUBLISHED ACHIEVEMENTS
   // ============================================================
@@ -144,6 +139,27 @@ export default function MainDashboard({
 
     return unsubscribe;
   }, []);
+
+
+  // ============================================================
+  // LISTEN TO ACTUAL EARNED ACHIEVEMENTS
+  // ============================================================
+
+  useEffect(() => {
+    if (!authUser?.uid) {
+      setEarnedAchievements([]);
+      return;
+    }
+
+    return listenToUserAchievements(
+      authUser.uid,
+      (list) => {
+        setEarnedAchievements(
+          Array.isArray(list) ? list : []
+        );
+      }
+    );
+  }, [authUser?.uid]);
 
 
 
@@ -204,11 +220,9 @@ export default function MainDashboard({
   // ============================================================
 
   const userProgress = {
-    trips_completed: Number(
-      profile.trips_completed ??
-        profile.completed_trips ??
-        0
-    ),
+    trips_completed: trips.filter(
+      (trip) => trip.completed === true
+    ).length,
 
     eco_score: cumulativeEcoScore,
 
@@ -269,6 +283,52 @@ export default function MainDashboard({
         };
       }
     );
+
+
+  // ============================================================
+  // DISPLAY STATS
+  // ============================================================
+  //
+  // Eco Score is derived from the LIVE cumulative listener.
+  // This avoids a race where getSummaryStats() can overwrite the
+  // live Eco Score with its initial placeholder value of 0.
+  //
+  // Achievements count is derived from the achievements that are
+  // actually unlocked by the current user's real progress.
+  // ============================================================
+
+  const unlockedAchievementsCount =
+    earnedAchievements.length;
+
+  const displayStats =
+    stats.map((stat) => {
+      if (
+        stat.label === "Eco Score" ||
+        stat.title === "Eco Score"
+      ) {
+        return {
+          ...stat,
+          value: cumulativeEcoScore,
+          note: "Cumulative Eco Score",
+        };
+      }
+
+      if (
+        stat.label === "Achievements" ||
+        stat.title === "Achievements" ||
+        stat.label === "Badges Earned" ||
+        stat.title === "Badges Earned"
+      ) {
+        return {
+          ...stat,
+          label: "Achievements",
+          value: String(unlockedAchievementsCount),
+          sub: "Unlocked achievements",
+        };
+      }
+
+      return stat;
+    });
 
 
   // ============================================================
@@ -378,7 +438,7 @@ export default function MainDashboard({
             ====================================================== */}
 
         <div style={styles.statGrid}>
-          {stats.map((stat) => (
+          {displayStats.map((stat) => (
             <StatCard
               key={stat.label}
               icon={
@@ -440,19 +500,19 @@ export default function MainDashboard({
 
 
         {/* ======================================================
-            ACTIVE TRIPS + CHALLENGES
+            RECENT TRIPS + CHALLENGES
             ====================================================== */}
 
         <div style={styles.twoCol}>
 
-          {/* ACTIVE TRIPS */}
+          {/* RECENT TRIPS */}
 
           <div style={styles.card}>
             <div style={styles.rowHeader}>
               <span
                 style={styles.sectionTitle}
               >
-                Active Trips
+                Recent Trips
               </span>
 
               <div
@@ -475,12 +535,12 @@ export default function MainDashboard({
             >
               {trips.length === 0 ? (
                 <div style={styles.noData}>
-                  No active trips.
+                  No trips found.
                 </div>
               ) : (
                 trips.map((trip) => (
                   <ActiveTripRow
-                    key={trip.title}
+                    key={trip.itineraryId || trip.id || trip.title}
                     {...trip}
                   />
                 ))

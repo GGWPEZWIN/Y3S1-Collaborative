@@ -1,26 +1,16 @@
-<<<<<<< HEAD
-import { useEffect, useState } from "react";
-=======
 import React, { useEffect, useState } from "react";
->>>>>>> 7ddd9ee7f16516d02a02c54effd21eae26777efc
 import { 
   Zap, 
   Droplets, 
   FileText, 
   MapPin, 
-<<<<<<< HEAD
-=======
   AlertTriangle, 
->>>>>>> 7ddd9ee7f16516d02a02c54effd21eae26777efc
   Send, 
   Building, 
   Search, 
   ExternalLink, 
   BellRing, 
-<<<<<<< HEAD
-=======
   Clock, 
->>>>>>> 7ddd9ee7f16516d02a02c54effd21eae26777efc
   ShieldAlert, 
   ChevronDown, 
   ChevronUp 
