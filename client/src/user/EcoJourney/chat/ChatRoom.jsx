@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Send, Users, MoreVertical, BellOff, Bell, Trash2, Paperclip, Search, CheckSquare, Pin, LogOut, UserPlus, X, Copy, Check, CheckCheck } from "lucide-react";
-import { doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { ChevronLeft, ChevronDown, Send, Users, MoreVertical, BellOff, Bell, Trash2, Paperclip, Search, CheckSquare, Pin, LogOut, UserPlus, X, Copy, Check, CheckCheck } from "lucide-react";
+import { collection, doc, onSnapshot, query, where, updateDoc, getDocs } from "firebase/firestore";
 import { db } from "../../../firebase/config";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
 import {
@@ -71,6 +71,11 @@ export default function ChatRoom({ chatId, onNavigate }) {
   const [chatError, setChatError] = useState("");
   const [messageMenuId, setMessageMenuId] = useState(null);
   const [hoverMessageId, setHoverMessageId] = useState(null);
+  const [messageMenuPosition, setMessageMenuPosition] = useState(null);
+  const [forwardMessages, setForwardMessages] = useState([]);
+  const [showForwardPicker, setShowForwardPicker] = useState(false);
+  const [forwardChats, setForwardChats] = useState([]);
+  const [forwardLoading, setForwardLoading] = useState(false);
   const messageHoverTimerRef = useRef(null);
 
   // Media is previewed first. Nothing is uploaded/sent until the user
@@ -406,7 +411,7 @@ export default function ChatRoom({ chatId, onNavigate }) {
   };
 
   const handleCopyMessage = async (msg) => {
-    setMessageMenuId(null);
+    closeMessageMenu();
 
     // Text is copied as text. For media, copy the shared media URL when
     // available so the Copy action still works for images and videos.
@@ -447,21 +452,156 @@ export default function ChatRoom({ chatId, onNavigate }) {
 
     messageHoverTimerRef.current = setTimeout(() => {
       setHoverMessageId(null);
-      if (!messageMenuId) {
-        setMessageMenuId(null);
-      }
       messageHoverTimerRef.current = null;
-    }, 140);
+    }, 180);
   };
 
-  const handleSelectOne = (messageId) => {
+  // Open the operations menu from the small hover arrow.
+  // Position it relative to the viewport and flip/clamp it when near an edge.
+  const handleMessageMenuOpen = (event, messageId) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const MENU_WIDTH = 220;
+    const MENU_MAX_HEIGHT = Math.min(430, Math.max(160, window.innerHeight - 24));
+    const GAP = 6;
+    const PADDING = 12;
+
+    let x = event.clientX;
+    let y = event.clientY;
+
+    if (x + MENU_WIDTH > window.innerWidth - PADDING) {
+      x = event.clientX - MENU_WIDTH + GAP;
+    }
+
+    if (y + MENU_MAX_HEIGHT > window.innerHeight - PADDING) {
+      y = event.clientY - MENU_MAX_HEIGHT + GAP;
+    }
+
+    x = Math.min(
+      Math.max(PADDING, x),
+      Math.max(PADDING, window.innerWidth - MENU_WIDTH - PADDING)
+    );
+
+    y = Math.min(
+      Math.max(PADDING, y),
+      Math.max(PADDING, window.innerHeight - MENU_MAX_HEIGHT - PADDING)
+    );
+
+    setMessageMenuPosition({ x, y });
+    setMessageMenuId(messageId);
+  };
+
+  const closeMessageMenu = () => {
     setMessageMenuId(null);
+    setMessageMenuPosition(null);
+  };
+
+  useEffect(() => {
+    if (messageMenuId == null) return undefined;
+
+    const handleOutsidePointer = () => closeMessageMenu();
+    const handleEscape = (event) => {
+      if (event.key === "Escape") closeMessageMenu();
+    };
+
+    document.addEventListener("mousedown", handleOutsidePointer);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutsidePointer);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [messageMenuId]);
+
+  const handleSelectOne = (messageId) => {
+    closeMessageMenu();
     setSelectMode(true);
     setSelectedMessages([messageId]);
   };
 
+  const handleOpenForward = async (messageIds) => {
+    closeMessageMenu();
+
+    const ids = Array.isArray(messageIds) ? messageIds : [messageIds];
+    const uniqueIds = [...new Set(ids.filter(Boolean))];
+
+    if (!uniqueIds.length || !authUser?.uid) return;
+
+    setForwardMessages(uniqueIds);
+    setShowForwardPicker(true);
+    setForwardLoading(true);
+    setForwardChats([]);
+
+    try {
+      // Load the current user's direct/group chats. Only chats where the
+      // current user is a member are shown as forwarding destinations.
+      const chatsRef = collection(db, "chats");
+      const chatsSnap = await getDocs(
+        query(chatsRef, where("members", "array-contains", authUser.uid))
+      );
+
+      const chatsList = chatsSnap.docs
+        .map((snap) => ({ id: snap.id, ...snap.data() }))
+        .filter((item) => item.id !== chatId);
+
+      setForwardChats(chatsList);
+    } catch (err) {
+      console.error("Failed to load forward chats:", err);
+      reportError(new Error("Could not load chats for forwarding."));
+    } finally {
+      setForwardLoading(false);
+    }
+  };
+
+  const handleForwardToChat = async (targetChat) => {
+    if (!targetChat?.id || !forwardMessages.length || !authUser?.uid) return;
+
+    try {
+      setForwardLoading(true);
+
+      for (const messageId of forwardMessages) {
+        const original = messages.find((msg) => msg.id === messageId);
+        if (!original) continue;
+
+        // Re-send the original content to the selected chat.
+        if (original.type === "image" && (original.imageUrl || original.mediaUrl)) {
+          await sendMessage(
+            targetChat.id,
+            authUser,
+            original.text || original.imageUrl || original.mediaUrl
+          );
+        } else if (original.type === "video" && (original.videoUrl || original.mediaUrl)) {
+          await sendMessage(
+            targetChat.id,
+            authUser,
+            original.text || original.videoUrl || original.mediaUrl
+          );
+        } else if (original.text) {
+          await sendMessage(targetChat.id, authUser, original.text);
+        }
+      }
+
+      setShowForwardPicker(false);
+      setForwardMessages([]);
+      setForwardChats([]);
+    } catch (err) {
+      console.error("Failed to forward message:", err);
+      reportError(err);
+    } finally {
+      setForwardLoading(false);
+    }
+  };
+
+  const handleCloseForwardPicker = () => {
+    if (forwardLoading) return;
+    setShowForwardPicker(false);
+    setForwardMessages([]);
+    setForwardChats([]);
+  };
+
   const handleDeleteForMe = async (messageId) => {
-    setMessageMenuId(null);
+    closeMessageMenu();
     try {
       await deleteMessageForMe(chatId, messageId, authUser.uid);
     } catch (err) {
@@ -470,7 +610,7 @@ export default function ChatRoom({ chatId, onNavigate }) {
   };
 
   const handleDeleteForEveryone = async (messageId) => {
-    setMessageMenuId(null);
+    closeMessageMenu();
     if (!window.confirm("Delete this message for everyone?")) return;
     try {
       await deleteMessageForEveryone(chatId, messageId, authUser.uid);
@@ -723,6 +863,20 @@ export default function ChatRoom({ chatId, onNavigate }) {
             <div style={styles.selectionTitle}>
               {selectedMessages.length} selected
             </div>
+
+            <button
+              type="button"
+              onClick={() => handleOpenForward(selectedMessages)}
+              disabled={!selectedMessages.length}
+              style={{
+                ...styles.headerIconBtn,
+                opacity: selectedMessages.length ? 1 : 0.45,
+              }}
+              title="Forward selected messages"
+              aria-label="Forward selected messages"
+            >
+              <Send size={18} />
+            </button>
           </div>
         ) : (
           <>
@@ -914,7 +1068,6 @@ export default function ChatRoom({ chatId, onNavigate }) {
           filteredMessages.map((msg) => {
             const isMe = msg.senderId === authUser.uid;
             const isDeletedForEveryone = msg.deletedForEveryone === true || msg.type === "deleted";
-            const isHovered = hoverMessageId === msg.id;
             const readByOthers = Array.isArray(msg.readBy)
               ? msg.readBy.some((uid) => uid !== authUser.uid)
               : false;
@@ -927,6 +1080,7 @@ export default function ChatRoom({ chatId, onNavigate }) {
               null;
 
             const messageDate = toDate(rawTimestamp);
+            const isHovered = hoverMessageId === msg.id;
             const messageIndex = filteredMessages.indexOf(msg);
             const previousMessage = messageIndex > 0 ? filteredMessages[messageIndex - 1] : null;
             const previousDate = previousMessage
@@ -954,16 +1108,18 @@ export default function ChatRoom({ chatId, onNavigate }) {
                 )}
                 <div
                   key={msg.id}
-                onClick={() => selectMode && toggleMessageSelection(msg.id)}
-                style={{
-                  ...styles.messageRow,
-                  justifyContent: isMe ? "flex-end" : "flex-start",
-                  cursor: selectMode ? "pointer" : "default",
-                  padding: selectMode ? "3px 6px" : "2px 0",
-                  borderRadius: 12,
-                  background: selectedMessages.includes(msg.id) ? "#ecfdf5" : "transparent",
-                }}
-              >
+                  onClick={() => selectMode && toggleMessageSelection(msg.id)}
+                  onMouseEnter={() => handleMessageMouseEnter(msg.id)}
+                  onMouseLeave={handleMessageMouseLeave}
+                  style={{
+                    ...styles.messageRow,
+                    justifyContent: isMe ? "flex-end" : "flex-start",
+                    cursor: selectMode ? "pointer" : "default",
+                    padding: selectMode ? "3px 6px" : "2px 0",
+                    borderRadius: 12,
+                    background: selectedMessages.includes(msg.id) ? "#ecfdf5" : "transparent",
+                  }}
+                >
                 {selectMode && (
                   <div style={styles.messageCheckbox}>
                     {selectedMessages.includes(msg.id) ? "✓" : ""}
@@ -1016,96 +1172,16 @@ export default function ChatRoom({ chatId, onNavigate }) {
 
                   </div>
 
-                  {!selectMode && !isDeletedForEveryone && (isHovered || messageMenuId === msg.id) && (
-                    <div
-                      style={{
-                        ...styles.messageOptions,
-                        ...(isMe ? { right: -42 } : { left: -42 }),
-                      }}
-                      onMouseEnter={() => setHoverMessageId(msg.id)}
-                      onMouseLeave={() => {
-                        setHoverMessageId(null);
-                        setMessageMenuId(null);
-                      }}
+                  {!selectMode && !isDeletedForEveryone && isHovered && (
+                    <button
+                      type="button"
+                      onClick={(event) => handleMessageMenuOpen(event, msg.id)}
+                      style={styles.messageArrowBtn}
+                      title="Message options"
+                      aria-label="Message options"
                     >
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setMessageMenuId(msg.id);
-                        }}
-                        style={styles.messageMenuBtn}
-                        title="Message options"
-                        aria-label="Message options"
-                      >
-                        <MoreVertical size={18} />
-                      </button>
-
-                      {messageMenuId === msg.id && (
-                        <div
-                          style={{
-                            ...styles.messageMenu,
-                            ...(isMe
-                              ? { right: 0 }
-                              : { left: 0 }),
-                          }}
-                          onMouseEnter={() => setHoverMessageId(msg.id)}
-                        >
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleCopyMessage(msg);
-                            }}
-                            style={styles.messageMenuItem}
-                          >
-                            <Copy size={14} />
-                            <span>Copy</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectOne(msg.id);
-                            }}
-                            style={styles.messageMenuItem}
-                          >
-                            <CheckSquare size={14} />
-                            <span>Select</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteForMe(msg.id);
-                            }}
-                            style={styles.messageMenuItem}
-                          >
-                            <Trash2 size={14} />
-                            <span>Delete for me</span>
-                          </button>
-
-                          {isMe && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteForEveryone(msg.id);
-                              }}
-                              style={{
-                                ...styles.messageMenuItem,
-                                color: "#b91c1c",
-                              }}
-                            >
-                              <Trash2 size={14} />
-                              <span>Delete for everyone</span>
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                      <ChevronDown size={16} />
+                    </button>
                   )}
                 </div>
               </div>
@@ -1115,6 +1191,160 @@ export default function ChatRoom({ chatId, onNavigate }) {
         )}
         <div ref={bottomRef} />
       </div>
+      {messageMenuId && messageMenuPosition && (
+        <div
+          style={{
+            ...styles.messageContextMenu,
+            left: messageMenuPosition.x,
+            top: messageMenuPosition.y,
+          }}
+          onMouseEnter={() => {
+            if (messageHoverTimerRef.current) {
+              clearTimeout(messageHoverTimerRef.current);
+              messageHoverTimerRef.current = null;
+            }
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          {(() => {
+            const menuMessage = messages.find(
+              (item) => item.id === messageMenuId
+            );
+
+            if (!menuMessage) return null;
+
+            return (
+              <div style={styles.messageContextMenuScroll}>
+                <button
+                  type="button"
+                  onClick={() => handleCopyMessage(menuMessage)}
+                  style={styles.messageMenuItem}
+                >
+                  <Copy size={14} />
+                  <span>Copy</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectOne(menuMessage.id)}
+                  style={styles.messageMenuItem}
+                >
+                  <CheckSquare size={14} />
+                  <span>Select</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenForward([menuMessage.id])}
+                  style={styles.messageMenuItem}
+                >
+                  <Send size={14} />
+                  <span>Forward</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleDeleteForMe(menuMessage.id)}
+                  style={styles.messageMenuItem}
+                >
+                  <Trash2 size={14} />
+                  <span>Delete for me</span>
+                </button>
+
+                {menuMessage.senderId === authUser.uid && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteForEveryone(menuMessage.id)}
+                    style={{
+                      ...styles.messageMenuItem,
+                      color: "#b91c1c",
+                    }}
+                  >
+                    <Trash2 size={14} />
+                    <span>Delete for everyone</span>
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {showForwardPicker && (
+        <div style={styles.forwardOverlay}>
+          <div style={styles.forwardPanel}>
+            <div style={styles.forwardHeader}>
+              <div>
+                <div style={styles.forwardTitle}>Forward message</div>
+                <div style={styles.forwardSubtitle}>
+                  {forwardMessages.length} message{forwardMessages.length === 1 ? "" : "s"} selected
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCloseForwardPicker}
+                disabled={forwardLoading}
+                style={styles.forwardCloseBtn}
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {forwardLoading ? (
+              <div style={styles.forwardLoading}>Loading chats...</div>
+            ) : forwardChats.length === 0 ? (
+              <div style={styles.forwardEmpty}>
+                No other chats available to forward to.
+              </div>
+            ) : (
+              <div style={styles.forwardChatList}>
+                {forwardChats.map((targetChat) => {
+                  const isTargetGroup = targetChat.type === "group";
+                  const targetTitle = isTargetGroup
+                    ? targetChat.name || "Group Chat"
+                    : (() => {
+                        const members = Array.isArray(targetChat.members)
+                          ? targetChat.members
+                          : [];
+                        const otherUid = members.find(
+                          (uid) => uid !== authUser.uid
+                        );
+                        return (
+                          targetChat.memberNames?.[otherUid] ||
+                          "Chat"
+                        );
+                      })();
+
+                  return (
+                    <button
+                      key={targetChat.id}
+                      type="button"
+                      onClick={() => handleForwardToChat(targetChat)}
+                      disabled={forwardLoading}
+                      style={styles.forwardChatItem}
+                    >
+                      <div style={styles.forwardChatAvatar}>
+                        {isTargetGroup ? "👥" : (targetTitle || "?").charAt(0).toUpperCase()}
+                      </div>
+                      <div style={styles.forwardChatInfo}>
+                        <div style={styles.forwardChatName}>{targetTitle}</div>
+                        <div style={styles.forwardChatType}>
+                          {isTargetGroup ? "Group chat" : "Direct chat"}
+                        </div>
+                      </div>
+                      <Send size={16} color="#16a34a" />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {pendingMedia.length > 0 && (
         <div style={styles.mediaPreviewPanel}>
           <div style={styles.previewHeader}>
@@ -1539,41 +1769,43 @@ const styles = {
   },
   sentTicks: { display: "inline-flex", color: "rgba(255,255,255,.72)" },
   readTicks: { display: "inline-flex", color: "#93c5fd" },
-  messageOptions: {
-    position: "absolute",
-    top: 4,
-    zIndex: 100,
-    width: 34,
-    minHeight: 34,
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "center",
-  },
-  messageMenuBtn: {
+  messageArrowBtn: {
     border: "none",
-    background: "transparent",
-    color: "rgba(107,114,128,.75)",
+    background: "#ffffff",
+    color: "#4b5563",
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    padding: 0,
-    width: 32,
-    height: 32,
+    width: 30,
+    height: 30,
+    minWidth: 30,
     borderRadius: "50%",
-    background: "#ffffff",
-    boxShadow: "0 2px 8px rgba(0,0,0,.12)",
+    boxShadow: "0 2px 8px rgba(0,0,0,.14)",
+    marginLeft: 6,
+    marginRight: 4,
+    flexShrink: 0,
+    alignSelf: "center",
   },
-  messageMenu: {
-    position: "absolute",
-    top: 30,
-    minWidth: 185,
+  messageContextMenu: {
+    position: "fixed",
+    width: 220,
+    maxHeight: "calc(100vh - 24px)",
+    boxSizing: "border-box",
     background: "#fff",
     border: "1px solid #e5e7eb",
     borderRadius: 10,
-    boxShadow: "0 8px 20px rgba(0,0,0,.12)",
+    boxShadow: "0 10px 28px rgba(0,0,0,.18)",
     padding: 5,
-    zIndex: 200,
+    zIndex: 10000,
+    overflow: "hidden",
+  },
+  messageContextMenuScroll: {
+    maxHeight: "calc(100vh - 34px)",
+    overflowY: "auto",
+    overflowX: "hidden",
+    overscrollBehavior: "contain",
+    scrollbarWidth: "thin",
   },
   messageMenuItem: {
     width: "100%",
@@ -1591,6 +1823,114 @@ const styles = {
     textAlign: "left",
   },
   bubbleSender: { fontSize: 11.5, fontWeight: 700, color: "#16a34a", marginBottom: 3 },
+  forwardOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.35)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 11000,
+    padding: 20,
+    boxSizing: "border-box",
+  },
+  forwardPanel: {
+    width: "min(420px, 100%)",
+    maxHeight: "min(620px, 90vh)",
+    background: "#fff",
+    borderRadius: 16,
+    boxShadow: "0 18px 50px rgba(0,0,0,.22)",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+  },
+  forwardHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "16px 18px",
+    borderBottom: "1px solid #e5e7eb",
+  },
+  forwardTitle: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: "#111827",
+  },
+  forwardSubtitle: {
+    marginTop: 3,
+    fontSize: 12,
+    color: "#6b7280",
+  },
+  forwardCloseBtn: {
+    border: "none",
+    background: "#f3f4f6",
+    color: "#374151",
+    width: 34,
+    height: 34,
+    borderRadius: "50%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
+  forwardLoading: {
+    padding: 30,
+    textAlign: "center",
+    color: "#6b7280",
+    fontSize: 13,
+  },
+  forwardEmpty: {
+    padding: 30,
+    textAlign: "center",
+    color: "#9ca3af",
+    fontSize: 13,
+  },
+  forwardChatList: {
+    overflowY: "auto",
+    padding: 8,
+  },
+  forwardChatItem: {
+    width: "100%",
+    border: "none",
+    background: "transparent",
+    borderRadius: 10,
+    padding: "10px 12px",
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  forwardChatAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: "50%",
+    background: "#dcfce7",
+    color: "#15803d",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 14,
+    fontWeight: 700,
+    flexShrink: 0,
+  },
+  forwardChatInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  forwardChatName: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: "#111827",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  forwardChatType: {
+    marginTop: 2,
+    fontSize: 11,
+    color: "#9ca3af",
+  },
   inputRow: {
     display: "flex",
     alignItems: "center",

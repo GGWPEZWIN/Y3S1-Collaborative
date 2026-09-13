@@ -26,6 +26,7 @@ import ActiveTripRow from "../components/ActiveTripRow";
 import ChallengeRow from "../components/ChallengeRow";
 
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
+import { listenToCumulativeEcoScore } from "../../../firebase/ecoScoreService";
 
 import {
   getSummaryStats,
@@ -79,6 +80,9 @@ export default function MainDashboard({
   const [achievements, setAchievements] =
     useState([]);
 
+  const [cumulativeEcoScore, setCumulativeEcoScore] =
+    useState(0);
+
 
 
   // ============================================================
@@ -94,6 +98,36 @@ export default function MainDashboard({
       setChallenges
     );
   }, []);
+
+
+  // ============================================================
+  // LIVE CUMULATIVE ECO SCORE
+  // Source: completed top-level travelHistory records.
+  // Does not modify users/{uid}.eco_score.
+  // ============================================================
+
+  useEffect(() => {
+    if (!authUser?.uid) {
+      setCumulativeEcoScore(0);
+      return;
+    }
+
+    return listenToCumulativeEcoScore(
+      authUser.uid,
+      setCumulativeEcoScore
+    );
+  }, [authUser?.uid]);
+
+
+  useEffect(() => {
+    setStats((currentStats) =>
+      currentStats.map((stat) =>
+        stat.label === "Eco Score" || stat.title === "Eco Score"
+          ? { ...stat, value: cumulativeEcoScore }
+          : stat
+      )
+    );
+  }, [cumulativeEcoScore]);
 
 
   // ============================================================
@@ -161,8 +195,7 @@ export default function MainDashboard({
   const user = {
     name: profile.name,
 
-    ecoScore:
-      profile.eco_score ?? 0,
+    ecoScore: cumulativeEcoScore,
   };
 
 
@@ -177,9 +210,7 @@ export default function MainDashboard({
         0
     ),
 
-    eco_score: Number(
-      profile.eco_score ?? 0
-    ),
+    eco_score: cumulativeEcoScore,
 
     carbon_saved: Number(
       profile.carbon_saved ?? 0

@@ -3,12 +3,18 @@ import {
   doc,
   getDoc,
   onSnapshot,
+  query,
+  where,
   runTransaction,
   serverTimestamp,
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 
 import { auth, db } from "./config";
+import {
+  createCommunityActivity,
+  COMMUNITY_ACTIVITY_TYPES,
+} from "./communityActivityService";
 import { buildOrderedSegments } from "../user/AIRecommendation/services/itinerary/buildRouteSegments.js";
 import { normalizeModule1Itinerary } from "../user/AIRecommendation/services/itinerary/normalizeItinerary.js";
 import { completedSegmentDocumentId, skippedSegmentDocumentId } from "../user/AIRecommendation/services/navigation/constants.js";
@@ -819,6 +825,28 @@ function historyRefFor(uid, itineraryId) {
   return doc(db, TRAVEL_HISTORY, itineraryId);
 }
 
+function completedHistoryEcoScore(data) {
+  if (!data || typeof data !== "object") return 0;
+
+  const status = String(data.status || "").toLowerCase();
+  const completed =
+    status === "completed" ||
+    status === "complete" ||
+    data.completed === true ||
+    data.isCompleted === true;
+
+  if (!completed) return 0;
+
+  const score = Number(
+    data.finalEcoScore ??
+      data.ecoScore ??
+      data.planEcoScore ??
+      0
+  );
+
+  return Number.isFinite(score) ? score : 0;
+}
+
 function asExistingReport(snap) {
   if (!snap?.exists()) return null;
   return { id: snap.id, ...snap.data() };
@@ -837,7 +865,7 @@ function throwFinishPlanError(plan) {
  * Completes the signed-in user's trip after every saved hop has a reached
  * or skipped outcome. One transaction writes session completion, itinerary
  * completion flags, travel-history metadata, the private Eco Report, and
- * lock deletion. Does not call Google Routes or change rewards/achievements.
+ * lock deletion. Does not call Google Routes. It also synchronizes the user's cumulative Eco Score.
  */
 export async function finishTripSession(sessionId) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
@@ -846,9 +874,10 @@ export async function finishTripSession(sessionId) {
   }
 
   const user = await getLoggedInUser();
+  let result;
 
   try {
-    return await runTransaction(db, async (transaction) => {
+    result = await runTransaction(db, async (transaction) => {
       const lockRef = doc(db, ACTIVE_LOCKS, user.uid);
       const sessionRef = doc(db, TRIP_SESSIONS, id);
       const lockSnap = await transaction.get(lockRef);
@@ -871,10 +900,7 @@ export async function finishTripSession(sessionId) {
       const itinerary = itinerarySnap.exists()
         ? { id: itinerarySnap.id, ...itinerarySnap.data() }
         : null;
-      // A new Module 2 finish creates the history + report documents.
-      // Do not read missing pre-finish documents here.
-      // A completed session is the only case where an existing report is
-      // needed for an idempotent retry.
+
       let existingReport = null;
       if (session.status === "completed") {
         const reportSnap = await transaction.get(reportRef);
@@ -883,7 +909,11 @@ export async function finishTripSession(sessionId) {
 
       const completions = [];
       const skips = [];
-      if (session.status === "active" && Number.isInteger(session.totalSegments) && session.totalSegments > 0) {
+      if (
+        session.status === "active" &&
+        Number.isInteger(session.totalSegments) &&
+        session.totalSegments > 0
+      ) {
         for (let index = 0; index < session.totalSegments; index += 1) {
           const segmentId = completedSegmentDocumentId(index);
           if (!segmentId) {
@@ -891,6 +921,7 @@ export async function finishTripSession(sessionId) {
             skips.push(null);
             continue;
           }
+
           const completionRef = doc(
             db,
             TRIP_SESSIONS,
@@ -905,8 +936,10 @@ export async function finishTripSession(sessionId) {
             SKIPPED_SEGMENTS,
             segmentId
           );
+
           const completionSnap = await transaction.get(completionRef);
           const skipSnap = await transaction.get(skipRef);
+
           completions.push(
             completionSnap.exists()
               ? asCompletedSegment(completionSnap.id, completionSnap.data())
@@ -948,6 +981,47 @@ export async function finishTripSession(sessionId) {
         throw new TripSessionError(TRIP_SESSION_ERROR.INVALID_SNAPSHOT);
       }
 
+      /*
+       * Keep users/{uid}.eco_score synchronized with completed Travel History.
+       *
+       * We calculate the canonical cumulative score from travelHistory instead
+       * of simply incrementing the current profile value. This also repairs
+       * older trips whose profile score was still 0, and avoids double-counting
+       * when Finish Trip is retried.
+       *
+       * The current trip is not in the query yet, so its finalEcoScore is added
+       * exactly once below.
+       */
+      const userRef = doc(db, "users", user.uid);
+      const historyQuery = query(
+        collection(db, TRAVEL_HISTORY),
+        where("userId", "==", user.uid)
+      );
+      const [userSnap, historySnap] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(historyQuery),
+      ]);
+
+      if (!userSnap.exists()) {
+        throw new TripSessionError(TRIP_SESSION_ERROR.UNAUTHORIZED);
+      }
+
+      const previousCompletedScore = historySnap.docs.reduce(
+        (total, historyDoc) =>
+          total + completedHistoryEcoScore(historyDoc.data()),
+        0
+      );
+
+      const currentTripScore = Number(
+        snapshot.finalEcoScore ??
+          snapshot.ecoScore ??
+          0
+      );
+
+      const canonicalEcoScore =
+        previousCompletedScore +
+        (Number.isFinite(currentTripScore) ? currentTripScore : 0);
+
       const now = serverTimestamp();
       const report = {
         ...snapshot,
@@ -961,6 +1035,7 @@ export async function finishTripSession(sessionId) {
         completedAt: now,
         updatedAt: now,
       });
+
       transaction.update(itineraryRef, {
         module2Complete: true,
         status: "Completed",
@@ -974,14 +1049,24 @@ export async function finishTripSession(sessionId) {
         completedAt: now,
         updatedAt: now,
       };
-      transaction.set(historyRef, {
-        userId: user.uid,
-        itineraryId: session.itineraryId,
-        title: session.itineraryTitle || itinerary?.title || "",
-        name: session.itineraryTitle || itinerary?.title || "",
-        ...historyUpdate,
-        createdAt: now,
-      }, { merge: true });
+
+      transaction.set(
+        historyRef,
+        {
+          userId: user.uid,
+          itineraryId: session.itineraryId,
+          title: session.itineraryTitle || itinerary?.title || "",
+          name: session.itineraryTitle || itinerary?.title || "",
+          ...historyUpdate,
+          createdAt: now,
+        },
+        { merge: true }
+      );
+
+      transaction.update(userRef, {
+        eco_score: canonicalEcoScore,
+        updated_at: now,
+      });
 
       transaction.set(reportRef, report);
       transaction.delete(lockRef);
@@ -990,10 +1075,64 @@ export async function finishTripSession(sessionId) {
         idempotent: false,
         sessionId: session.sessionId,
         itineraryId: session.itineraryId,
-        report: { id: REPORT_DOCUMENT_ID, ...report },
+        report: {
+          id: REPORT_DOCUMENT_ID,
+          ...report,
+        },
+        activityInput: {
+          tripId: session.itineraryId,
+          tripName:
+            snapshot.tripName ||
+            session.itineraryTitle ||
+            itinerary?.title ||
+            "Untitled Trip",
+          ecoScore:
+            snapshot.finalEcoScore ??
+            snapshot.ecoScore ??
+            null,
+          startDate: snapshot.startDate ?? null,
+          endDate: snapshot.endDate ?? null,
+        },
       };
     });
   } catch (error) {
     throw mapFirebaseFailure(error);
   }
+
+  // The core trip transaction is already successful. Community activity and
+  // achievement work are best-effort so they can never make Finish Trip fail.
+  if (result && !result.idempotent) {
+    try {
+      await createCommunityActivity({
+        actorUid: user.uid,
+        actorName: user.displayName || user.email || "User",
+        actorPhotoUrl: user.photoURL || "",
+        type: COMMUNITY_ACTIVITY_TYPES.TRIP_COMPLETED,
+        ...result.activityInput,
+      });
+    } catch (activityError) {
+      console.error("Community trip activity failed:", activityError);
+    }
+
+    // Module 2 finishes by updating the itinerary directly, so trigger the
+    // existing achievement engine here too. Newly awarded achievements will
+    // create their own community activity through achievementService.
+    try {
+      const { checkAchievementsAfterProgressChange } =
+        await import("./achievementService");
+      await checkAchievementsAfterProgressChange(user.uid);
+    } catch (achievementError) {
+      console.error(
+        "Post-finish achievement check failed:",
+        achievementError
+      );
+    }
+  }
+
+  if (result?.activityInput) {
+    const { activityInput, ...publicResult } = result;
+    return publicResult;
+  }
+
+  return result;
 }

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
 import {
   ChevronLeft,
@@ -16,8 +16,8 @@ import {
 } from "lucide-react";
 
 import Layout from "../../../shared/components/Layout";
-
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
+import { listenToCumulativeEcoScore } from "../../../firebase/ecoScoreService";
 
 import {
   logoutUser,
@@ -54,6 +54,23 @@ export default function Profile({ onNavigate }) {
 
   const [loggingOut, setLoggingOut] =
     useState(false);
+
+  // Cumulative Eco Score from completed top-level travelHistory records.
+  // This is display-only and does not update users/{uid}.eco_score.
+  const [cumulativeEcoScore, setCumulativeEcoScore] =
+    useState(0);
+
+  useEffect(() => {
+    if (!authUser?.uid) {
+      setCumulativeEcoScore(0);
+      return;
+    }
+
+    return listenToCumulativeEcoScore(
+      authUser.uid,
+      setCumulativeEcoScore
+    );
+  }, [authUser?.uid]);
 
   /*
    * ONE EDIT MODE
@@ -424,8 +441,9 @@ export default function Profile({ onNavigate }) {
    */
   const layoutUser = {
     name: profile.name,
-    ecoScore:
-      profile.eco_score ?? 0,
+    // Use the same cumulative completed-trip Eco Score
+    // shown on the dashboard and top navbar.
+    ecoScore: cumulativeEcoScore,
     profile_photo_url:
       profile.profile_photo_url || "",
   };
@@ -808,10 +826,7 @@ export default function Profile({ onNavigate }) {
                   </span>
 
                   <span style={styles.infoValue}>
-                    {(
-                      profile.eco_score ??
-                      0
-                    ).toLocaleString()}
+                    {cumulativeEcoScore.toLocaleString()}
                   </span>
 
                 </div>

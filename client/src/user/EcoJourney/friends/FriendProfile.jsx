@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   Leaf,
@@ -9,7 +9,7 @@ import {
   MessageCircle,
   Trash2,
 } from "lucide-react";
-import { doc, getDoc } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, query, where } from "firebase/firestore";
 import Layout from "../../../shared/components/Layout";
 import { db } from "../../../firebase/config";
 import { useCurrentUser } from "../../../firebase/useCurrentUser";
@@ -94,6 +94,7 @@ export default function FriendProfile({ friendUid, onNavigate }) {
   const [isFriend, setIsFriend] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [accumulatedEcoScore, setAccumulatedEcoScore] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,21 +135,71 @@ export default function FriendProfile({ friendUid, onNavigate }) {
     };
   }, [friendUid, authUser?.uid]);
 
-  const accumulatedEcoScore = useMemo(() => {
-    if (!friend) return 0;
+  // FRIEND CUMULATIVE ECO SCORE
+  // Uses the friend's UID and top-level travelHistory.
+  useEffect(() => {
+    if (!friendUid) {
+      setAccumulatedEcoScore(0);
+      return;
+    }
 
-    return Math.max(
-      0,
-      Number(
-        friend.ecoScore ??
-          friend.eco_points ??
-          friend.ecoPoints ??
-          friend.lifetimeEcoPoints ??
-          friend.eco_score ??
-          0
-      ) || 0
+    const historyQuery = query(
+      collection(db, "travelHistory"),
+      where("userId", "==", friendUid)
     );
-  }, [friend]);
+
+    const unsubscribe = onSnapshot(
+      historyQuery,
+      (snapshot) => {
+        let total = 0;
+
+        snapshot.forEach((historyDoc) => {
+          const trip = historyDoc.data() || {};
+          const status = String(trip.status || "").toLowerCase();
+          const completed =
+            status === "completed" ||
+            status === "complete" ||
+            trip.completed === true ||
+            trip.isCompleted === true;
+
+          if (!completed) return;
+
+          const score = Number(
+            trip.finalEcoScore ??
+              trip.ecoScore ??
+              trip.planEcoScore ??
+              0
+          );
+
+          if (Number.isFinite(score)) total += score;
+        });
+
+        setAccumulatedEcoScore(Math.max(0, total));
+      },
+      (err) => {
+        console.error(
+          "Unable to listen to friend's travel history:",
+          err
+        );
+
+        setAccumulatedEcoScore(
+          Math.max(
+            0,
+            Number(
+              friend?.ecoScore ??
+                friend?.eco_points ??
+                friend?.ecoPoints ??
+                friend?.lifetimeEcoPoints ??
+                friend?.eco_score ??
+                0
+            ) || 0
+          )
+        );
+      }
+    );
+
+    return () => unsubscribe();
+  }, [friendUid]);
 
   const completedTrips = Math.max(
     0,

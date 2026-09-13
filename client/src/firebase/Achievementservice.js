@@ -10,6 +10,8 @@ import {
   serverTimestamp,
   runTransaction,
   increment,
+  query,
+  where,
 } from "firebase/firestore";
 
 import {
@@ -20,6 +22,10 @@ import {
 } from "firebase/storage";
 
 import { db, storage } from "./config";
+import {
+  createCommunityActivity,
+  COMMUNITY_ACTIVITY_TYPES,
+} from "./communityActivityService";
 
 const ACHIEVEMENTS_COLLECTION = "achievements";
 const USERS_COLLECTION = "users";
@@ -92,7 +98,8 @@ export const DEFAULT_ICON_OPTIONS = [
 export const getRandomDefaultIcon = () => {
   return DEFAULT_ICON_OPTIONS[
     Math.floor(
-      Math.random() * DEFAULT_ICON_OPTIONS.length
+      Math.random() *
+        DEFAULT_ICON_OPTIONS.length
     )
   ];
 };
@@ -100,8 +107,6 @@ export const getRandomDefaultIcon = () => {
 // ============================================================
 // ADMIN ACHIEVEMENT LISTENER
 // ============================================================
-//
-// IMPORTANT:
 //
 // The achievement catalogue is GLOBAL.
 //
@@ -117,7 +122,9 @@ export const getRandomDefaultIcon = () => {
 // Users earn the achievements.
 // ============================================================
 
-export const listenToAchievements = (callback) => {
+export const listenToAchievements = (
+  callback
+) => {
   const achievementRef = collection(
     db,
     ACHIEVEMENTS_COLLECTION
@@ -126,17 +133,22 @@ export const listenToAchievements = (callback) => {
   return onSnapshot(
     achievementRef,
     (snapshot) => {
-      const list = snapshot.docs.map((item) => ({
-        id: item.id,
-        ...item.data(),
-      }));
+      const list =
+        snapshot.docs.map(
+          (item) => ({
+            id: item.id,
+            ...item.data(),
+          })
+        );
 
       list.sort((a, b) => {
         const aTime =
-          a.createdAt?.toMillis?.() || 0;
+          a.createdAt?.toMillis?.() ||
+          0;
 
         const bTime =
-          b.createdAt?.toMillis?.() || 0;
+          b.createdAt?.toMillis?.() ||
+          0;
 
         return bTime - aTime;
       });
@@ -169,22 +181,26 @@ export const listenToPublishedAchievements = (
   return onSnapshot(
     achievementRef,
     (snapshot) => {
-      const list = snapshot.docs
-        .map((item) => ({
-          id: item.id,
-          ...item.data(),
-        }))
-        .filter(
-          (item) =>
-            item.status === "published"
-        );
+      const list =
+        snapshot.docs
+          .map((item) => ({
+            id: item.id,
+            ...item.data(),
+          }))
+          .filter(
+            (item) =>
+              item.status ===
+              "published"
+          );
 
       list.sort((a, b) => {
         const aTime =
-          a.createdAt?.toMillis?.() || 0;
+          a.createdAt?.toMillis?.() ||
+          0;
 
         const bTime =
-          b.createdAt?.toMillis?.() || 0;
+          b.createdAt?.toMillis?.() ||
+          0;
 
         return bTime - aTime;
       });
@@ -219,9 +235,10 @@ export const getAchievement = async (
     achievementId
   );
 
-  const snapshot = await getDoc(
-    achievementRef
-  );
+  const snapshot =
+    await getDoc(
+      achievementRef
+    );
 
   if (!snapshot.exists()) {
     return null;
@@ -237,161 +254,91 @@ export const getAchievement = async (
 // UPLOAD ACHIEVEMENT IMAGE
 // ============================================================
 
-export const uploadAchievementImage = async (
-  file
-) => {
-  if (!file) {
-    return "";
-  }
+export const uploadAchievementImage =
+  async (file) => {
+    if (!file) {
+      return "";
+    }
 
-  if (!file.type.startsWith("image/")) {
-    throw new Error(
-      "Please select an image file."
+    if (
+      !file.type.startsWith(
+        "image/"
+      )
+    ) {
+      throw new Error(
+        "Please select an image file."
+      );
+    }
+
+    if (
+      file.size >
+      5 * 1024 * 1024
+    ) {
+      throw new Error(
+        "Image must be smaller than 5 MB."
+      );
+    }
+
+    const extension =
+      file.name
+        .split(".")
+        .pop()
+        ?.toLowerCase() ||
+      "jpg";
+
+    const fileName =
+      `achievement_${Date.now()}_${Math.random()
+        .toString(36)
+        .substring(2, 8)}.${extension}`;
+
+    const storageRef = ref(
+      storage,
+      `achievements/${fileName}`
     );
-  }
 
-  if (file.size > 5 * 1024 * 1024) {
-    throw new Error(
-      "Image must be smaller than 5 MB."
+    await uploadBytes(
+      storageRef,
+      file
     );
-  }
 
-  const extension =
-    file.name
-      .split(".")
-      .pop()
-      ?.toLowerCase() || "jpg";
-
-  const fileName =
-    `achievement_${Date.now()}_${Math.random()
-      .toString(36)
-      .substring(2, 8)}.${extension}`;
-
-  const storageRef = ref(
-    storage,
-    `achievements/${fileName}`
-  );
-
-  await uploadBytes(
-    storageRef,
-    file
-  );
-
-  return getDownloadURL(
-    storageRef
-  );
-};
+    return getDownloadURL(
+      storageRef
+    );
+  };
 
 // ============================================================
 // DELETE ACHIEVEMENT IMAGE
 // ============================================================
 
-export const deleteAchievementImage = async (
-  imageUrl
-) => {
-  if (!imageUrl) {
-    return;
-  }
+export const deleteAchievementImage =
+  async (imageUrl) => {
+    if (!imageUrl) {
+      return;
+    }
 
-  try {
-    const imageRef = ref(
-      storage,
-      imageUrl
-    );
+    try {
+      const imageRef = ref(
+        storage,
+        imageUrl
+      );
 
-    await deleteObject(
-      imageRef
-    );
-  } catch (error) {
-    console.warn(
-      "Could not delete achievement image:",
-      error
-    );
-  }
-};
+      await deleteObject(
+        imageRef
+      );
+    } catch (error) {
+      console.warn(
+        "Could not delete achievement image:",
+        error
+      );
+    }
+  };
 
 // ============================================================
 // CREATE ACHIEVEMENT
 // ============================================================
 
-export const createAchievement = async ({
-  title,
-  description,
-  category,
-  ruleType,
-  ruleTarget,
-  ruleUnit,
-  icon,
-  iconUrl,
-  createdBy,
-  status = "draft",
-}) => {
-  const data = {
-    title:
-      title?.trim() ||
-      "Untitled Achievement",
-
-    description:
-      description?.trim() ||
-      "Complete the requirement to unlock this achievement.",
-
-    category:
-      category || "Eco Travel",
-
-    ruleType:
-      ruleType || "trips_completed",
-
-    ruleTarget:
-      Math.max(
-        Number(ruleTarget) || 1,
-        1
-      ),
-
-    ruleUnit:
-      ruleUnit || "trips",
-
-    icon:
-      icon || getRandomDefaultIcon(),
-
-    iconUrl:
-      iconUrl || "",
-
-    status:
-      status === "published"
-        ? "published"
-        : "draft",
-
-    // Audit information only.
-    // This does NOT make the achievement belong
-    // to the admin who created it.
-    createdBy:
-      createdBy || null,
-
-    createdAt:
-      serverTimestamp(),
-
-    updatedAt:
-      serverTimestamp(),
-  };
-
-  const result = await addDoc(
-    collection(
-      db,
-      ACHIEVEMENTS_COLLECTION
-    ),
-    data
-  );
-
-  return result.id;
-};
-
-// ============================================================
-// UPDATE ACHIEVEMENT
-// ============================================================
-
-export const updateAchievement = async (
-  achievementId,
-  {
+export const createAchievement =
+  async ({
     title,
     description,
     category,
@@ -400,24 +347,10 @@ export const updateAchievement = async (
     ruleUnit,
     icon,
     iconUrl,
-    status,
-  }
-) => {
-  if (!achievementId) {
-    throw new Error(
-      "Achievement ID is required."
-    );
-  }
-
-  const achievementRef = doc(
-    db,
-    ACHIEVEMENTS_COLLECTION,
-    achievementId
-  );
-
-  await updateDoc(
-    achievementRef,
-    {
+    createdBy,
+    status = "draft",
+  }) => {
+    const data = {
       title:
         title?.trim() ||
         "Untitled Achievement",
@@ -443,7 +376,8 @@ export const updateAchievement = async (
         ruleUnit || "trips",
 
       icon:
-        icon || getRandomDefaultIcon(),
+        icon ||
+        getRandomDefaultIcon(),
 
       iconUrl:
         iconUrl || "",
@@ -453,120 +387,449 @@ export const updateAchievement = async (
           ? "published"
           : "draft",
 
+      // Audit information only.
+      // This does NOT make the achievement belong
+      // to the admin who created it.
+      createdBy:
+        createdBy || null,
+
+      createdAt:
+        serverTimestamp(),
+
       updatedAt:
         serverTimestamp(),
+    };
+
+    const result =
+      await addDoc(
+        collection(
+          db,
+          ACHIEVEMENTS_COLLECTION
+        ),
+        data
+      );
+
+    return result.id;
+  };
+
+// ============================================================
+// UPDATE ACHIEVEMENT
+// ============================================================
+
+export const updateAchievement =
+  async (
+    achievementId,
+    {
+      title,
+      description,
+      category,
+      ruleType,
+      ruleTarget,
+      ruleUnit,
+      icon,
+      iconUrl,
+      status,
     }
-  );
-};
+  ) => {
+    if (!achievementId) {
+      throw new Error(
+        "Achievement ID is required."
+      );
+    }
+
+    const achievementRef =
+      doc(
+        db,
+        ACHIEVEMENTS_COLLECTION,
+        achievementId
+      );
+
+    await updateDoc(
+      achievementRef,
+      {
+        title:
+          title?.trim() ||
+          "Untitled Achievement",
+
+        description:
+          description?.trim() ||
+          "Complete the requirement to unlock this achievement.",
+
+        category:
+          category || "Eco Travel",
+
+        ruleType:
+          ruleType ||
+          "trips_completed",
+
+        ruleTarget:
+          Math.max(
+            Number(ruleTarget) || 1,
+            1
+          ),
+
+        ruleUnit:
+          ruleUnit || "trips",
+
+        icon:
+          icon ||
+          getRandomDefaultIcon(),
+
+        iconUrl:
+          iconUrl || "",
+
+        status:
+          status === "published"
+            ? "published"
+            : "draft",
+
+        updatedAt:
+          serverTimestamp(),
+      }
+    );
+  };
 
 // ============================================================
 // PUBLISH ACHIEVEMENT
 // ============================================================
-
-export const publishAchievement = async (
-  achievementId
-) => {
-  if (!achievementId) {
-    throw new Error(
-      "Achievement ID is required."
-    );
-  }
-
-  const achievementRef = doc(
-    db,
-    ACHIEVEMENTS_COLLECTION,
-    achievementId
-  );
-
-  await updateDoc(
-    achievementRef,
-    {
-      status: "published",
-
-      publishedAt:
-        serverTimestamp(),
-
-      updatedAt:
-        serverTimestamp(),
-    }
-  );
-};
-
-// ============================================================
-// SAVE AS DRAFT
+//
+// Keeps the admin workflow compatible with:
+// publishAchievement(achievementId)
+//
+// Published achievements become visible to users.
 // ============================================================
 
-export const saveAchievementDraft =
-  async (
-    achievementId,
-    data
-  ) => {
-    if (achievementId) {
-      await updateAchievement(
-        achievementId,
-        {
-          ...data,
-          status: "draft",
-        }
+export const publishAchievement =
+  async (achievementId) => {
+    if (!achievementId) {
+      throw new Error(
+        "Achievement ID is required."
       );
-
-      return achievementId;
     }
 
-    return createAchievement({
-      ...data,
+    const achievementRef = doc(
+      db,
+      ACHIEVEMENTS_COLLECTION,
+      achievementId
+    );
+
+    await updateDoc(
+      achievementRef,
+      {
+        status: "published",
+        updatedAt: serverTimestamp(),
+      }
+    );
+
+    return {
+      success: true,
+      achievementId,
+      status: "published",
+    };
+  };
+
+// ============================================================
+// UNPUBLISH ACHIEVEMENT
+// ============================================================
+//
+// Keeps the admin workflow compatible with:
+// unpublishAchievement(achievementId)
+//
+// Unpublished achievements are no longer returned by the
+// user-side published-achievement listener.
+// ============================================================
+
+export const unpublishAchievement =
+  async (achievementId) => {
+    if (!achievementId) {
+      throw new Error(
+        "Achievement ID is required."
+      );
+    }
+
+    const achievementRef = doc(
+      db,
+      ACHIEVEMENTS_COLLECTION,
+      achievementId
+    );
+
+    await updateDoc(
+      achievementRef,
+      {
+        status: "draft",
+        updatedAt: serverTimestamp(),
+      }
+    );
+
+    return {
+      success: true,
+      achievementId,
       status: "draft",
-    });
+    };
   };
 
 // ============================================================
 // DELETE ACHIEVEMENT
 // ============================================================
 
-export const deleteAchievement = async (
-  achievementId,
-  imageUrl = ""
-) => {
-  if (!achievementId) {
-    throw new Error(
-      "Achievement ID is required."
-    );
-  }
+export const deleteAchievement =
+  async (achievementId) => {
+    if (!achievementId) {
+      throw new Error(
+        "Achievement ID is required."
+      );
+    }
 
-  const achievementRef = doc(
-    db,
-    ACHIEVEMENTS_COLLECTION,
+    const achievementRef =
+      doc(
+        db,
+        ACHIEVEMENTS_COLLECTION,
+        achievementId
+      );
+
+    await deleteDoc(
+      achievementRef
+    );
+  };
+
+// ============================================================
+// GET USER ACHIEVEMENT RECORD
+// ============================================================
+
+export const getUserAchievement =
+  async (
+    uid,
     achievementId
-  );
+  ) => {
+    if (
+      !uid ||
+      !achievementId
+    ) {
+      return null;
+    }
 
-  await deleteDoc(
-    achievementRef
-  );
+    const achievementRef =
+      doc(
+        db,
+        USERS_COLLECTION,
+        uid,
+        USER_ACHIEVEMENTS_COLLECTION,
+        achievementId
+      );
 
-  if (imageUrl) {
-    await deleteAchievementImage(
-      imageUrl
-    );
-  }
-};
+    const snapshot =
+      await getDoc(
+        achievementRef
+      );
+
+    if (!snapshot.exists()) {
+      return null;
+    }
+
+    return {
+      id: snapshot.id,
+      ...snapshot.data(),
+    };
+  };
 
 // ============================================================
-// COUNT COMPLETED TRIPS
+// AWARD ACHIEVEMENT
+// ============================================================
+//
+// Stores earned achievement at:
+//
+// users/{uid}/achievements/{achievementId}
+//
 // ============================================================
 
-const getCompletedTripCount =
-  async (uid) => {
-    const historyRef =
+export const awardAchievement =
+  async (
+    uid,
+    achievement
+  ) => {
+    if (
+      !uid ||
+      !achievement?.id
+    ) {
+      return {
+        awarded: false,
+      };
+    }
+
+    const achievementRef =
+      doc(
+        db,
+        USERS_COLLECTION,
+        uid,
+        USER_ACHIEVEMENTS_COLLECTION,
+        achievement.id
+      );
+
+    const existing =
+      await getDoc(
+        achievementRef
+      );
+
+    // Already awarded.
+    if (existing.exists()) {
+      return {
+        awarded: false,
+        alreadyAwarded: true,
+        record: {
+          id: existing.id,
+          ...existing.data(),
+        },
+      };
+    }
+
+    const userAchievement = {
+      achievementId:
+        achievement.id,
+
+      title:
+        achievement.title ||
+        "Achievement",
+
+      description:
+        achievement.description ||
+        "",
+
+      category:
+        achievement.category ||
+        "Eco Travel",
+
+      ruleType:
+        achievement.ruleType ||
+        "trips_completed",
+
+      ruleTarget:
+        Math.max(
+          Number(
+            achievement.ruleTarget
+          ) || 1,
+          1
+        ),
+
+      ruleUnit:
+        achievement.ruleUnit ||
+        "",
+
+      icon:
+        achievement.icon ||
+        "",
+
+      iconUrl:
+        achievement.iconUrl ||
+        "",
+
+      awardedAt:
+        serverTimestamp(),
+    };
+
+    await addDoc(
       collection(
         db,
         USERS_COLLECTION,
         uid,
+        USER_ACHIEVEMENTS_COLLECTION
+      ),
+      userAchievement
+    );
+
+    // Only a newly awarded achievement creates a community activity.
+    // Feed failures never undo a successful achievement award.
+    try {
+      const userSnapshot = await getDoc(
+        doc(db, USERS_COLLECTION, uid)
+      );
+      const userData = userSnapshot.exists()
+        ? userSnapshot.data()
+        : {};
+
+      await createCommunityActivity({
+        actorUid: uid,
+        actorName:
+          userData.name ||
+          userData.displayName ||
+          "User",
+        actorPhotoUrl:
+          userData.profile_photo_url ||
+          userData.profilePhotoUrl ||
+          "",
+        type: COMMUNITY_ACTIVITY_TYPES.ACHIEVEMENT_UNLOCKED,
+        achievementId: achievement.id,
+        achievementTitle:
+          achievement.title ||
+          "Achievement",
+        achievementIcon:
+          achievement.icon ||
+          "",
+        achievementIconUrl:
+          achievement.iconUrl ||
+          "",
+        points: achievement.points || 0,
+      });
+    } catch (activityError) {
+      console.error(
+        "Community achievement activity failed:",
+        activityError
+      );
+    }
+
+    return {
+      awarded: true,
+      achievement,
+    };
+  };
+
+// ============================================================
+// COUNT COMPLETED TRIPS
+// ============================================================
+//
+// IMPORTANT:
+//
+// Travel History is now stored in:
+//
+// travelHistory/{itineraryId}
+//
+// NOT:
+//
+// users/{uid}/travelHistory
+//
+// Each top-level travelHistory document contains:
+//
+// userId: uid
+//
+// Therefore achievements must query the TOP-LEVEL
+// travelHistory collection using userId.
+//
+// ============================================================
+
+const getCompletedTripCount =
+  async (uid) => {
+    if (!uid) {
+      return 0;
+    }
+
+    const historyRef =
+      collection(
+        db,
         TRAVEL_HISTORY_COLLECTION
+      );
+
+    const historyQuery =
+      query(
+        historyRef,
+        where(
+          "userId",
+          "==",
+          uid
+        )
       );
 
     const snapshot =
       await getDocs(
-        historyRef
+        historyQuery
       );
 
     let count = 0;
@@ -619,13 +882,18 @@ export const getUserAchievementProgress =
       );
 
     const userSnapshot =
-      await getDoc(userRef);
+      await getDoc(
+        userRef
+      );
 
     const profile =
       userSnapshot.exists()
         ? userSnapshot.data()
         : {};
 
+    // IMPORTANT:
+    // This now counts from the TOP-LEVEL
+    // travelHistory collection.
     const tripsCompleted =
       await getCompletedTripCount(
         uid
@@ -668,228 +936,139 @@ export const getUserAchievementProgress =
 // CHECK IF UNLOCKED
 // ============================================================
 
-export const isAchievementUnlocked = (
-  achievement,
-  progress
-) => {
-  const ruleType =
-    achievement?.ruleType ||
-    "trips_completed";
+export const isAchievementUnlocked =
+  (
+    achievement,
+    progress
+  ) => {
+    const ruleType =
+      achievement?.ruleType ||
+      "trips_completed";
 
-  const target =
-    Math.max(
+    const target =
+      Math.max(
+        Number(
+          achievement?.ruleTarget
+        ) || 1,
+        1
+      );
+
+    const current =
       Number(
-        achievement?.ruleTarget
-      ) || 1,
-      1
+        progress?.[ruleType]
+      ) || 0;
+
+    return (
+      current >= target
     );
-
-  const current =
-    Number(
-      progress?.[ruleType]
-    ) || 0;
-
-  return current >= target;
-};
-
-// ============================================================
-// GET USER ACHIEVEMENT
-// ============================================================
-
-export const getUserAchievement = async (
-  uid,
-  achievementId
-) => {
-  if (!uid || !achievementId) {
-    return null;
-  }
-
-  const achievementRef =
-    doc(
-      db,
-      USERS_COLLECTION,
-      uid,
-      USER_ACHIEVEMENTS_COLLECTION,
-      achievementId
-    );
-
-  const snapshot =
-    await getDoc(
-      achievementRef
-    );
-
-  if (!snapshot.exists()) {
-    return null;
-  }
-
-  return {
-    id: snapshot.id,
-    ...snapshot.data(),
   };
-};
 
 // ============================================================
-// AWARD ACHIEVEMENT ONCE
-// ============================================================
-//
-// IMPORTANT:
-//
-// This function awards the achievement to the UID passed in.
-//
-// It does NOT check whether the caller is an admin.
-//
-// The registration page passes the newly-created USER UID.
-//
-// The admin page does NOT call this function.
-//
-// Firestore Security Rules should control who can write
-// achievement records.
+// GET USER ACHIEVEMENTS
 // ============================================================
 
-export const awardAchievement = async (
-  uid,
-  achievement
-) => {
-  if (
-    !uid ||
-    !achievement?.id
-  ) {
-    throw new Error(
-      "User ID and achievement ID are required."
+export const getUserAchievements =
+  async (uid) => {
+    if (!uid) {
+      return [];
+    }
+
+    const achievementRef =
+      collection(
+        db,
+        USERS_COLLECTION,
+        uid,
+        USER_ACHIEVEMENTS_COLLECTION
+      );
+
+    const snapshot =
+      await getDocs(
+        achievementRef
+      );
+
+    return snapshot.docs.map(
+      (item) => ({
+        id: item.id,
+        ...item.data(),
+      })
     );
-  }
+  };
 
-  const userRef =
-    doc(
-      db,
-      USERS_COLLECTION,
-      uid
-    );
+// ============================================================
+// CHECK ONE ACHIEVEMENT
+// ============================================================
 
-  const userAchievementRef =
-    doc(
-      db,
-      USERS_COLLECTION,
-      uid,
-      USER_ACHIEVEMENTS_COLLECTION,
-      achievement.id
-    );
+export const checkAndAwardAchievement =
+  async (
+    uid,
+    achievement,
+    progress
+  ) => {
+    if (
+      !uid ||
+      !achievement
+    ) {
+      return {
+        unlocked: false,
+        awarded: false,
+      };
+    }
 
-  const awardResult =
-    await runTransaction(
-      db,
-      async (transaction) => {
-        const existing =
-          await transaction.get(
-            userAchievementRef
-          );
+    // Registration achievements are
+    // handled separately.
+    if (
+      achievement.ruleType ===
+      "user_registered"
+    ) {
+      return {
+        unlocked: false,
+        awarded: false,
+      };
+    }
 
-        // Already awarded.
-        if (existing.exists()) {
-          return {
-            awarded: false,
-            alreadyAwarded: true,
-          };
-        }
+    const ruleType =
+      achievement.ruleType ||
+      "trips_completed";
 
-        transaction.set(
-          userAchievementRef,
-          {
-            achievementId:
-              achievement.id,
+    const target =
+      Math.max(
+        Number(
+          achievement.ruleTarget
+        ) || 1,
+        1
+      );
 
-            title:
-              achievement.title ||
-              "",
+    const current =
+      Number(
+        progress?.[ruleType]
+      ) || 0;
 
-            category:
-              achievement.category ||
-              "",
+    const unlocked =
+      current >= target;
 
-            unlocked: true,
+    if (!unlocked) {
+      return {
+        unlocked: false,
+        awarded: false,
+      };
+    }
 
-            unlockedAt:
-              serverTimestamp(),
-          }
-        );
+    const awardResult =
+      await awardAchievement(
+        uid,
+        achievement
+      );
 
-        // Increase only the user's badge count.
-        transaction.set(
-          userRef,
-          {
-            badges_earned:
-              increment(1),
-
-            updatedAt:
-              serverTimestamp(),
-          },
-          {
-            merge: true,
-          }
-        );
-
-        return {
-          awarded: true,
-          alreadyAwarded: false,
-        };
-      }
-    );
-
-  // Notify currently-open GreenTrip app
-  // after a NEW achievement is awarded.
-  if (
-    awardResult?.awarded === true &&
-    typeof window !== "undefined"
-  ) {
-    window.dispatchEvent(
-      new CustomEvent(
-        "greentrip:achievement-unlocked",
-        {
-          detail: {
-            achievement: {
-              id:
-                achievement.id,
-
-              title:
-                achievement.title ||
-                "Achievement Unlocked",
-
-              description:
-                achievement.description ||
-                "You reached the achievement requirement.",
-
-              category:
-                achievement.category ||
-                "",
-
-              icon:
-                achievement.icon ||
-                "",
-
-              iconUrl:
-                achievement.iconUrl ||
-                "",
-
-              ruleType:
-                achievement.ruleType ||
-                "",
-
-              ruleTarget:
-                achievement.ruleTarget ||
-                1,
-
-              ruleUnit:
-                achievement.ruleUnit ||
-                "",
-            },
-          },
-        }
-      )
-    );
-  }
-
-  return awardResult;
-};
+    return {
+      unlocked: true,
+      awarded:
+        awardResult?.awarded ===
+        true,
+      alreadyAwarded:
+        awardResult?.alreadyAwarded ===
+        true,
+    };
+  };
 
 // ============================================================
 // CHECK + AWARD ALL PUBLISHED ACHIEVEMENTS
@@ -1016,8 +1195,11 @@ export const checkAndAwardAchievements =
     }
 
     return {
-      achievements: result,
+      achievements:
+        result,
+
       newlyAwarded,
+
       userProgress,
     };
   };
@@ -1026,46 +1208,47 @@ export const checkAndAwardAchievements =
 // LISTEN TO USER'S AWARDED ACHIEVEMENTS
 // ============================================================
 
-export const listenToUserAchievements = (
-  uid,
-  callback
-) => {
-  if (!uid) {
-    callback([]);
-
-    return () => {};
-  }
-
-  const achievementRef =
-    collection(
-      db,
-      USERS_COLLECTION,
-      uid,
-      USER_ACHIEVEMENTS_COLLECTION
-    );
-
-  return onSnapshot(
-    achievementRef,
-    (snapshot) => {
-      callback(
-        snapshot.docs.map(
-          (item) => ({
-            id: item.id,
-            ...item.data(),
-          })
-        )
-      );
-    },
-    (error) => {
-      console.error(
-        "Error listening to user achievements:",
-        error
-      );
-
+export const listenToUserAchievements =
+  (
+    uid,
+    callback
+  ) => {
+    if (!uid) {
       callback([]);
+
+      return () => {};
     }
-  );
-};
+
+    const achievementRef =
+      collection(
+        db,
+        USERS_COLLECTION,
+        uid,
+        USER_ACHIEVEMENTS_COLLECTION
+      );
+
+    return onSnapshot(
+      achievementRef,
+      (snapshot) => {
+        callback(
+          snapshot.docs.map(
+            (item) => ({
+              id: item.id,
+              ...item.data(),
+            })
+          )
+        );
+      },
+      (error) => {
+        console.error(
+          "Error listening to user achievements:",
+          error
+        );
+
+        callback([]);
+      }
+    );
+  };
 
 // ============================================================
 // CHECK AFTER ANOTHER MODULE UPDATES PROGRESS
@@ -1102,10 +1285,18 @@ export const checkAchievementsAfterProgressChange =
         }
       );
 
-    return checkAndAwardAchievements(
-      uid,
-      achievements
-    );
+    const result =
+      await checkAndAwardAchievements(
+        uid,
+        achievements
+      );
+
+    return {
+      newlyAwarded:
+        result.newlyAwarded || [],
+      userProgress:
+        result.userProgress || {},
+    };
   };
 
 // ============================================================
@@ -1181,7 +1372,8 @@ export const checkRegistrationAchievement =
           );
 
         if (
-          result?.awarded === true
+          result?.awarded ===
+          true
         ) {
           newlyAwarded.push(
             achievement
@@ -1209,69 +1401,104 @@ export const checkRegistrationAchievement =
 // ============================================================
 //
 // This function is called after a user successfully saves an
-// itinerary. The achievement is awarded once and stored under:
+// itinerary.
+//
+// The achievement is awarded once and stored under:
 //
 // users/{uid}/achievements/{achievementId}
 //
 // Because awardAchievement() checks whether that user achievement
 // document already exists, deleting the itinerary later does NOT
-// unlock the achievement again. Saving another itinerary also
-// cannot award the same achievement twice.
+// unlock the achievement again.
 //
+// Saving another itinerary also cannot award the same achievement
+// twice.
 // ============================================================
 
-export const checkItinerarySavedAchievement = async (uid) => {
-  if (!uid) {
-    return {
-      newlyAwarded: [],
-    };
-  }
-
-  try {
-    const achievementRef = collection(
-      db,
-      ACHIEVEMENTS_COLLECTION
-    );
-
-    const snapshot = await getDocs(
-      achievementRef
-    );
-
-    const itineraryAchievements = snapshot.docs
-      .map((item) => ({
-        id: item.id,
-        ...item.data(),
-      }))
-      .filter(
-        (achievement) =>
-          achievement.status === "published" &&
-          achievement.ruleType === "itinerary_saved"
-      );
-
-    const newlyAwarded = [];
-
-    for (const achievement of itineraryAchievements) {
-      const result = await awardAchievement(
-        uid,
-        achievement
-      );
-
-      if (result?.awarded === true) {
-        newlyAwarded.push(achievement);
-      }
+export const checkItinerarySavedAchievement =
+  async (uid) => {
+    if (!uid) {
+      return {
+        newlyAwarded: [],
+      };
     }
 
-    return {
-      newlyAwarded,
-    };
-  } catch (error) {
-    console.error(
-      "Failed to check itinerary saved achievement:",
-      error
-    );
+    try {
+      const achievementRef =
+        collection(
+          db,
+          ACHIEVEMENTS_COLLECTION
+        );
 
-    return {
-      newlyAwarded: [],
-    };
-  }
-};
+      const snapshot =
+        await getDocs(
+          achievementRef
+        );
+
+      const itineraryAchievements =
+        snapshot.docs
+          .map((item) => ({
+            id: item.id,
+            ...item.data(),
+          }))
+          .filter(
+            (achievement) =>
+              achievement.status ===
+                "published" &&
+              achievement.ruleType ===
+                "itinerary_saved"
+          );
+
+      const newlyAwarded = [];
+
+      for (
+        const achievement of
+          itineraryAchievements
+      ) {
+        const result =
+          await awardAchievement(
+            uid,
+            achievement
+          );
+
+        if (
+          result?.awarded ===
+          true
+        ) {
+          newlyAwarded.push(
+            achievement
+          );
+        }
+      }
+
+      return {
+        newlyAwarded,
+      };
+    } catch (error) {
+      console.error(
+        "Failed to check itinerary saved achievement:",
+        error
+      );
+
+      return {
+        newlyAwarded: [],
+      };
+    }
+  };
+
+// ============================================================
+// CHECK AFTER USER SAVES ITINERARY
+// ============================================================
+
+export const checkAchievementsAfterItinerarySaved =
+  async (uid) => {
+    if (!uid) {
+      return {
+        newlyAwarded: [],
+      };
+    }
+
+    return checkItinerarySavedAchievement(
+      uid
+    );
+  };

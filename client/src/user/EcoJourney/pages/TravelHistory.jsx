@@ -23,9 +23,6 @@ export default function TravelHistory({
   onBack,
 }) {
 
-  const [user, setUser] =
-    useState(null);
-
   const [trips, setTrips] =
     useState([]);
 
@@ -64,12 +61,9 @@ export default function TravelHistory({
       setError("");
 
       const [
-        currentUser,
         summaryData,
         tripsData,
       ] = await Promise.all([
-
-        getCurrentUser(),
 
         getTravelHistorySummary(),
 
@@ -81,7 +75,6 @@ export default function TravelHistory({
 
       ]);
 
-      setUser(currentUser);
       setSummary(summaryData);
       setTrips(tripsData);
 
@@ -226,27 +219,6 @@ export default function TravelHistory({
         </div>
 
 
-        {/* USER */}
-
-        {user && (
-
-          <div style={styles.userBox}>
-
-            <div style={styles.avatar}>
-
-              {user.name
-                ?.charAt(0)
-                ?.toUpperCase() || "U"}
-
-            </div>
-
-            <span style={styles.userName}>
-              {user.name}
-            </span>
-
-          </div>
-
-        )}
 
       </div>
 
@@ -275,14 +247,6 @@ export default function TravelHistory({
         <SummaryCard
           value={`${summary.totalCarbonKg} kg`}
           label="Total CO₂"
-        />
-
-        <SummaryCard
-          value={
-            summary.badgesEarned
-          }
-          label="Badges Earned"
-          orange
         />
 
       </div>
@@ -691,7 +655,6 @@ function SummaryCard({
   value,
   label,
   green = false,
-  orange = false,
 }) {
 
   let valueColor =
@@ -700,11 +663,6 @@ function SummaryCard({
   if (green) {
     valueColor =
       "#16a34a";
-  }
-
-  if (orange) {
-    valueColor =
-      "#f59e0b";
   }
 
   return (
@@ -799,44 +757,13 @@ const styles = {
 
 
   // ==========================================================
-  // USER
-  // ==========================================================
-
-  userBox: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-  },
-
-  avatar: {
-    width: 38,
-    height: 38,
-    borderRadius: "50%",
-    background: "#dcfce7",
-    color: "#15803d",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: 700,
-  },
-
-  userName: {
-    color: "#374151",
-    fontWeight: 600,
-  },
-
-
-  // ==========================================================
   // SUMMARY
   // ==========================================================
 
   summaryGrid: {
     display: "grid",
     gridTemplateColumns:
-      "repeat(4, minmax(0, 1fr))",
+      "repeat(3, minmax(0, 1fr))",
     gap: 22,
     marginBottom: 24,
   },
