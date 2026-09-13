@@ -45,7 +45,11 @@ export default function RecentLogs({ logs, onOpenReports, onInspect, onEdit }) {
   const filtered = useMemo(
     () =>
       logs.filter((log) => {
-        if (typeFilter !== "All" && log.type !== typeFilter) return false;
+        // "Food waste" means any log carrying a real food-waste amount, not
+        // just ones created through the scanner — the Resource Logger lets
+        // a user type that figure in by hand too.
+        if (typeFilter === "Food" && !(Number(log.foodWaste) > 0)) return false;
+        if (typeFilter === "Resource" && log.type !== "Resource") return false;
         if (dateFrom && log.iso < dateFrom) return false;
         if (dateTo && log.iso > dateTo) return false;
         if (tripFilter !== "All" && (log.tripId || NO_TRIP) !== tripFilter) return false;

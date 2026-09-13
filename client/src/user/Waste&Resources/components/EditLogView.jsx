@@ -59,7 +59,10 @@ export default function EditLogView({ log, onBack, onSave }) {
 
   const benchmarks = getBenchmarks();
   const original = log.original || null;
-  const isFoodScan = log.type === "Food";
+  // Camera estimation isn't limited to logs that started as a scan — a
+  // manually-typed Resource entry's food waste is just as eligible for
+  // re-estimation as a Food entry's.
+  const alreadyScanned = log.source === "cv";
 
   useEffect(() => {
     aliveRef.current = true;
@@ -225,17 +228,17 @@ export default function EditLogView({ log, onBack, onSave }) {
               />
               {revert("foodWaste", "g")}
 
-              {isFoodScan && !scanning && (
+              {!scanning && (
                 <button
                   onClick={openRescan}
                   className="mt-3 flex items-center gap-2 text-base text-slate-700 hover:text-slate-950 transition-colors focus:outline-none focus:underline"
                 >
                   <Camera size={17} aria-hidden="true" />
-                  Re-scan with camera
+                  {alreadyScanned ? "Re-scan with camera" : "Scan with camera"}
                 </button>
               )}
 
-              {isFoodScan && scanning && (
+              {scanning && (
                 <div className="mt-4 rounded-lg border border-slate-200 p-5">
                   {scanPhase === "camera" && (
                     <>

@@ -1,3 +1,20 @@
+<<<<<<< HEAD
+﻿import { useEffect, useState } from "react";
+import {
+  Leaf,
+  CheckCircle2,
+  Zap,
+  Droplets,
+  Award,
+  FileText,
+  ChevronLeft,
+  Bell,
+  Upload,
+  Clock,
+  AlertTriangle,
+  Calendar,
+  ShieldAlert,
+=======
 import React, { useEffect, useState } from "react";
 import { 
   Leaf, 
@@ -13,6 +30,7 @@ import {
   AlertTriangle, 
   Calendar, 
   ShieldAlert, 
+>>>>>>> 7ddd9ee7f16516d02a02c54effd21eae26777efc
   BellRing,
   RefreshCw,
   X,
@@ -24,7 +42,21 @@ import {
 } from "lucide-react";
 import { auth, db } from "../firebase/config";
 import { listenToHotelApplication, uploadSpotCheckEvidence } from "../firebase/hotelService";
+<<<<<<< HEAD
+import { doc, getDoc, collection, onSnapshot, query, orderBy, updateDoc } from "firebase/firestore";
+
+/* ------------------------------------------------------------------
+   Clock helpers live at module scope. Expiry and renewal windows are
+   day-scale, so the clock only needs to tick hourly, but it must never
+   be read during render or the renewal banner can flip on an unrelated
+   re-render.
+   ------------------------------------------------------------------ */
+
+const MOUNT_TIME = Date.now();
+const CLOCK_TICK_MS = 60 * 60 * 1000;
+=======
 import { doc, getDoc, collection, onSnapshot, query, orderBy, updateDoc, setDoc, addDoc, serverTimestamp } from "firebase/firestore";
+>>>>>>> 7ddd9ee7f16516d02a02c54effd21eae26777efc
 
 export default function HotelPartnerDashboard({ onNavigate }) {
   const [tab, setTab] = useState("pending");
@@ -126,7 +158,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
   const targetNextTier = currentTier === "Bronze" ? "Silver" : currentTier === "Silver" ? "Gold" : currentTier === "Gold" ? "Platinum" : "Platinum";
 
   // Expiry & Date-based Banner Calculations
-  const nowMs = Date.now();
+  const nowMs = now;
   const expiryDateMs = hotelData?.expiryDate ? new Date(hotelData.expiryDate).getTime() : nowMs + 365 * 24 * 3600 * 1000;
   const daysUntilExpiry = Math.max(0, Math.ceil((expiryDateMs - nowMs) / (1000 * 60 * 60 * 24)));
   
@@ -327,7 +359,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
             <div style={styles.profileName}>{hotelData?.hotelName || userName}</div>
             <div style={styles.profileScore}>Eco Portal</div>
           </div>
-          <div style={styles.avatar}>🏨</div>
+          <div style={styles.avatar}>ðŸ¨</div>
         </div>
       </header>
 
@@ -355,7 +387,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
             backgroundColor: isApproved ? "#fed7aa" : isSuspended ? "#fee2e2" : isInitialApplicationRejected ? "#fee2e2" : "#fef08a",
             color: isApproved ? "#9a3412" : isSuspended ? "#b91c1c" : isInitialApplicationRejected ? "#b91c1c" : "#854d0e",
           }}>
-            <span>🏅</span> {isApproved ? `${currentTier} Tier` : isSuspended ? "Suspended" : isInitialApplicationRejected ? "Rejected" : "Under Review"}
+            <span>ðŸ…</span> {isApproved ? `${currentTier} Tier` : isSuspended ? "Suspended" : isInitialApplicationRejected ? "Rejected" : "Under Review"}
           </div>
         </div>
 
@@ -447,7 +479,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                   color: isApproved && !isFlagged ? "#16a34a" : isFlagged ? "#dc2626" : "#d97706" 
                 }}>
                   {isApproved && !isFlagged 
-                    ? `National Eco Certification active (${startDateStr} – ${endDateStr}). ${daysUntilExpiry} days remaining in current cycle.`
+                    ? `National Eco Certification active (${startDateStr} â€“ ${endDateStr}). ${daysUntilExpiry} days remaining in current cycle.`
                     : isFlagged 
                     ? (hotelData?.fraudFlags?.reason || "Please submit accurate meter proof below to resolve this discrepancy.")
                     : "Application submitted. Awaiting GreenTrip admin approval."}
@@ -475,10 +507,10 @@ export default function HotelPartnerDashboard({ onNavigate }) {
             <div style={styles.statCompare}>{hotelData?.waterUsage ? `RM ${hotelData.waterUsage}/mo` : "vs benchmark"}</div>
           </div>
           <div style={styles.statCard}>
-            <div style={{ fontSize: 24 }}>📉</div>
+            <div style={{ fontSize: 24 }}>ðŸ“‰</div>
             <div style={styles.statValue}>{isApproved ? "55 kg" : "0 kg"}</div>
             <div style={styles.statTitle}>Carbon Reduced</div>
-            <div style={styles.statCompare}>CO₂ saved this cycle</div>
+            <div style={styles.statCompare}>COâ‚‚ saved this cycle</div>
           </div>
           <div style={styles.statCard}>
             <Award size={24} color="#f59e0b" />
@@ -724,12 +756,17 @@ export default function HotelPartnerDashboard({ onNavigate }) {
               </div>
             ) : (
               filteredAuditHistory.map((audit) => {
-                const statusColor = audit.status === "Passed" || audit.status === "Approved" ? "#15803d" : audit.status === "Rejected" ? "#b91c1c" : "#b45309";
-                const statusBg = audit.status === "Passed" || audit.status === "Approved" ? "#dcfce7" : audit.status === "Rejected" ? "#fee2e2" : "#fef9c3";
+                const isPassed = audit.status === "Passed" || audit.status === "Approved";
+                const isRejected = audit.status === "Rejected";
 
                 return (
+<<<<<<< HEAD
+                  <div key={audit.id} style={styles.actionCard}>
+                    <div style={styles.actionCardTop}>
+=======
                   <div key={audit.id} style={styles.auditLogCard}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+>>>>>>> 7ddd9ee7f16516d02a02c54effd21eae26777efc
                       <div>
                         <h4 style={{ fontSize: 15, fontWeight: 700, color: "#111827", margin: 0 }}>
                           {audit.type === "initial_application" ? "Initial Certification Application" :
@@ -749,14 +786,14 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                     {audit.type === "initial_application" ? (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
                         {audit.elecUrl && (
-                          <button type="button" onClick={() => openDoc(audit.elecUrl)} style={styles.previewBtnSmall}>
+                          <button type="button" onClick={() => openDoc(audit.elecUrl)} style={styles.viewLinkBtn}>
                             <FileText size={13} color="#0284c7" />
                             <span>View Electricity Bill</span>
                             <ExternalLink size={11} />
                           </button>
                         )}
                         {audit.waterUrl && (
-                          <button type="button" onClick={() => openDoc(audit.waterUrl)} style={styles.previewBtnSmall}>
+                          <button type="button" onClick={() => openDoc(audit.waterUrl)} style={styles.viewLinkBtn}>
                             <FileText size={13} color="#0284c7" />
                             <span>View Water Bill</span>
                             <ExternalLink size={11} />
@@ -766,7 +803,7 @@ export default function HotelPartnerDashboard({ onNavigate }) {
                     ) : (
                       audit.fileUrl && (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-                          <button type="button" onClick={() => openDoc(audit.fileUrl)} style={styles.previewBtnSmall}>
+                          <button type="button" onClick={() => openDoc(audit.fileUrl)} style={styles.viewLinkBtn}>
                             <FileText size={13} color="#0284c7" />
                             <span>{audit.fileName}</span>
                             <ExternalLink size={11} />
@@ -1170,14 +1207,6 @@ const styles = {
     gap: 14,
   },
   actionCardTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
-  actionCardTitle: { fontSize: 16, fontWeight: 700, color: "#0f172a", margin: 0 },
-  strikePill: { backgroundColor: "#fee2e2", color: "#b91c1c", fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 10 },
-  spotBadge: { backgroundColor: "#fef3c7", color: "#b45309", fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 10 },
-  pendingBadge: { backgroundColor: "#fef08a", color: "#854d0e", fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 10 },
-  renewalBadge: { backgroundColor: "#dbeafe", color: "#1e40af", fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 10 },
-  metaNoticeRow: { display: "flex", gap: 16, fontSize: 12.5, color: "#6b7280" },
-  metaItem: { display: "flex", alignItems: "center", gap: 5 },
-  instructionsBox: { backgroundColor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 14px", fontSize: 13, color: "#334155", lineHeight: 1.4 },
   spotCheckUploadBtn: {
     display: "flex",
     alignItems: "center",

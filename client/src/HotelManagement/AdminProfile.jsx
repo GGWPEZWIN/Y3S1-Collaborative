@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   LogOut,
   ShieldCheck,
@@ -9,7 +9,6 @@ import {
   Pencil,
   X,
   Check,
-  AlertTriangle,
   KeyRound
 } from "lucide-react";
 import { useCurrentUser } from "../firebase/useCurrentUser";
