@@ -1,4 +1,6 @@
-import React, { useState } from "react";
+import { useEffect, useState } from "react";
+
+
 
 import {
   Plus,
@@ -75,7 +77,12 @@ const CATEGORY_RULE_MAP = {
   "Carbon Saving": ["carbon_saved"],
   Community: ["challenges_completed"],
   Challenges: ["challenges_completed"],
-  Milestones: ["trips_completed", "eco_score", "itinerary_saved"],
+  Milestones: [
+    "trips_completed",
+    "itineraries_completed",
+    "eco_score",
+    "itinerary_saved",
+  ],
   Special: [
     "user_registered",
     "trips_completed",

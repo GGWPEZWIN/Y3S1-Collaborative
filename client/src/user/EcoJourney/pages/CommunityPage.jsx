@@ -16,6 +16,7 @@ import {
   Award,
   Clock3,
   Trophy,
+  Heart,
 } from "lucide-react";
 
 import {
@@ -40,12 +41,21 @@ import {
 
 import {
   listenToPublishedAchievements,
+  getUserAchievementProgress,
+  checkAndAwardAchievements,
+  checkRegistrationAchievement,
+  listenToUserAchievements,
 } from "../../../firebase/achievementService";
 
 import {
   collection,
+  deleteDoc,
+  doc,
+  getDocs,
   onSnapshot,
   query,
+  serverTimestamp,
+  setDoc,
   where,
 } from "firebase/firestore";
 
@@ -54,11 +64,6 @@ import { db } from "../../../firebase/config";
 import {
   listenToFriends,
 } from "../../../firebase/friendService";
-
-import {
-  listenToCommunityActivities,
-} from "../../../firebase/communityActivityService";
-
 
 /* ================================================================
    FEATURE CARDS
@@ -458,15 +463,182 @@ function activityDateRange(activity) {
   return start || end || null;
 }
 
-function FriendActivityCard({ activities, friends, onNavigate }) {
+function FriendActivityCard({ activities, friends, onNavigate, currentUid }) {
   const friendMap = new Map(
     (friends || []).map((friend) => [friend.uid, friend])
   );
 
+  // IMPORTANT: the feed is a rolling window of the newest 5 activities.
+  // Activities may be trips, achievements, or Eco Score level-ups.
   const visibleActivities = (activities || [])
-    .filter((activity) => friendMap.has(activity?.actorUid))
-    .sort((a, b) => activityTime(b.createdAt) - activityTime(a.createdAt))
-    .slice(0, 6);
+    .map((activity) => ({
+      ...activity,
+      actorUid:
+        activity?.actorUid ||
+        activity?.userId ||
+        activity?.uid ||
+        "",
+    }))
+    .filter((activity) => friendMap.has(activity.actorUid))
+    .sort(
+      (a, b) =>
+        activityTime(b.createdAt || b.updatedAt || b.awardedAt) -
+        activityTime(a.createdAt || a.updatedAt || a.awardedAt)
+    )
+    .slice(0, 5);
+
+  const [likeState, setLikeState] = useState({});
+
+  // Likes are stored separately so synthesized/backfilled activities can be
+  // liked even when the original communityActivities document did not exist.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLikeState() {
+      if (!currentUid || visibleActivities.length === 0) {
+        if (!cancelled) setLikeState({});
+        return;
+      }
+
+      const next = {};
+
+      await Promise.all(
+        visibleActivities.map(async (activity) => {
+          if (!activity?.likeKey) return;
+
+          try {
+            const likesQuery = query(
+              collection(db, "communityActivityLikes"),
+              where("activityKey", "==", activity.likeKey)
+            );
+
+            const snapshot = await getDocs(likesQuery);
+            const likedByCurrentUser = snapshot.docs.some(
+              (likeDoc) => likeDoc.data()?.userId === currentUid
+            );
+
+            next[activity.likeKey] = {
+              count: snapshot.size,
+              liked: likedByCurrentUser,
+            };
+          } catch (error) {
+            console.error(
+              "Failed to load activity likes:",
+              error
+            );
+
+            next[activity.likeKey] = {
+              count: 0,
+              liked: false,
+            };
+          }
+        })
+      );
+
+      if (!cancelled) {
+        setLikeState(next);
+      }
+    }
+
+    loadLikeState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentUid,
+    visibleActivities
+      .map((activity) => activity.likeKey || activity.id)
+      .join("|"),
+  ]);
+
+  const getActivityKind = (activity) => {
+    const type = String(activity?.type || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
+
+    if (
+      type === "level_up" ||
+      type === "levelup" ||
+      type === "eco_level_up" ||
+      type === "eco_levelup"
+    ) {
+      return "level";
+    }
+
+    if (
+      type === "achievement_unlocked" ||
+      type === "achievement" ||
+      type === "achievement_completed" ||
+      type === "badge_unlocked"
+    ) {
+      return "achievement";
+    }
+
+    if (
+      type === "trip_completed" ||
+      type === "completed_trip" ||
+      type === "trip_complete"
+    ) {
+      return "trip";
+    }
+
+    return type.includes("level") ? "level" : "achievement";
+  };
+
+  const handleLike = async (activity) => {
+    if (!currentUid || !activity?.likeKey || !activity?.actorUid) return;
+
+    const current =
+      likeState[activity.likeKey] || {
+        count: 0,
+        liked: false,
+      };
+
+    const likeDocId = `${String(activity.likeKey).replace(/[^a-zA-Z0-9_-]/g, "_")}__${currentUid}`;
+    const likeRef = doc(
+      db,
+      "communityActivityLikes",
+      likeDocId
+    );
+
+    // Optimistic UI update.
+    setLikeState((previous) => ({
+      ...previous,
+      [activity.likeKey]: {
+        count: Math.max(
+          0,
+          current.count + (current.liked ? -1 : 1)
+        ),
+        liked: !current.liked,
+      },
+    }));
+
+    try {
+      if (current.liked) {
+        await deleteDoc(likeRef);
+      } else {
+        await setDoc(likeRef, {
+          activityKey: activity.likeKey,
+          actorUid: activity.actorUid,
+          userId: currentUid,
+          createdAt: serverTimestamp(),
+        });
+      }
+    } catch (error) {
+      console.error(
+        "Failed to update activity like:",
+        error
+      );
+
+      // Revert optimistic state on failure.
+      setLikeState((previous) => ({
+        ...previous,
+        [activity.likeKey]: current,
+      }));
+    }
+  };
 
   return (
     <div style={{ ...styles.card, marginTop: 24 }}>
@@ -489,15 +661,17 @@ function FriendActivityCard({ activities, friends, onNavigate }) {
       </div>
 
       <p style={styles.featureDesc}>
-        See your friends' recent completed trips and unlocked achievements
+        See your friends' latest trips, achievements and Eco Score level-ups
       </p>
 
       {visibleActivities.length === 0 ? (
         <div style={styles.activityEmpty}>
           <Users size={28} />
-          <div style={styles.noAchievementTitle}>No recent friend activity</div>
+          <div style={styles.noAchievementTitle}>
+            No recent friend activity
+          </div>
           <div style={styles.noAchievementText}>
-            When your friends complete a trip or unlock an achievement, it will show here.
+            When your friends complete a trip, unlock an achievement or level up their Eco Score, it will show here.
           </div>
         </div>
       ) : (
@@ -509,65 +683,213 @@ function FriendActivityCard({ activities, friends, onNavigate }) {
               friend?.displayName ||
               activity.actorName ||
               "Friend";
+
             const photo =
               friend?.profile_photo_url ||
               friend?.profilePhotoUrl ||
               activity.actorPhotoUrl ||
               "";
-            const isTrip = activity.type === "trip_completed";
+
+            const kind = getActivityKind(activity);
+            const isTrip = kind === "trip";
+            const isLevel = kind === "level";
+
+            const iconColor = isTrip
+              ? "#7c3aed"
+              : isLevel
+              ? "#16a34a"
+              : "#f59e0b";
+
+            const ActivityIcon = isTrip
+              ? Calendar
+              : isLevel
+              ? Leaf
+              : Trophy;
+
+            const actionText = isTrip
+              ? "completed a trip"
+              : isLevel
+              ? "levelled up their Eco Score"
+              : "unlocked an achievement";
+
+            const title = isTrip
+              ? activity.tripName ||
+                activity.tripTitle ||
+                activity.name ||
+                "Untitled Trip"
+              : isLevel
+              ? `Level ${Number(
+                  activity.level ??
+                    activity.newLevel ??
+                    activity.currentLevel ??
+                    0
+                ) || "Up"}`
+              : activity.achievementTitle ||
+                activity.title ||
+                "Achievement";
+
+            const currentLevel =
+              Number(
+                activity.level ??
+                  activity.newLevel ??
+                  activity.currentLevel ??
+                  0
+              ) || 0;
+
+            const levelScore =
+              Number(
+                activity.ecoScore ??
+                  activity.cumulativeEcoScore ??
+                  activity.score ??
+                  0
+              ) || 0;
+
+            const likeKey =
+              activity.likeKey ||
+              activity.id ||
+              `${activity.actorUid}_${activity.createdAt || title}`;
+
+            const currentLikes =
+              likeState[likeKey] || {
+                count: 0,
+                liked: false,
+              };
 
             return (
-              <div key={activity.id} style={styles.activityItem}>
+              <div key={activity.id || likeKey} style={styles.activityItem}>
                 <div style={styles.activityAvatar}>
                   {photo ? (
-                    <img src={photo} alt="" style={styles.activityAvatarImage} />
+                    <img
+                      src={photo}
+                      alt=""
+                      style={styles.activityAvatarImage}
+                    />
                   ) : (
-                    <span>{name.charAt(0).toUpperCase()}</span>
+                    <span>
+                      {name.charAt(0).toUpperCase()}
+                    </span>
                   )}
                 </div>
 
                 <div style={styles.activityBody}>
                   <div style={styles.activityTextRow}>
-                    <strong style={styles.activityName}>{name}</strong>
+                    <strong style={styles.activityName}>
+                      {name}
+                    </strong>
                     <span style={styles.activityAction}>
-                      {isTrip ? "completed a trip" : "unlocked an achievement"}
+                      {actionText}
                     </span>
                   </div>
 
                   <div style={styles.activityTitleRow}>
-                    {isTrip ? (
-                      <Calendar size={15} color="#7c3aed" />
-                    ) : (
-                      <Trophy size={15} color="#f59e0b" />
-                    )}
+                    <ActivityIcon
+                      size={15}
+                      color={iconColor}
+                    />
                     <span style={styles.activityTitle}>
-                      {isTrip
-                        ? activity.tripName || "Untitled Trip"
-                        : activity.achievementTitle || "Achievement"}
+                      {title}
                     </span>
                   </div>
 
                   {isTrip && (
                     <div style={styles.activityMeta}>
                       <span>
-                        Eco Score: <strong>{Number(activity.ecoScore ?? 0)}</strong>
+                        Eco Score:{" "}
+                        <strong>
+                          {Number(
+                            activity.ecoScore ?? 0
+                          )}
+                        </strong>
                       </span>
+
                       {activityDateRange(activity) && (
-                        <span>{activityDateRange(activity)}</span>
+                        <span>
+                          {activityDateRange(activity)}
+                        </span>
                       )}
                     </div>
                   )}
 
-                  {!isTrip && Number(activity.points || 0) > 0 && (
+                  {isLevel && (
                     <div style={styles.activityMeta}>
-                      <span>+{Number(activity.points)} XP</span>
+                      <span>
+                        Level{" "}
+                        <strong>
+                          {currentLevel || "Up"}
+                        </strong>
+                      </span>
+
+                      {levelScore > 0 && (
+                        <span>
+                          Eco Score:{" "}
+                          <strong>{levelScore}</strong>
+                        </span>
+                      )}
                     </div>
                   )}
+
+                  {!isTrip &&
+                    !isLevel &&
+                    Number(activity.points || 0) > 0 && (
+                      <div style={styles.activityMeta}>
+                        <span>
+                          +
+                          {Number(
+                            activity.points
+                          )}{" "}
+                          XP
+                        </span>
+                      </div>
+                    )}
                 </div>
 
-                <div style={styles.activityTime}>
-                  <Clock3 size={13} />
-                  {relativeActivityTime(activity.createdAt)}
+                <div style={styles.activityActions}>
+                  <button
+                    type="button"
+                    aria-label={
+                      currentLikes.liked
+                        ? "Unlike activity"
+                        : "Like activity"
+                    }
+                    title={
+                      currentLikes.liked
+                        ? "Unlike"
+                        : "Like"
+                    }
+                    style={{
+                      ...styles.likeButton,
+                      color: currentLikes.liked
+                        ? "#ef4444"
+                        : "#9ca3af",
+                    }}
+                    onClick={() =>
+                      handleLike({
+                        ...activity,
+                        likeKey,
+                      })
+                    }
+                  >
+                    <Heart
+                      size={17}
+                      fill={
+                        currentLikes.liked
+                          ? "currentColor"
+                          : "none"
+                      }
+                    />
+                    <span>
+                      {currentLikes.count}
+                    </span>
+                  </button>
+
+                  <div style={styles.activityTime}>
+                    <Clock3 size={13} />
+                    {relativeActivityTime(
+                      activity.createdAt ||
+                        activity.updatedAt ||
+                        activity.awardedAt
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -601,6 +923,14 @@ export default function CommunityPage({
     setAchievements,
   ] = useState([]);
 
+  const [achievementProgress, setAchievementProgress] =
+    useState({
+      itinerary_saved: 0,
+      itineraries_completed: 0,
+      trips_completed: 0,
+      eco_score: 0,
+    });
+
   const [
     travelHistory,
     setTravelHistory,
@@ -608,6 +938,12 @@ export default function CommunityPage({
 
   const [friends, setFriends] = useState([]);
   const [friendActivities, setFriendActivities] = useState([]);
+  const [userAchievementRecords, setUserAchievementRecords] = useState([]);
+
+  // LIVE count of saved itineraries.
+  // This is separate from achievementProgress because the user can
+  // save an itinerary while this Community page is already open.
+  const [savedItineraryCount, setSavedItineraryCount] = useState(0);
 
 
   /* ==============================================================
@@ -638,15 +974,62 @@ export default function CommunityPage({
   useEffect(() => {
     const unsubscribe =
       listenToPublishedAchievements(
-        (list) => {
-          setAchievements(
-            list
-          );
+        async (list) => {
+          setAchievements(list || []);
+
+          if (!authUser?.uid || !Array.isArray(list)) {
+            return;
+          }
+
+          try {
+            await checkAndAwardAchievements(
+              authUser.uid,
+              list
+            );
+          } catch (error) {
+            console.error(
+              "Failed to check and award Community achievements:",
+              error
+            );
+          }
         }
       );
 
     return unsubscribe;
-  }, []);
+  }, [authUser?.uid]);
+
+  /* --------------------------------------------------------------
+     USER ACHIEVEMENT RECORDS
+     -------------------------------------------------------------- */
+
+  useEffect(() => {
+    if (!authUser?.uid) {
+      setUserAchievementRecords([]);
+      return undefined;
+    }
+
+    return listenToUserAchievements(
+      authUser.uid,
+      (records) => setUserAchievementRecords(records || [])
+    );
+  }, [authUser?.uid]);
+
+  // Backfill the one-time registration achievement for an existing
+  // traveler who registered before the achievement system was added.
+  useEffect(() => {
+    if (!authUser?.uid) return undefined;
+
+    checkRegistrationAchievement(authUser.uid).catch(
+      (error) => {
+        console.error(
+          "Failed to check registration achievement:",
+          error
+        );
+      }
+    );
+
+    return undefined;
+  }, [authUser?.uid]);
 
 
   /* ==============================================================
@@ -754,14 +1137,418 @@ export default function CommunityPage({
       return undefined;
     }
 
-    const unsubscribe = listenToCommunityActivities(
-      authUser.uid,
-      (list) => setFriendActivities(list || [])
+    const friendIds = Array.from(
+      new Set(
+        (friends || [])
+          .map((friend) => friend?.uid)
+          .filter(
+            (uid) => uid && uid !== authUser.uid
+          )
+      )
     );
 
-    return unsubscribe;
-  }, [authUser?.uid]);
+    if (friendIds.length === 0) {
+      setFriendActivities([]);
+      return undefined;
+    }
 
+    // ----------------------------------------------------------------
+    // We intentionally build the feed from the friends' real data rather
+    // than requiring a pre-created communityActivities document.
+    // This means a friend's recently completed trips (including trips that
+    // happened before this feed was added) can appear immediately.
+    // ----------------------------------------------------------------
+
+    const activityMap = new Map();
+    const unsubscribeFunctions = [];
+
+    const isCompletedTrip = (trip) => {
+      const status = String(trip?.status || "")
+        .trim()
+        .toLowerCase();
+
+      return (
+        status === "completed" ||
+        status === "complete" ||
+        trip?.completed === true ||
+        trip?.isCompleted === true
+      );
+    };
+
+    const getTripScore = (trip) =>
+      Math.max(
+        0,
+        Math.min(
+          100,
+          Number(
+            trip?.finalEcoScore ??
+              trip?.ecoScore ??
+              trip?.eco_score ??
+              0
+          ) || 0
+        )
+      );
+
+    const buildTripActivities = (tripDocs) => {
+      return tripDocs
+        .filter(isCompletedTrip)
+        .sort(
+          (a, b) =>
+            getTripTime(a) - getTripTime(b)
+        );
+    };
+
+    const publishActivities = () => {
+      const sorted = Array.from(
+        activityMap.values()
+      ).sort(
+        (a, b) =>
+          activityTime(
+            b.createdAt ||
+              b.updatedAt ||
+              b.awardedAt
+          ) -
+          activityTime(
+            a.createdAt ||
+              a.updatedAt ||
+              a.awardedAt
+          )
+      );
+
+      // The UI deliberately receives only the newest five mixed activities.
+      setFriendActivities(sorted.slice(0, 5));
+    };
+
+    // ----------------------------------------------------------------
+    // FRIEND TRAVEL HISTORY
+    // Supports up to 30 friend IDs per Firestore `in` query.
+    // ----------------------------------------------------------------
+    for (let i = 0; i < friendIds.length; i += 30) {
+      const chunk = friendIds.slice(i, i + 30);
+
+      const historyQuery = query(
+        collection(db, "travelHistory"),
+        where("userId", "in", chunk)
+      );
+
+      const unsubscribe = onSnapshot(
+        historyQuery,
+        (snapshot) => {
+          // Remove old synthesized trip/level activity for this chunk.
+          chunk.forEach((friendUid) => {
+            Array.from(activityMap.keys()).forEach((key) => {
+              if (String(key).startsWith(`trip:${friendUid}:`)) {
+                activityMap.delete(key);
+              }
+              if (String(key).startsWith(`level:${friendUid}:`)) {
+                activityMap.delete(key);
+              }
+            });
+          });
+
+          const grouped = new Map(
+            chunk.map((friendUid) => [friendUid, []])
+          );
+
+          snapshot.docs.forEach((docSnap) => {
+            const trip = {
+              id: docSnap.id,
+              ...docSnap.data(),
+            };
+
+            if (grouped.has(trip.userId)) {
+              grouped.get(trip.userId).push(trip);
+            }
+          });
+
+          grouped.forEach(
+            (allTrips, friendUid) => {
+              const completedTrips =
+                buildTripActivities(allTrips);
+
+              completedTrips.forEach((trip) => {
+                const activityKey =
+                  `trip:${friendUid}:${trip.id}`;
+
+                const completedAt =
+                  trip.completedAt ||
+                  trip.updatedAt ||
+                  trip.createdAt ||
+                  trip.endDate ||
+                  trip.startDate;
+
+                activityMap.set(
+                  activityKey,
+                  {
+                    id: activityKey,
+                    likeKey: activityKey,
+                    type: "trip_completed",
+                    actorUid: friendUid,
+                    actorName: trip.userName || "",
+                    actorPhotoUrl: trip.userPhotoUrl || "",
+                    tripName:
+                      trip.tripName ||
+                      trip.tripTitle ||
+                      trip.name ||
+                      trip.title ||
+                      "Untitled Trip",
+                    tripTitle:
+                      trip.tripTitle ||
+                      trip.title ||
+                      trip.name ||
+                      "Untitled Trip",
+                    ecoScore: getTripScore(trip),
+                    startDate: trip.startDate,
+                    endDate: trip.endDate,
+                    completedAt,
+                    createdAt: completedAt,
+                    updatedAt: trip.updatedAt,
+                  }
+                );
+              });
+
+              // Compute level-up milestones from the friend's cumulative
+              // completed-trip Eco Score. A level-up is emitted only when the
+              // cumulative score crosses the beginning of the next level.
+              const levels = [
+                { level: 1, min: 0 },
+                { level: 2, min: 500 },
+                { level: 3, min: 1500 },
+                { level: 4, min: 3000 },
+                { level: 5, min: 5000 },
+              ];
+
+              let cumulative = 0;
+              let previousLevel = 1;
+
+              completedTrips.forEach((trip, index) => {
+                cumulative += getTripScore(trip);
+
+                const currentLevel =
+                  [...levels]
+                    .reverse()
+                    .find(
+                      (level) =>
+                        cumulative >= level.min
+                    )?.level || 1;
+
+                if (currentLevel > previousLevel) {
+                  const reached = levels.find(
+                    (level) =>
+                      level.level === currentLevel
+                  );
+
+                  const levelKey =
+                    `level:${friendUid}:${currentLevel}`;
+
+                  activityMap.set(
+                    levelKey,
+                    {
+                      id: levelKey,
+                      likeKey: levelKey,
+                      type: "level_up",
+                      actorUid: friendUid,
+                      level: currentLevel,
+                      newLevel: currentLevel,
+                      currentLevel,
+                      cumulativeEcoScore: cumulative,
+                      ecoScore: cumulative,
+                      createdAt:
+                        trip.completedAt ||
+                        trip.updatedAt ||
+                        trip.createdAt,
+                      updatedAt:
+                        trip.updatedAt,
+                      milestoneXp:
+                        reached?.min || 0,
+                    }
+                  );
+                }
+
+                previousLevel = currentLevel;
+              });
+            }
+          );
+
+          publishActivities();
+        },
+        (error) => {
+          console.error(
+            "Failed to load friend travel history:",
+            error
+          );
+        }
+      );
+
+      unsubscribeFunctions.push(unsubscribe);
+    }
+
+    // ----------------------------------------------------------------
+    // FRIEND ACHIEVEMENTS
+    // ----------------------------------------------------------------
+    friendIds.forEach((friendUid) => {
+      const achievementsRef = collection(
+        db,
+        "users",
+        friendUid,
+        "achievements"
+      );
+
+      const unsubscribe = onSnapshot(
+        achievementsRef,
+        (snapshot) => {
+          // Remove this friend's synthesized achievement activities first.
+          Array.from(activityMap.keys()).forEach((key) => {
+            if (
+              String(key).startsWith(
+                `achievement:${friendUid}:`
+              )
+            ) {
+              activityMap.delete(key);
+            }
+          });
+
+          snapshot.docs.forEach((docSnap) => {
+            const achievement = {
+              id: docSnap.id,
+              ...docSnap.data(),
+            };
+
+            const awardedAt =
+              achievement.awardedAt ||
+              achievement.unlockedAt ||
+              achievement.createdAt ||
+              achievement.updatedAt;
+
+            const activityKey =
+              `achievement:${friendUid}:${achievement.id}`;
+
+            activityMap.set(
+              activityKey,
+              {
+                id: activityKey,
+                likeKey: activityKey,
+                type: "achievement_unlocked",
+                actorUid: friendUid,
+                achievementId:
+                  achievement.achievementId ||
+                  achievement.id,
+                achievementTitle:
+                  achievement.title ||
+                  achievement.name ||
+                  achievement.achievementTitle ||
+                  "Achievement",
+                title:
+                  achievement.title ||
+                  achievement.name ||
+                  achievement.achievementTitle ||
+                  "Achievement",
+                points: Number(
+                  achievement.points || 0
+                ),
+                createdAt: awardedAt,
+                awardedAt,
+                updatedAt: achievement.updatedAt,
+              }
+            );
+          });
+
+          publishActivities();
+        },
+        (error) => {
+          console.error(
+            "Failed to load friend achievements:",
+            error
+          );
+        }
+      );
+
+      unsubscribeFunctions.push(unsubscribe);
+    });
+
+    // Also keep using any real communityActivities documents that may exist.
+    // They are not required for backfill, but this preserves any richer
+    // activity records already created by the app.
+    for (let i = 0; i < friendIds.length; i += 30) {
+      const chunk = friendIds.slice(i, i + 30);
+
+      const activityQuery = query(
+        collection(db, "communityActivities"),
+        where("actorUid", "in", chunk)
+      );
+
+      const unsubscribe = onSnapshot(
+        activityQuery,
+        (snapshot) => {
+          snapshot.docs.forEach((docSnap) => {
+            const activity = {
+              id: docSnap.id,
+              likeKey: `activity:${docSnap.id}`,
+              ...docSnap.data(),
+            };
+
+            // Real activity records should win over synthesized duplicates.
+            const actorUid = activity.actorUid;
+            const rawType = String(
+              activity.type || ""
+            ).toLowerCase();
+
+            let key = activity.id;
+
+            if (
+              rawType === "trip_completed" &&
+              activity.itineraryId
+            ) {
+              key = `trip:${actorUid}:${activity.itineraryId}`;
+            }
+
+            if (
+              (rawType === "achievement_unlocked" ||
+                rawType === "achievement") &&
+              (activity.achievementId ||
+                activity.userAchievementId)
+            ) {
+              key = `achievement:${actorUid}:${
+                activity.achievementId ||
+                activity.userAchievementId
+              }`;
+            }
+
+            activityMap.set(
+              key,
+              {
+                ...activity,
+                likeKey: `activity:${docSnap.id}`,
+              }
+            );
+          });
+
+          publishActivities();
+        },
+        (error) => {
+          console.error(
+            "Failed to load stored community activities:",
+            error
+          );
+        }
+      );
+
+      unsubscribeFunctions.push(unsubscribe);
+    }
+
+    return () => {
+      unsubscribeFunctions.forEach(
+        (unsubscribe) => unsubscribe?.()
+      );
+    };
+  }, [
+    authUser?.uid,
+    friends
+      .map((friend) => friend?.uid)
+      .filter(Boolean)
+      .sort()
+      .join(","),
+  ]);
 
   /* ==============================================================
      UNREAD CHAT
@@ -776,6 +1563,71 @@ export default function CommunityPage({
           ] || 0
         ) > 0
     );
+
+
+  // Keep achievement counters in sync with the central achievement service.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!authUser?.uid) {
+      setAchievementProgress({
+        itinerary_saved: 0,
+        itineraries_completed: 0,
+        trips_completed: 0,
+        eco_score: 0,
+      });
+      return undefined;
+    }
+
+    getUserAchievementProgress(authUser.uid)
+      .then((progress) => {
+        if (!cancelled) {
+          setAchievementProgress(progress || {});
+        }
+      })
+      .catch((error) => {
+        console.error(
+          "Failed to load achievement progress:",
+          error
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser?.uid]);
+
+  // LIVE saved-itinerary counter.
+  // The old getUserAchievementProgress() is only fetched when the UID
+  // changes, so it can stay at 0 after the user saves an itinerary.
+  // Listen directly to the top-level itineraries collection instead.
+  useEffect(() => {
+    if (!authUser?.uid) {
+      setSavedItineraryCount(0);
+      return undefined;
+    }
+
+    const savedItineraryQuery = query(
+      collection(db, "itineraries"),
+      where("userId", "==", authUser.uid)
+    );
+
+    const unsubscribe = onSnapshot(
+      savedItineraryQuery,
+      (snapshot) => {
+        setSavedItineraryCount(snapshot.size);
+      },
+      (error) => {
+        console.error(
+          "Failed to listen to saved itinerary count:",
+          error
+        );
+      }
+    );
+
+    return unsubscribe;
+  }, [authUser?.uid]);
+
 
 
   /* ==============================================================
@@ -946,13 +1798,29 @@ export default function CommunityPage({
     );
 
 
+
+
   /* ==============================================================
      USER PROGRESS
      ============================================================== */
 
   const userProgress = {
+    // Use the live Firestore count so First Itinerary updates immediately
+    // after saving an itinerary, even when this page was already open.
+    itinerary_saved:
+      Number(savedItineraryCount),
+
+    itineraries_completed:
+      Number(
+        achievementProgress.itineraries_completed ??
+          0
+      ),
+
     trips_completed:
-      totalTrips,
+      Number(
+        achievementProgress.trips_completed ??
+          totalTrips
+      ),
 
     eco_score:
       cumulativeEcoScore,
@@ -998,6 +1866,15 @@ export default function CommunityPage({
      ACHIEVEMENT STATUS
      ============================================================== */
 
+  const awardedAchievementIds =
+    new Set(
+      userAchievementRecords.map(
+        (record) =>
+          record?.achievementId ||
+          record?.id
+      )
+    );
+
   const achievementsWithStatus =
     achievements.map(
       (
@@ -1024,6 +1901,9 @@ export default function CommunityPage({
           ...achievement,
 
           unlocked:
+            awardedAchievementIds.has(
+              achievement.id
+            ) ||
             progress >=
             target,
 
@@ -1910,6 +2790,7 @@ export default function CommunityPage({
         <FriendActivityCard
           activities={friendActivities}
           friends={friends}
+          currentUid={authUser?.uid}
           onNavigate={onNavigate}
         />
 
@@ -2191,6 +3072,29 @@ const styles = {
     marginTop: 4,
     color: "#6b7280",
     fontSize: 12.5,
+  },
+
+  activityActions: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 8,
+    alignSelf: "stretch",
+    minWidth: 58,
+  },
+
+  likeButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    border: "none",
+    background: "transparent",
+    padding: "2px 4px",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 600,
   },
 
   activityTime: {

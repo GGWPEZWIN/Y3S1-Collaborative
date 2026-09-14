@@ -9,6 +9,7 @@ import {
   onSnapshot,
   serverTimestamp,
   runTransaction,
+  setDoc,
   increment,
   query,
   where,
@@ -51,6 +52,11 @@ export const RULE_OPTIONS = [
     value: "trips_completed",
     label: "Complete Trips",
     unit: "trips",
+  },
+  {
+    value: "itineraries_completed",
+    label: "Complete Itineraries",
+    unit: "itineraries",
   },
   {
     value: "eco_score",
@@ -726,13 +732,8 @@ export const awardAchievement =
         serverTimestamp(),
     };
 
-    await addDoc(
-      collection(
-        db,
-        USERS_COLLECTION,
-        uid,
-        USER_ACHIEVEMENTS_COLLECTION
-      ),
+    await setDoc(
+      achievementRef,
       userAchievement
     );
 
@@ -783,154 +784,150 @@ export const awardAchievement =
   };
 
 // ============================================================
+// COUNT COMPLETED ITINERARIES
+// ============================================================
+
+const isCompletedRecord = (data) => {
+  const status = String(data?.status || "").trim().toLowerCase();
+
+  return (
+    status === "completed" ||
+    status === "complete" ||
+    data?.completed === true ||
+    data?.isCompleted === true
+  );
+};
+
+const getCompletedItineraryCount = async (uid) => {
+  if (!uid) return 0;
+
+  const q = query(
+    collection(db, "itineraries"),
+    where("userId", "==", uid)
+  );
+
+  const snapshot = await getDocs(q);
+
+  return snapshot.docs.reduce((count, item) => {
+    return count + (isCompletedRecord(item.data()) ? 1 : 0);
+  }, 0);
+};
+
+// ============================================================
 // COUNT COMPLETED TRIPS
 // ============================================================
-//
-// IMPORTANT:
-//
-// Travel History is now stored in:
-//
-// travelHistory/{itineraryId}
-//
-// NOT:
-//
-// users/{uid}/travelHistory
-//
-// Each top-level travelHistory document contains:
-//
-// userId: uid
-//
-// Therefore achievements must query the TOP-LEVEL
-// travelHistory collection using userId.
-//
+
+const getCompletedTripCount = async (uid) => {
+  if (!uid) return 0;
+
+  const q = query(
+    collection(db, TRAVEL_HISTORY_COLLECTION),
+    where("userId", "==", uid)
+  );
+
+  const snapshot = await getDocs(q);
+
+  return snapshot.docs.reduce((count, item) => {
+    return count + (isCompletedRecord(item.data()) ? 1 : 0);
+  }, 0);
+};
+
+// ============================================================
+// COUNT SAVED ITINERARIES
 // ============================================================
 
-const getCompletedTripCount =
-  async (uid) => {
-    if (!uid) {
-      return 0;
-    }
+const getSavedItineraryCount = async (uid) => {
+  if (!uid) return 0;
 
-    const historyRef =
-      collection(
-        db,
-        TRAVEL_HISTORY_COLLECTION
-      );
+  const q = query(
+    collection(db, "itineraries"),
+    where("userId", "==", uid)
+  );
 
-    const historyQuery =
-      query(
-        historyRef,
-        where(
-          "userId",
-          "==",
-          uid
-        )
-      );
+  const snapshot = await getDocs(q);
 
-    const snapshot =
-      await getDocs(
-        historyQuery
-      );
-
-    let count = 0;
-
-    snapshot.forEach(
-      (tripDoc) => {
-        const trip =
-          tripDoc.data();
-
-        const status =
-          String(
-            trip.status || ""
-          ).toLowerCase();
-
-        if (
-          status === "completed" ||
-          status === "complete" ||
-          trip.completed === true ||
-          trip.isCompleted === true
-        ) {
-          count += 1;
-        }
-      }
-    );
-
-    return count;
-  };
+  return snapshot.size;
+};
 
 // ============================================================
 // GET USER PROGRESS
 // ============================================================
 
-export const getUserAchievementProgress =
-  async (uid) => {
-    if (!uid) {
-      return {
-        trips_completed: 0,
-        eco_score: 0,
-        challenges_completed: 0,
-        carbon_saved: 0,
-        waste_reduced: 0,
-      };
-    }
-
-    const userRef =
-      doc(
-        db,
-        USERS_COLLECTION,
-        uid
-      );
-
-    const userSnapshot =
-      await getDoc(
-        userRef
-      );
-
-    const profile =
-      userSnapshot.exists()
-        ? userSnapshot.data()
-        : {};
-
-    // IMPORTANT:
-    // This now counts from the TOP-LEVEL
-    // travelHistory collection.
-    const tripsCompleted =
-      await getCompletedTripCount(
-        uid
-      );
-
+export const getUserAchievementProgress = async (uid) => {
+  if (!uid) {
     return {
-      trips_completed:
-        tripsCompleted,
-
-      eco_score:
-        Number(
-          profile.eco_score ??
-            profile.ecoScore ??
-            0
-        ),
-
-      challenges_completed:
-        Number(
-          profile.challenges_completed ??
-            0
-        ),
-
-      carbon_saved:
-        Number(
-          profile.carbon_saved ??
-            profile.carbonSaved ??
-            0
-        ),
-
-      waste_reduced:
-        Number(
-          profile.waste_reduced ??
-            profile.wasteReduced ??
-            0
-        ),
+      user_registered: 0,
+      itinerary_saved: 0,
+      itineraries_completed: 0,
+      trips_completed: 0,
+      eco_score: 0,
     };
+  }
+
+  const userRef = doc(db, USERS_COLLECTION, uid);
+  const userSnapshot = await getDoc(userRef);
+  const profile = userSnapshot.exists() ? userSnapshot.data() : {};
+
+  const [
+    savedItineraries,
+    completedItineraries,
+    completedTrips,
+    travelHistorySnapshot,
+  ] = await Promise.all([
+    getSavedItineraryCount(uid),
+    getCompletedItineraryCount(uid),
+    getCompletedTripCount(uid),
+    getDocs(
+      query(
+        collection(db, TRAVEL_HISTORY_COLLECTION),
+        where("userId", "==", uid)
+      )
+    ),
+  ]);
+
+  // Eco Hero uses the same cumulative Eco Score shown by the
+  // dashboard/community pages: sum the final Eco Score of the
+  // user's completed top-level travel-history records.
+  const cumulativeEcoScore =
+    travelHistorySnapshot.docs.reduce((total, item) => {
+      const data = item.data() || {};
+
+      if (!isCompletedRecord(data)) {
+        return total;
+      }
+
+      const score = Number(
+        data.finalEcoScore ??
+          data.final_eco_score ??
+          data.ecoScore ??
+          data.eco_score ??
+          data.planEcoScore ??
+          data.plan_eco_score ??
+          0
+      );
+
+      return Number.isFinite(score)
+        ? total + Math.max(0, Math.min(100, score))
+        : total;
+    }, 0);
+
+  return {
+    // Registration is handled only by checkRegistrationAchievement().
+    user_registered: 0,
+
+    // Number of successfully saved itineraries.
+    itinerary_saved: savedItineraries,
+
+    // Number of completed itinerary records.
+    itineraries_completed: completedItineraries,
+
+    // Number of completed travel-history/trip records.
+    trips_completed: completedTrips,
+
+    // Cumulative Eco Score from completed top-level travel history.
+    eco_score: cumulativeEcoScore,
   };
+};
 
 // ============================================================
 // CHECK IF UNLOCKED
@@ -1415,76 +1412,47 @@ export const checkRegistrationAchievement =
 // twice.
 // ============================================================
 
-export const checkItinerarySavedAchievement =
-  async (uid) => {
-    if (!uid) {
-      return {
-        newlyAwarded: [],
-      };
-    }
+export const checkItinerarySavedAchievement = async (uid) => {
+  if (!uid) {
+    return {
+      newlyAwarded: [],
+    };
+  }
 
-    try {
-      const achievementRef =
-        collection(
-          db,
-          ACHIEVEMENTS_COLLECTION
-        );
+  try {
+    const achievements = await new Promise((resolve) => {
+      let finished = false;
+      let unsubscribe;
 
-      const snapshot =
-        await getDocs(
-          achievementRef
-        );
+      unsubscribe = listenToPublishedAchievements((list) => {
+        if (finished) return;
 
-      const itineraryAchievements =
-        snapshot.docs
-          .map((item) => ({
-            id: item.id,
-            ...item.data(),
-          }))
-          .filter(
-            (achievement) =>
-              achievement.status ===
-                "published" &&
-              achievement.ruleType ===
-                "itinerary_saved"
-          );
+        finished = true;
+        unsubscribe?.();
+        resolve(list);
+      });
+    });
 
-      const newlyAwarded = [];
+    const result = await checkAndAwardAchievements(
+      uid,
+      achievements
+    );
 
-      for (
-        const achievement of
-          itineraryAchievements
-      ) {
-        const result =
-          await awardAchievement(
-            uid,
-            achievement
-          );
+    return {
+      newlyAwarded: result.newlyAwarded || [],
+      userProgress: result.userProgress || {},
+    };
+  } catch (error) {
+    console.error(
+      "Failed to check itinerary saved achievement:",
+      error
+    );
 
-        if (
-          result?.awarded ===
-          true
-        ) {
-          newlyAwarded.push(
-            achievement
-          );
-        }
-      }
-
-      return {
-        newlyAwarded,
-      };
-    } catch (error) {
-      console.error(
-        "Failed to check itinerary saved achievement:",
-        error
-      );
-
-      return {
-        newlyAwarded: [],
-      };
-    }
-  };
+    return {
+      newlyAwarded: [],
+    };
+  }
+};
 
 // ============================================================
 // CHECK AFTER USER SAVES ITINERARY

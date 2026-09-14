@@ -235,6 +235,17 @@ export default function App() {
       return <MainDashboard onNavigate={navigate} />;
 
     // ==================================================
+    // STANDALONE ACHIEVEMENTS
+    // ==================================================
+
+    case "/achievements":
+      return (
+        <AchievementsPage
+          onNavigate={navigate}
+        />
+      );
+
+    // ==================================================
     // COMMUNITY
     // ==================================================
 

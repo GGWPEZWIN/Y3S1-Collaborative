@@ -96,6 +96,7 @@ export default function AchievementCard({
   icon = "",
   iconUrl = "",
   points = 0,
+  showPoints = true,
   unlocked = false,
   progress = 0,
   ruleTarget = 1,
@@ -332,9 +333,11 @@ export default function AchievementCard({
 
       <div style={styles.bottom}>
 
-        <span style={styles.points}>
-          +{safePoints} pts
-        </span>
+        {showPoints && (
+          <span style={styles.points}>
+            +{safePoints} pts
+          </span>
+        )}
 
         {!unlocked && (
           <span style={styles.lockText}>

@@ -22,6 +22,10 @@ import {
   getTravelHistory,
 } from "../../../firebase/travelHistoryService";
 
+import {
+  getAvailableChallenges,
+} from "../../../firebase/challengeTeamService";
+
 
 // ============================================================
 // HELPERS
@@ -552,7 +556,39 @@ export const getActiveTrips =
 // ============================================================
 
 export async function getFeaturedChallenges() {
-  return [];
+  try {
+    const challenges =
+      await getAvailableChallenges();
+
+    if (!Array.isArray(challenges)) {
+      return [];
+    }
+
+    return [...challenges]
+      .sort((a, b) => {
+        const timeA = toMillis(
+          a?.createdAt ??
+          a?.startDate ??
+          a?.endDate
+        );
+
+        const timeB = toMillis(
+          b?.createdAt ??
+          b?.startDate ??
+          b?.endDate
+        );
+
+        return timeB - timeA;
+      })
+      .slice(0, 3);
+  } catch (error) {
+    console.error(
+      "Failed to load featured challenges:",
+      error
+    );
+
+    return [];
+  }
 }
 
 

@@ -14,6 +14,15 @@ import {
   ChevronRight,
 } from "lucide-react";
 
+import {
+  collection,
+  onSnapshot,
+  query,
+  where,
+} from "firebase/firestore";
+
+import { db } from "../../../firebase/config";
+
 import Layout from "../../../shared/components/Layout";
 import StatCard from "../../../shared/components/StatCard";
 
@@ -36,7 +45,6 @@ import {
 
 import {
   listenToPublishedAchievements,
-  listenToUserAchievements,
 } from "../../../firebase/achievementService";
 
 
@@ -81,12 +89,12 @@ export default function MainDashboard({
   const [achievements, setAchievements] =
     useState([]);
 
-  // Actual achievements already earned by this user.
-  // Source: users/{uid}/achievements
-  const [earnedAchievements, setEarnedAchievements] =
-    useState([]);
-
   const [cumulativeEcoScore, setCumulativeEcoScore] =
+    useState(0);
+
+  // Live count of all itineraries saved by the current user.
+  // This powers the "itinerary_saved" achievement rule.
+  const [savedItineraryCount, setSavedItineraryCount] =
     useState(0);
 
 
@@ -132,31 +140,42 @@ export default function MainDashboard({
   useEffect(() => {
     const unsubscribe =
       listenToPublishedAchievements(
-        (list) => {
-          setAchievements(list);
+        async (list) => {
+          setAchievements(Array.isArray(list) ? list : []);
         }
       );
 
     return unsubscribe;
-  }, []);
+  }, [authUser?.uid]);
 
 
   // ============================================================
-  // LISTEN TO ACTUAL EARNED ACHIEVEMENTS
+  // LIVE SAVED ITINERARY COUNT
+  // Source: top-level itineraries collection.
   // ============================================================
 
   useEffect(() => {
     if (!authUser?.uid) {
-      setEarnedAchievements([]);
+      setSavedItineraryCount(0);
       return;
     }
 
-    return listenToUserAchievements(
-      authUser.uid,
-      (list) => {
-        setEarnedAchievements(
-          Array.isArray(list) ? list : []
+    const itinerariesQuery = query(
+      collection(db, "itineraries"),
+      where("userId", "==", authUser.uid)
+    );
+
+    return onSnapshot(
+      itinerariesQuery,
+      (snapshot) => {
+        setSavedItineraryCount(snapshot.size);
+      },
+      (error) => {
+        console.error(
+          "Failed to load saved itinerary count:",
+          error
         );
+        setSavedItineraryCount(0);
       }
     );
   }, [authUser?.uid]);
@@ -219,7 +238,18 @@ export default function MainDashboard({
   // USER PROGRESS
   // ============================================================
 
+  // Prefer the live Firestore count. During the first render, when the
+  // snapshot has not arrived yet, fall back to the itineraries already
+  // loaded by the dashboard. This prevents First Itinerary from getting
+  // stuck at 0/1 even though the saved itinerary is already visible.
+  const effectiveSavedItineraryCount = Math.max(
+    Number(savedItineraryCount) || 0,
+    Array.isArray(trips) ? trips.length : 0
+  );
+
   const userProgress = {
+    itinerary_saved: effectiveSavedItineraryCount,
+
     trips_completed: trips.filter(
       (trip) => trip.completed === true
     ).length,
@@ -251,9 +281,35 @@ export default function MainDashboard({
   const achievementsWithStatus =
     achievements.map(
       (achievement) => {
-        const ruleType =
+        const rawRuleType = String(
           achievement.ruleType ||
-          "trips_completed";
+            "trips_completed"
+        ).trim().toLowerCase();
+
+        // Normalise common spellings used by older achievement records.
+        const ruleTypeAliases = {
+          itinerarysaved: "itinerary_saved",
+          "itinerary-saved": "itinerary_saved",
+          save_itinerary: "itinerary_saved",
+          first_itinerary: "itinerary_saved",
+          itinerary_saved: "itinerary_saved",
+          tripscompleted: "trips_completed",
+          "trips-completed": "trips_completed",
+        };
+
+        const ruleType =
+          ruleTypeAliases[rawRuleType] ||
+          rawRuleType;
+
+        const normalizedTitle = String(
+          achievement?.title || ""
+        ).trim().toLowerCase();
+
+        // Explicitly recognize the First Itinerary milestone even if an
+        // older achievement document has a different ruleType.
+        const isFirstItinerary =
+          normalizedTitle === "first itinerary" ||
+          ruleType === "itinerary_saved";
 
         const target = Math.max(
           Number(
@@ -262,11 +318,19 @@ export default function MainDashboard({
           1
         );
 
+        // IMPORTANT:
+        // The First Itinerary achievement must use the live
+        // Firestore saved-itinerary counter, not the initial
+        // dashboard snapshot.
         const progress =
-          userProgress[ruleType] ?? 0;
+          isFirstItinerary
+            ? effectiveSavedItineraryCount
+            : userProgress[ruleType] ?? 0;
 
         const unlocked =
-          progress >= target;
+          isFirstItinerary
+            ? effectiveSavedItineraryCount >= target
+            : progress >= target;
 
         return {
           ...achievement,
@@ -286,6 +350,75 @@ export default function MainDashboard({
 
 
   // ============================================================
+  // ECO SCORE LEVEL / PROGRESS
+  // Same level system used by the Community page.
+  // ============================================================
+
+  const ECO_LEVELS = [
+    {
+      level: 1,
+      min: 0,
+      max: 499,
+    },
+    {
+      level: 2,
+      min: 500,
+      max: 1499,
+    },
+    {
+      level: 3,
+      min: 1500,
+      max: 2999,
+    },
+    {
+      level: 4,
+      min: 3000,
+      max: 4999,
+    },
+    {
+      level: 5,
+      min: 5000,
+      max: Infinity,
+    },
+  ];
+
+  const currentEcoLevel =
+    [...ECO_LEVELS]
+      .reverse()
+      .find(
+        (level) =>
+          Number(cumulativeEcoScore) >= level.min
+      ) || ECO_LEVELS[0];
+
+  const nextEcoLevel =
+    ECO_LEVELS.find(
+      (level) =>
+        level.level ===
+        currentEcoLevel.level + 1
+    ) || null;
+
+  const ecoLevelProgress = nextEcoLevel
+    ? Math.min(
+        1,
+        Math.max(
+          0,
+          (Number(cumulativeEcoScore) -
+            currentEcoLevel.min) /
+            (nextEcoLevel.min -
+              currentEcoLevel.min)
+        )
+      )
+    : 1;
+
+  const ecoLevelText = nextEcoLevel
+    ? `Level ${currentEcoLevel.level} • ${Number(
+        cumulativeEcoScore
+      ).toLocaleString()} / ${nextEcoLevel.min.toLocaleString()} XP`
+    : `Level ${currentEcoLevel.level} • ${Number(
+        cumulativeEcoScore
+      ).toLocaleString()} XP • Max Level`;
+
+  // ============================================================
   // DISPLAY STATS
   // ============================================================
   //
@@ -298,7 +431,9 @@ export default function MainDashboard({
   // ============================================================
 
   const unlockedAchievementsCount =
-    earnedAchievements.length;
+    achievementsWithStatus.filter(
+      (achievement) => achievement.unlocked
+    ).length;
 
   const displayStats =
     stats.map((stat) => {
@@ -315,9 +450,7 @@ export default function MainDashboard({
 
       if (
         stat.label === "Achievements" ||
-        stat.title === "Achievements" ||
-        stat.label === "Badges Earned" ||
-        stat.title === "Badges Earned"
+        stat.title === "Achievements"
       ) {
         return {
           ...stat,
@@ -438,27 +571,71 @@ export default function MainDashboard({
             ====================================================== */}
 
         <div style={styles.statGrid}>
-          {displayStats.map((stat) => (
-            <StatCard
-              key={stat.label}
-              icon={
-                STAT_ICONS[
-                  stat.label
-                ]?.icon
-              }
-              iconColor={
-                STAT_ICONS[
-                  stat.label
-                ]?.color
-              }
-              label={stat.label}
-              value={stat.value}
-              note={stat.note}
-              progress={stat.progress}
-              sub={stat.sub}
-              subColor={stat.subColor}
-            />
-          ))}
+          {displayStats.map((stat) => {
+            // Eco Score uses the same level/progress presentation
+            // as the Community page.
+            if (stat.label === "Eco Score") {
+              return (
+                <div
+                  key="Eco Score"
+                  style={styles.ecoScoreCard}
+                >
+                  <div style={styles.ecoScoreHeader}>
+                    <div style={styles.ecoScoreLabel}>
+                      Eco Score
+                    </div>
+                    <Leaf
+                      size={23}
+                      strokeWidth={2}
+                      style={styles.ecoScoreIcon}
+                    />
+                  </div>
+
+                  <div style={styles.ecoScoreValue}>
+                    {Number(cumulativeEcoScore) || 0}
+                  </div>
+
+                  <div style={styles.ecoScoreLevelText}>
+                    {ecoLevelText}
+                  </div>
+
+                  <div
+                    style={styles.ecoScoreProgressTrack}
+                    aria-hidden="true"
+                  >
+                    <div
+                      style={{
+                        ...styles.ecoScoreProgressFill,
+                        width: `${ecoLevelProgress * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <StatCard
+                key={stat.label}
+                icon={
+                  STAT_ICONS[
+                    stat.label
+                  ]?.icon
+                }
+                iconColor={
+                  STAT_ICONS[
+                    stat.label
+                  ]?.color
+                }
+                label={stat.label}
+                value={stat.value}
+                note={stat.note}
+                progress={stat.progress}
+                sub={stat.sub}
+                subColor={stat.subColor}
+              />
+            );
+          })}
         </div>
 
 
@@ -583,12 +760,86 @@ export default function MainDashboard({
                 </div>
               ) : (
                 challenges.map(
-                  (challenge) => (
-                    <ChallengeRow
-                      key={challenge.title}
-                      {...challenge}
-                    />
-                  )
+                  (challenge) => {
+                    // ChallengeRow expects numeric fields that may not exist
+                    // on every Firestore challenge document.
+                    // Normalise them here so one incomplete field cannot
+                    // crash the entire dashboard.
+                    const safeChallenge = {
+                      ...challenge,
+
+                      title:
+                        challenge?.title ||
+                        challenge?.name ||
+                        challenge?.challengeName ||
+                        "Untitled Challenge",
+
+                      description:
+                        challenge?.description ||
+                        challenge?.details ||
+                        "",
+
+                      points:
+                        Number(
+                          challenge?.points ??
+                          challenge?.rewardPoints ??
+                          challenge?.target ??
+                          0
+                        ) || 0,
+
+                      carbonKg:
+                        Number(
+                          challenge?.carbonKg ??
+                          challenge?.carbon_saved ??
+                          challenge?.carbonSaved ??
+                          0
+                        ) || 0,
+
+                      participants:
+                        Number(
+                          challenge?.participants ??
+                          challenge?.participantCount ??
+                          0
+                        ) || 0,
+
+                      target:
+                        Number(
+                          challenge?.target ??
+                          challenge?.goal ??
+                          challenge?.pointsTarget ??
+                          1
+                        ) || 1,
+
+                      difficulty:
+                        challenge?.difficulty ||
+                        "Easy",
+
+                      tag:
+                        challenge?.tag ||
+                        challenge?.category ||
+                        "Sustainability",
+
+                      location:
+                        challenge?.location ||
+                        "",
+
+                      imageUrl:
+                        challenge?.imageUrl ||
+                        challenge?.image ||
+                        challenge?.bannerUrl ||
+                        "",
+                    };
+
+                    return (
+                      <ChallengeRow
+                        key={
+                          safeChallenge.id ||
+                          safeChallenge.title
+                        }
+                        {...safeChallenge}
+                      />
+                    );
+                  }
                 )
               )}
             </div>
@@ -655,7 +906,7 @@ export default function MainDashboard({
                   }
                   onClick={() =>
                     onNavigate?.(
-                      "/community/achievements"
+                      "/achievements"
                     )
                   }
                 >
@@ -737,9 +988,7 @@ export default function MainDashboard({
                         achievement.iconUrl ||
                         ""
                       }
-                      points={
-                        achievement.points
-                      }
+                      showPoints={false}
                       unlocked={
                         achievement.unlocked
                       }
@@ -823,6 +1072,69 @@ const styles = {
     gridTemplateColumns:
       "repeat(4, 1fr)",
     gap: 16,
+  },
+
+  // Requested Eco Score card design.
+  ecoScoreCard: {
+    position: "relative",
+    minHeight: 160,
+    boxSizing: "border-box",
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 20,
+    padding: "28px 26px 22px",
+    boxShadow: "0 2px 8px rgba(15, 23, 42, 0.04)",
+  },
+
+  ecoScoreHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  ecoScoreLabel: {
+    fontSize: 16,
+    lineHeight: 1.2,
+    fontWeight: 500,
+    color: "#50627b",
+  },
+
+  ecoScoreIcon: {
+    color: "#16c55a",
+    flexShrink: 0,
+  },
+
+  ecoScoreValue: {
+    marginTop: 12,
+    fontSize: 36,
+    lineHeight: 1,
+    fontWeight: 800,
+    color: "#0f172a",
+    letterSpacing: "-0.5px",
+  },
+
+  ecoScoreLevelText: {
+    marginTop: 12,
+    fontSize: 15.5,
+    lineHeight: 1.2,
+    fontWeight: 500,
+    color: "#152f51",
+  },
+
+  ecoScoreProgressTrack: {
+    width: "100%",
+    height: 8,
+    marginTop: 14,
+    borderRadius: 999,
+    background: "#eef0f2",
+    overflow: "hidden",
+  },
+
+  ecoScoreProgressFill: {
+    height: "100%",
+    borderRadius: 999,
+    background: "#0f172a",
+    transition: "width 0.3s ease",
   },
 
   card: {
