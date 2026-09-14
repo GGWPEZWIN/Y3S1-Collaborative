@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Search, Plus, Calendar, Leaf, Cloud, MapPin, Trash2 } from "lucide-react";
-import ItineraryShell from "../components/ItineraryShell";
+import Layout from "../../../shared/components/Layout";
 import useMediaQuery, { BREAKPOINTS } from "../hooks/useMediaQuery";
 import {
   ITINERARY_STATUSES,
@@ -211,7 +211,8 @@ export default function ItineraryPage({ onNavigate, itineraries = MOCK_ITINERARI
   }, [allItineraries, search, statusFilter]);
 
   return (
-    <ItineraryShell onNavigate={onNavigate} activeRoute="/itinerary">
+    <Layout active="itinerary" onNavigate={onNavigate}>
+      <div style={styles.pageContent}>
       <div style={{ ...styles.headerRow, ...(isPhone ? styles.headerRowPhone : null) }}>
         <div>
           <h1 style={{ ...styles.pageTitle, ...(isPhone ? styles.pageTitlePhone : null) }}>
@@ -339,11 +340,19 @@ export default function ItineraryPage({ onNavigate, itineraries = MOCK_ITINERARI
           </div>
         </div>
       )}
-    </ItineraryShell>
+      </div>
+    </Layout>
   );
 }
 
 const styles = {
+  pageContent: {
+    width: "100%",
+    maxWidth: 1180,
+    margin: "0 auto",
+    padding: "34px 32px 40px",
+    boxSizing: "border-box",
+  },
   headerRow: {
     display: "flex",
     justifyContent: "space-between",
