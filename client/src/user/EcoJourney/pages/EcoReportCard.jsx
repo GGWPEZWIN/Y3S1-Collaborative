@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import html2canvas from "html2canvas";
 import {
   Share2,
   ChevronRight,
@@ -15,7 +16,6 @@ import {
 
 import {
   getEcoReport,
-  publishEcoReport,
 } from "../../../firebase/ecoReportService";
 
 import {
@@ -33,20 +33,8 @@ import {
   formatScore,
   visibilityLabel,
 } from "../../AIRecommendation/services/report/reportDisplay.js";
-import { PUBLISH_ERROR_MESSAGE } from "../../AIRecommendation/services/report/finishFlowState.js";
 import "../../AIRecommendation/styles/aiRecommendation.css";
 
-// ============================================================
-// ECO REPORT CARD
-//
-// One component handles both screens:
-//
-// /community/reports
-//   -> list of Eco-Report Cards for every trip
-//
-// /community/report?id=TRIP_ID
-//   -> full Eco-Report Card for one trip
-// ============================================================
 
 export default function EcoReportCard({
   onNavigate,
@@ -64,9 +52,6 @@ export default function EcoReportCard({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // ==========================================================
-  // LOAD LIST OR SINGLE REPORT
-  // ==========================================================
 
   useEffect(() => {
     let mounted = true;
@@ -83,9 +68,6 @@ export default function EcoReportCard({
         setLoading(true);
         setError("");
 
-        // ------------------------------------------------------
-        // DETAIL PAGE
-        // ------------------------------------------------------
         if (tripId) {
           const data = await getEcoReport(tripId);
 
@@ -95,9 +77,6 @@ export default function EcoReportCard({
           return;
         }
 
-        // ------------------------------------------------------
-        // LIST PAGE
-        // ------------------------------------------------------
         const trips = await getTravelHistory({
           status: "All Trips",
           sortBy: "Newest First",
@@ -156,16 +135,8 @@ export default function EcoReportCard({
     return () => {
       mounted = false;
     };
-    // authUser?.uid, not authUser: if useCurrentUser returns a new
-    // object reference per render, depending on the object itself
-    // refetches the whole list (an N+1 of getEcoReport calls) on
-    // every render.
-    // Previously: }, [authUser, userLoading, tripId]);
   }, [authUser?.uid, userLoading, tripId]);
 
-  // ==========================================================
-  // AUTH
-  // ==========================================================
 
   if (userLoading) {
     return <LoadingPage text="Loading Eco-Report Card..." />;
@@ -186,9 +157,6 @@ export default function EcoReportCard({
     );
   }
 
-  // ==========================================================
-  // USER
-  // ==========================================================
 
   const layoutUser = {
     name:
@@ -201,9 +169,6 @@ export default function EcoReportCard({
       0,
   };
 
-  // ==========================================================
-  // DETAIL SCREEN
-  // ==========================================================
 
   if (tripId) {
     if (loading) {
@@ -242,24 +207,18 @@ export default function EcoReportCard({
       );
     }
 
-    // key={tripId} forces a remount when the trip changes.
-    // FullEcoReport seeds state from props with useState, which
-    // only reads its initial value once: without the key, moving
-    // from ?id=A to ?id=B kept trip A's data on screen.
     return (
       <FullEcoReport
         key={tripId}
         report={report}
         tripId={tripId}
         layoutUser={layoutUser}
+        authUser={authUser}
         onNavigate={onNavigate}
       />
     );
   }
 
-  // ==========================================================
-  // LIST SCREEN
-  // ==========================================================
 
   return (
     <Layout
@@ -321,6 +280,11 @@ export default function EcoReportCard({
               <ReportListCard
                 key={item.tripId || item.trip?.id}
                 report={item}
+                userName={layoutUser.name}
+                userEmail={
+                  authUser.email ||
+                  profileEmailFallback(item)
+                }
                 onView={() =>
                   onNavigate?.(
                     "/community/report",
@@ -336,59 +300,158 @@ export default function EcoReportCard({
   );
 }
 
-// ============================================================
-// LIST CARD
-// ============================================================
 
 function ReportListCard({
   report,
+  userName,
+  userEmail,
   onView,
 }) {
+  const cardRef = useRef(null);
+  const [shareBusy, setShareBusy] = useState(false);
+
   const trip = report.trip || {};
-  const view = buildCompletedReportView(report, report.tripId);
-  const [publishing, setPublishing] = useState(false);
-  const [publishError, setPublishError] = useState(null);
-  const [isPublic, setIsPublic] = useState(Boolean(view?.isPublic));
+  const view = buildCompletedReportView(
+    report,
+    report.tripId
+  );
+
   const hasError = Boolean(report.reportError);
+
   const tripName =
     view?.title ||
     trip.name ||
     trip.title ||
     "Untitled Trip";
 
-  async function handlePublish() {
-    if (publishing || isPublic || !report.tripId) return;
-    setPublishing(true);
-    setPublishError(null);
+  async function handleShareImage() {
+    if (shareBusy || !cardRef.current) return;
+
     try {
-      const updated = await publishEcoReport(report.tripId);
-      setIsPublic(updated?.visibility === "public" || updated?.alreadyPublic);
-    } catch {
-      setPublishError(PUBLISH_ERROR_MESSAGE);
+      setShareBusy(true);
+
+      await shareElementImage(
+        cardRef.current,
+        report,
+        userName,
+        userEmail
+      );
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        console.error(
+          "Report image share failed:",
+          err
+        );
+
+        alert(
+          "Unable to share this Eco-Report Card. Please try again."
+        );
+      }
     } finally {
-      setPublishing(false);
+      setShareBusy(false);
+    }
+  }
+
+  async function handleDownloadImage() {
+    if (shareBusy || !cardRef.current) return;
+
+    try {
+      setShareBusy(true);
+
+      await downloadElementImage(
+        cardRef.current,
+        report,
+        userName,
+        userEmail
+      );
+    } catch (err) {
+      console.error(
+        "Report image download failed:",
+        err
+      );
+
+      alert(
+        "Unable to download this Eco-Report Card. Please try again."
+      );
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  async function handleShareOrDownload() {
+    if (shareBusy || !cardRef.current) return;
+
+    try {
+      setShareBusy(true);
+
+      await shareOrDownloadElementImage(
+        cardRef.current,
+        report,
+        userName,
+        userEmail
+      );
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        console.error(
+          "Report image share/download failed:",
+          err
+        );
+
+        alert(
+          "Unable to share or download this Eco-Report Card. Please try again."
+        );
+      }
+    } finally {
+      setShareBusy(false);
     }
   }
 
   return (
-    <div style={styles.reportCard}>
+    <div
+      ref={cardRef}
+      style={styles.reportCard}
+    >
       <div style={styles.topBar} />
 
       <div style={styles.cardBody}>
         <div style={styles.listHeader}>
           <div style={styles.cardInfo}>
-            <div style={styles.reportTag}>ECO-REPORT CARD</div>
-            <h2 style={styles.tripName}>{tripName}</h2>
+            <div style={styles.reportTag}>
+              ECO-REPORT CARD
+            </div>
+
+            <h2 style={styles.tripName}>
+              {tripName}
+            </h2>
+
             {view ? (
               <div style={styles.dateRow}>
-                <Calendar size={16} color="#9ca3af" />
-                <span>{formatCompletionDate(view.completedAt)}</span>
+                <Calendar
+                  size={16}
+                  color="#9ca3af"
+                />
+                <span>
+                  {formatCompletionDate(
+                    view.completedAt
+                  )}
+                </span>
               </div>
             ) : null}
           </div>
+
           {view ? (
-            <span style={isPublic ? styles.statusPill : styles.privatePill}>
-              {visibilityLabel(isPublic ? "public" : "private")}
+            <span
+              style={
+                view.isPublic
+                  ? styles.statusPill
+                  : styles.privatePill
+              }
+            >
+              {visibilityLabel(
+                view.isPublic
+                  ? "public"
+                  : "private"
+              )}
             </span>
           ) : null}
         </div>
@@ -396,27 +459,57 @@ function ReportListCard({
         {view ? (
           <div style={styles.statsGrid}>
             <div style={styles.statBox}>
-              <div style={styles.statLabel}>Final Trip Eco-Score</div>
+              <div style={styles.statLabel}>
+                Final Trip Eco-Score
+              </div>
+
               <div style={styles.scoreValue}>
-                {formatScore(view.finalEcoScore)}
+                {formatScore(
+                  view.finalEcoScore
+                )}
               </div>
             </div>
+
             <div style={styles.statBox}>
-              <div style={styles.statLabel}>Confirmed transportation carbon</div>
+              <div style={styles.statLabel}>
+                Confirmed transportation carbon
+              </div>
+
               <div style={styles.statValue}>
-                {formatCarbonKg(view.confirmedTransportationCarbonKg)}
+                {formatCarbonKg(
+                  view.confirmedTransportationCarbonKg
+                )}
               </div>
             </div>
+
             <div style={styles.statBox}>
-              <div style={styles.statLabel}>Destinations</div>
+              <div style={styles.statLabel}>
+                Destinations
+              </div>
+
               <div style={styles.statValue}>
-                {view.reachedCount} reached, {view.skippedCount} skipped
+                {view.reachedCount} reached,{" "}
+                {view.skippedCount} skipped
               </div>
             </div>
+
             <div style={styles.statBox}>
-              <div style={styles.statLabel}>Visibility</div>
-              <span style={isPublic ? styles.statusPill : styles.privatePill}>
-                {visibilityLabel(isPublic ? "public" : "private")}
+              <div style={styles.statLabel}>
+                Visibility
+              </div>
+
+              <span
+                style={
+                  view.isPublic
+                    ? styles.statusPill
+                    : styles.privatePill
+                }
+              >
+                {visibilityLabel(
+                  view.isPublic
+                    ? "public"
+                    : "private"
+                )}
               </span>
             </div>
           </div>
@@ -427,7 +520,10 @@ function ReportListCard({
             {report.reportError}
           </div>
         ) : (
-          <div style={styles.actionsRow}>
+          <div
+            style={styles.actionsRow}
+            data-html2canvas-ignore="true"
+          >
             <button
               type="button"
               onClick={onView}
@@ -436,28 +532,18 @@ function ReportListCard({
               View Full Report
               <ChevronRight size={17} />
             </button>
-            {isPublic ? (
-              <span style={styles.statusPill}>
-                Public - ready for Community Hub
-              </span>
-            ) : (
-              <button
-                type="button"
-                onClick={handlePublish}
-                style={styles.btnOutline}
-                disabled={publishing}
-              >
-                <Share2 size={15} />
-                {publishing ? "Sharing..." : "Share Eco Report to Community"}
-              </button>
-            )}
+
+            <button
+              type="button"
+              onClick={handleShareOrDownload}
+              style={styles.btnDark}
+              disabled={shareBusy}
+            >
+              <Share2 size={15} />
+              {shareBusy ? "Preparing..." : "Share / Download Image"}
+            </button>
           </div>
         )}
-        {publishError ? (
-          <div style={styles.reportError} role="alert">
-            {publishError}
-          </div>
-        ) : null}
       </div>
     </div>
   );
@@ -467,41 +553,140 @@ function FullEcoReport({
   report,
   tripId,
   layoutUser,
+  authUser,
   onNavigate,
 }) {
-  const reportView = buildCompletedReportView(report, tripId);
-  const [publishing, setPublishing] = useState(false);
-  const [publishError, setPublishError] = useState(null);
-  const [reportState, setReportView] = useState(reportView);
+  const reportView =
+    buildCompletedReportView(
+      report,
+      tripId
+    );
 
-  async function handlePublish() {
-    if (publishing || reportState?.isPublic || !tripId) return;
-    setPublishing(true);
-    setPublishError(null);
+  const reportCaptureRef = useRef(null);
+  const [shareBusy, setShareBusy] =
+    useState(false);
+
+  const userName =
+    layoutUser?.name ||
+    "User";
+
+  const userEmail =
+    authUser?.email ||
+    report?.userEmail ||
+    report?.email ||
+    "";
+
+  async function handleShareImage() {
+    if (
+      shareBusy ||
+      !reportCaptureRef.current
+    ) {
+      return;
+    }
+
     try {
-      const updated = await publishEcoReport(tripId);
-      setReportView(
-        buildCompletedReportView(
-          { ...report, ...updated, visibility: "public" },
-          tripId
-        )
+      setShareBusy(true);
+
+      await shareElementImage(
+        reportCaptureRef.current,
+        report,
+        userName,
+        userEmail
       );
-    } catch {
-      setPublishError(PUBLISH_ERROR_MESSAGE);
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        console.error(
+          "Report image share failed:",
+          err
+        );
+
+        alert(
+          "Unable to share the Eco-Report Card. Please try again."
+        );
+      }
     } finally {
-      setPublishing(false);
+      setShareBusy(false);
     }
   }
 
-  if (!reportState) {
+  async function handleDownloadImage() {
+    if (
+      shareBusy ||
+      !reportCaptureRef.current
+    ) {
+      return;
+    }
+
+    try {
+      setShareBusy(true);
+
+      await downloadElementImage(
+        reportCaptureRef.current,
+        report,
+        userName,
+        userEmail
+      );
+    } catch (err) {
+      console.error(
+        "Report image download failed:",
+        err
+      );
+
+      alert(
+        "Unable to download the Eco-Report Card. Please try again."
+      );
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  async function handleShareOrDownload() {
+    if (
+      shareBusy ||
+      !reportCaptureRef.current
+    ) {
+      return;
+    }
+
+    try {
+      setShareBusy(true);
+
+      await shareOrDownloadElementImage(
+        reportCaptureRef.current,
+        report,
+        userName,
+        userEmail
+      );
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        console.error(
+          "Report image share/download failed:",
+          err
+        );
+
+        alert(
+          "Unable to share or download the Eco-Report Card. Please try again."
+        );
+      }
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  if (!reportView) {
     return (
       <div style={styles.loadingPage}>
         <p style={styles.errorText}>
           Report available after trip completion
         </p>
+
         <button
           type="button"
-          onClick={() => onNavigate?.("/community/reports")}
+          onClick={() =>
+            onNavigate?.(
+              "/community/reports"
+            )
+          }
           style={styles.loginButton}
         >
           Back to Eco-Reports
@@ -517,26 +702,546 @@ function FullEcoReport({
       onNavigate={onNavigate}
     >
       <div style={styles.detailPage}>
-        <div style={styles.detailTopRow}>
+        <div
+          style={styles.detailTopRow}
+          data-html2canvas-ignore="true"
+        >
           <button
             type="button"
             style={styles.backButton}
-            onClick={() => onNavigate?.("/community/reports")}
+            onClick={() =>
+              onNavigate?.(
+                "/community/reports"
+              )
+            }
           >
             <ChevronLeft size={20} />
-            <span>Back to Eco-Reports</span>
+            <span>
+              Back to Eco-Reports
+            </span>
           </button>
+
+          <div style={styles.actionGroup}>
+            <button
+              type="button"
+              style={styles.btnDark}
+              onClick={handleShareOrDownload}
+              disabled={shareBusy}
+            >
+              <Share2 size={15} />
+              {shareBusy ? "Preparing..." : "Share / Download Image"}
+            </button>
+          </div>
         </div>
-        <CompletedEcoReport
-          reportView={reportState}
-          publishing={publishing}
-          publishError={publishError}
-          onPublish={handlePublish}
-        />
+
+        <div
+          ref={reportCaptureRef}
+          style={styles.reportCapture}
+        >
+          <CompletedEcoReport
+            reportView={reportView}
+          />
+        </div>
       </div>
     </Layout>
   );
 }
+
+
+// ============================================================
+// REPORT IMAGE EXPORT / SOCIAL SHARING
+// ============================================================
+
+async function createReportImageBlob(
+  element,
+  report,
+  userName,
+  userEmail
+) {
+  if (!element) {
+    throw new Error(
+      "Report element is not available."
+    );
+  }
+
+  // Wait for the report to finish rendering.
+  await new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(resolve);
+    });
+  });
+
+  const rect =
+    element.getBoundingClientRect();
+
+  const width = Math.max(
+    360,
+    Math.ceil(rect.width)
+  );
+
+  // Clone the visible report so the real UI
+  // is never changed.
+  const clone =
+    element.cloneNode(true);
+
+  // Remove anything marked as non-shareable.
+  clone
+    .querySelectorAll(
+      "[data-html2canvas-ignore]"
+    )
+    .forEach((node) => node.remove());
+
+  // Add GreenTrip + username + email ONLY
+  // to the exported image.
+  const identity =
+    document.createElement("div");
+
+  identity.style.cssText = `
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:24px;
+    width:100%;
+    padding:22px 26px;
+    background:#ffffff;
+    border:1px solid #e5e7eb;
+    box-sizing:border-box;
+    font-family:Arial, Helvetica, sans-serif;
+  `;
+
+  const left =
+    document.createElement("div");
+
+  left.style.cssText = `
+    min-width:0;
+    flex:1;
+  `;
+
+  const appName =
+    document.createElement("div");
+
+  appName.textContent =
+    "GREEN TRIP MALAYSIA";
+
+  appName.style.cssText = `
+    font-size:14px;
+    font-weight:800;
+    letter-spacing:.08em;
+    color:#15803d;
+  `;
+
+  const label =
+    document.createElement("div");
+
+  label.textContent =
+    "Eco-Report Card generated for";
+
+  label.style.cssText = `
+    font-size:12px;
+    color:#94a3b8;
+    margin-top:5px;
+  `;
+
+  const name =
+    document.createElement("div");
+
+  name.textContent =
+    userName || "User";
+
+  name.style.cssText = `
+    font-size:18px;
+    font-weight:800;
+    color:#111827;
+    margin-top:4px;
+    word-break:break-word;
+  `;
+
+  left.appendChild(appName);
+  left.appendChild(label);
+  left.appendChild(name);
+
+  const email =
+    document.createElement("div");
+
+  email.textContent =
+    userEmail || "Email not available";
+
+  email.style.cssText = `
+    font-size:13px;
+    color:#64748b;
+    text-align:right;
+    word-break:break-word;
+    max-width:42%;
+  `;
+
+  identity.appendChild(left);
+  identity.appendChild(email);
+
+  const wrapper =
+    document.createElement("div");
+
+  wrapper.style.cssText = `
+    position:absolute;
+    left:-5000px;
+    top:0;
+    width:${width}px;
+    background:#f3f4f6;
+    box-sizing:border-box;
+    overflow:visible;
+    font-family:Arial, Helvetica, sans-serif;
+  `;
+
+  wrapper.appendChild(identity);
+  wrapper.appendChild(clone);
+
+  // Friendly social-sharing footer.
+  const invitation =
+    document.createElement("div");
+
+  invitation.textContent =
+    "🌱 Come join me on my sustainable journey with GreenTrip Malaysia!";
+
+  invitation.style.cssText = `
+    width:100%;
+    box-sizing:border-box;
+    padding:18px 24px;
+    background:#ecfdf5;
+    border:1px solid #bbf7d0;
+    color:#166534;
+    font-family:Arial, Helvetica, sans-serif;
+    font-size:16px;
+    font-weight:700;
+    line-height:1.45;
+    text-align:center;
+  `;
+
+  wrapper.appendChild(
+    invitation
+  );
+
+  document.body.appendChild(
+    wrapper
+  );
+
+  try {
+    await new Promise((resolve) =>
+      requestAnimationFrame(resolve)
+    );
+
+    const canvas =
+      await html2canvas(wrapper, {
+        backgroundColor: "#f3f4f6",
+        scale: Math.min(
+          2,
+          window.devicePixelRatio || 1.5
+        ),
+        useCORS: true,
+        allowTaint: false,
+        logging: false,
+        imageTimeout: 20000,
+        removeContainer: true,
+        scrollX: 0,
+        scrollY: 0,
+        width: wrapper.scrollWidth,
+        height: wrapper.scrollHeight,
+        windowWidth: Math.max(
+          window.innerWidth,
+          wrapper.scrollWidth
+        ),
+        windowHeight: Math.max(
+          window.innerHeight,
+          wrapper.scrollHeight
+        ),
+      });
+
+    if (
+      !canvas ||
+      !canvas.width ||
+      !canvas.height
+    ) {
+      throw new Error(
+        "html2canvas returned an empty image."
+      );
+    }
+
+    return await new Promise(
+      (resolve, reject) => {
+        canvas.toBlob(
+          (blob) => {
+            if (
+              blob &&
+              blob.size > 0
+            ) {
+              resolve(blob);
+            } else {
+              reject(
+                new Error(
+                  "Could not create PNG image."
+                )
+              );
+            }
+          },
+          "image/png",
+          1
+        );
+      }
+    );
+  } finally {
+    wrapper.remove();
+  }
+}
+
+function makeReportFile(
+  blob,
+  report
+) {
+  const filename =
+    `${sanitizeFilename(
+      report?.tripName ||
+        "eco-report"
+    )}-eco-report.png`;
+
+  return new File(
+    [blob],
+    filename,
+    {
+      type: "image/png",
+    }
+  );
+}
+
+async function downloadBlob(file, blob) {
+  const url = URL.createObjectURL(blob);
+
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = file?.name || "eco-report.png";
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  }
+}
+
+async function downloadElementImage(
+  element,
+  report,
+  userName,
+  userEmail
+) {
+  const blob =
+    await createReportImageBlob(
+      element,
+      report,
+      userName,
+      userEmail
+    );
+
+  const url =
+    URL.createObjectURL(blob);
+
+  try {
+    const link =
+      document.createElement("a");
+
+    link.href = url;
+
+    link.download =
+      `${sanitizeFilename(
+        report?.tripName ||
+          "eco-report"
+      )}-eco-report.png`;
+
+    link.style.display = "none";
+
+    document.body.appendChild(
+      link
+    );
+
+    link.click();
+    link.remove();
+  } finally {
+    setTimeout(
+      () =>
+        URL.revokeObjectURL(url),
+      3000
+    );
+  }
+}
+
+async function shareOrDownloadElementImage(
+  element,
+  report,
+  userName,
+  userEmail
+) {
+  const blob = await createReportImageBlob(
+    element,
+    report,
+    userName,
+    userEmail
+  );
+
+  const file = makeReportFile(blob, report);
+
+  // On mobile/tablet, open the native share sheet so the user
+  // can choose WhatsApp, Instagram, Messenger, etc.
+  if (
+    typeof navigator !== "undefined" &&
+    typeof navigator.share === "function"
+  ) {
+    const fileShareSupported =
+      typeof navigator.canShare !== "function" ||
+      navigator.canShare({ files: [file] });
+
+    if (fileShareSupported) {
+      await navigator.share({
+        title: `${report?.tripName || "GreenTrip"} - Eco-Report Card`,
+        files: [file],
+      });
+
+      return { method: "native-share" };
+    }
+  }
+
+  // If direct sharing is unavailable (common on desktop),
+  // download the same image automatically.
+  await downloadBlob(file, blob);
+
+  return { method: "download" };
+}
+
+async function shareElementImage(
+  element,
+  report,
+  userName,
+  userEmail
+) {
+  const blob =
+    await createReportImageBlob(
+      element,
+      report,
+      userName,
+      userEmail
+    );
+
+  const file =
+    makeReportFile(
+      blob,
+      report
+    );
+
+  // Mobile browsers can open the native
+  // share sheet and share the actual PNG.
+  if (
+    typeof navigator !==
+      "undefined" &&
+    typeof navigator.share ===
+      "function"
+  ) {
+    const fileShareSupported =
+      typeof navigator.canShare !==
+        "function" ||
+      navigator.canShare({
+        files: [file],
+      });
+
+    if (fileShareSupported) {
+      await navigator.share({
+        title:
+          `${report?.tripName || "GreenTrip"} - Eco-Report Card`,
+        files: [file],
+      });
+
+      return {
+        method: "native-share",
+      };
+    }
+  }
+
+  // Desktop fallback:
+  // copy the ACTUAL IMAGE to clipboard
+  // when supported, then download it.
+  let copiedImage = false;
+
+  try {
+    if (
+      navigator.clipboard &&
+      typeof window.ClipboardItem !==
+        "undefined"
+    ) {
+      const item =
+        new ClipboardItem({
+          "image/png": blob,
+        });
+
+      await navigator.clipboard.write([
+        item,
+      ]);
+
+      copiedImage = true;
+    }
+  } catch (error) {
+    console.warn(
+      "Could not copy report image:",
+      error
+    );
+  }
+
+  await downloadElementImage(
+    element,
+    report,
+    userName,
+    userEmail
+  );
+
+  if (copiedImage) {
+    alert(
+      "The Eco-Report Card image was copied and downloaded. You can paste the actual image into WhatsApp, Instagram, Messenger or another social app."
+    );
+  } else {
+    alert(
+      "The Eco-Report Card image was downloaded. Your browser does not support direct image sharing from this page."
+    );
+  }
+
+  return {
+    method: "desktop-fallback",
+  };
+}
+
+function sanitizeFilename(
+  value
+) {
+  return String(
+    value || "eco-report"
+  )
+    .replace(
+      /[^a-z0-9\-_]+/gi,
+      "-"
+    )
+    .replace(
+      /^-+|-+$/g,
+      ""
+    )
+    .toLowerCase() ||
+    "eco-report";
+}
+
+function profileEmailFallback(
+  report
+) {
+  return (
+    report?.userEmail ||
+    report?.email ||
+    ""
+  );
+}
+
 
 function LoadingPage({ text }) {
   return (
@@ -546,41 +1251,9 @@ function LoadingPage({ text }) {
   );
 }
 
-// ============================================================
-// STYLES
-// ============================================================
 
 const styles = {
-  // ==========================================================
-  // NOTE: the commented-out keys below are unused here. They
-  // belong to CompletedEcoReport, which now renders the detail
-  // view. Kept for reference; uncomment before reusing.
-  // ==========================================================
 
-  // reportCapture: {
-  // background: "#f3f4f6",
-  // borderRadius: 16,
-  // overflow: "hidden",
-  // },
-  // reportIdentity: {
-  // display: "flex",
-  // justifyContent: "space-between",
-  // alignItems: "center",
-  // gap: 20,
-  // padding: "16px 20px",
-  // background: "#ffffff",
-  // border: "1px solid #e5e7eb",
-  // borderBottom: "none",
-  // },
-  // identityApp: {
-  // fontSize: 11,
-  // fontWeight: 800,
-  // letterSpacing: "0.08em",
-  // color: "#15803d",
-  // },
-  // identityLabel: { fontSize: 11.5, color: "#9ca3af", marginTop: 3 },
-  // identityName: { fontSize: 16, fontWeight: 800, color: "#111827", marginTop: 2 },
-  // identityEmail: { fontSize: 12.5, color: "#6b7280", textAlign: "right", wordBreak: "break-word" },
   page: {
     minHeight: "100vh",
     background: "#f9fafb",
@@ -683,18 +1356,6 @@ const styles = {
     fontSize: 15,
   },
 
-  // gradeCircle: {
-  // width: 80,
-  // height: 80,
-  // minWidth: 80,
-  // borderRadius: "50%",
-  // display: "flex",
-  // alignItems: "center",
-  // justifyContent: "center",
-  // fontSize: 26,
-  // fontWeight: 800,
-  // },
-  //
   statsGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
@@ -723,25 +1384,12 @@ const styles = {
     color: "#16a34a",
   },
 
-  // scoreMax: {
-  // fontSize: 14,
-  // color: "#9ca3af",
-  // fontWeight: 500,
-  // marginLeft: 2,
-  // },
-  //
   statValue: {
     fontSize: 18,
     fontWeight: 700,
     color: "#111827",
   },
 
-  // statValueRow: {
-  // display: "flex",
-  // alignItems: "center",
-  // gap: 7,
-  // },
-  //
   statusPill: {
     display: "inline-flex",
     width: "fit-content",
@@ -801,21 +1449,6 @@ const styles = {
     cursor: "pointer",
   },
 
-  // btnDark: {
-  // display: "flex",
-  // alignItems: "center",
-  // justifyContent: "center",
-  // gap: 7,
-  // background: "#111827",
-  // color: "#fff",
-  // border: "none",
-  // fontSize: 14,
-  // fontWeight: 600,
-  // padding: "12px 20px",
-  // borderRadius: 999,
-  // cursor: "pointer",
-  // },
-  //
   reportError: {
     marginTop: 20,
     width: "100%",
@@ -889,9 +1522,6 @@ const styles = {
     cursor: "pointer",
   },
 
-  // ----------------------------------------------------------
-  // DETAIL
-  // ----------------------------------------------------------
 
   detailPage: {
     padding: "26px 34px 60px",
@@ -909,325 +1539,31 @@ const styles = {
     marginBottom: 20,
   },
 
-  // actionGroup: {
-  // display: "flex",
-  // gap: 10,
-  // },
-  //
-  // hero: {
-  // borderRadius: 18,
-  // padding: 30,
-  // background:
-  // "linear-gradient(135deg, #a7f59b 0%, #4de8ae 52%, #11d9b2 100%)",
-  // },
-  //
-  // heroTop: {
-  // display: "flex",
-  // justifyContent: "space-between",
-  // alignItems: "flex-start",
-  // gap: 24,
-  // },
-  //
-  // heroInfo: {
-  // flex: 1,
-  // minWidth: 0,
-  // },
-  //
-  // heroTag: {
-  // fontSize: 12,
-  // fontWeight: 800,
-  // color: "#3f9448",
-  // letterSpacing: 0.5,
-  // },
-  //
-  // heroTitle: {
-  // fontSize: 24,
-  // fontWeight: 800,
-  // color: "#075c38",
-  // margin: "5px 0 7px",
-  // },
-  //
-  // heroSub: {
-  // fontSize: 14,
-  // color: "#147348",
-  // marginTop: 5,
-  // },
-  //
-  // gradeContainer: {
-  // textAlign: "center",
-  // minWidth: 105,
-  // paddingTop: 2,
-  // },
-  //
-  // heroGrade: {
-  // fontSize: 40,
-  // lineHeight: 1,
-  // fontWeight: 800,
-  // color: "#075c38",
-  // },
-  //
-  // heroGradeLabel: {
-  // fontSize: 13.5,
-  // fontWeight: 600,
-  // color: "#147348",
-  // marginTop: 8,
-  // },
-  //
-  // heroStats: {
-  // display: "grid",
-  // gridTemplateColumns: "repeat(3, 1fr)",
-  // gap: 22,
-  // marginTop: 24,
-  // },
-  //
-  // heroStatBox: {
-  // background: "rgba(255,255,255,0.42)",
-  // borderRadius: 12,
-  // padding: "15px 20px",
-  // textAlign: "center",
-  // },
-  //
-  // heroStatValue: {
-  // fontSize: 29,
-  // fontWeight: 800,
-  // color: "#075c38",
-  // },
-  //
-  // heroStatLabel: {
-  // fontSize: 13,
-  // color: "#147348",
-  // marginTop: 2,
-  // },
-  //
-  // twoCol: {
-  // display: "grid",
-  // gridTemplateColumns: "1fr 1fr",
-  // gap: 18,
-  // marginTop: 20,
-  // },
-  //
-  // card: {
-  // background: "#fff",
-  // border: "1px solid #e5e7eb",
-  // borderRadius: 14,
-  // padding: 20,
-  // boxSizing: "border-box",
-  // },
-  //
-  // cardHeader: {
-  // display: "flex",
-  // alignItems: "center",
-  // gap: 8,
-  // },
-  //
-  // cardTitle: {
-  // fontWeight: 700,
-  // fontSize: 16,
-  // color: "#111827",
-  // },
-  //
-  // breakdownRow: {
-  // display: "flex",
-  // justifyContent: "space-between",
-  // fontSize: 14,
-  // marginBottom: 7,
-  // },
-  //
-  // breakdownLabel: {
-  // color: "#374151",
-  // },
-  //
-  // breakdownValue: {
-  // fontWeight: 700,
-  // color: "#111827",
-  // },
-  //
-  // progressTrack: {
-  // width: "100%",
-  // height: 7,
-  // background: "#d9dde1",
-  // borderRadius: 999,
-  // overflow: "hidden",
-  // },
-  //
-  // progressFill: {
-  // height: "100%",
-  // background: "#111111",
-  // borderRadius: 999,
-  // },
-  //
-  // chartBox: {
-  // width: "100%",
-  // height: 190,
-  // marginTop: 5,
-  // },
-  //
-  // cssPie: {
-  // width: 150,
-  // height: 150,
-  // borderRadius: "50%",
-  // margin: "14px auto 10px",
-  // border: "6px solid #fff",
-  // boxSizing: "border-box",
-  // boxShadow: "0 0 0 1px #e5e7eb",
-  // },
-  //
-  // legend: {
-  // display: "flex",
-  // flexDirection: "column",
-  // gap: 11,
-  // marginTop: 3,
-  // },
-  //
-  // legendRow: {
-  // display: "flex",
-  // justifyContent: "space-between",
-  // alignItems: "center",
-  // fontSize: 13.5,
-  // color: "#374151",
-  // },
-  //
-  // legendLeft: {
-  // display: "flex",
-  // alignItems: "center",
-  // gap: 9,
-  // },
-  //
-  // legendDot: {
-  // width: 12,
-  // height: 12,
-  // borderRadius: "50%",
-  // flexShrink: 0,
-  // },
-  //
-  // legendValue: {
-  // fontWeight: 600,
-  // color: "#374151",
-  // },
-  //
-  // emptyData: {
-  // color: "#9ca3af",
-  // fontSize: 14,
-  // marginTop: 18,
-  // },
-  //
-  // impactGrid: {
-  // display: "grid",
-  // gridTemplateColumns: "repeat(4, 1fr)",
-  // gap: 14,
-  // marginTop: 17,
-  // },
-  //
-  // impactCard: {
-  // background: "#f8fafc",
-  // borderRadius: 12,
-  // padding: "17px 10px",
-  // textAlign: "center",
-  // minHeight: 135,
-  // boxSizing: "border-box",
-  // },
-  //
-  // impactIcon: {
-  // fontSize: 31,
-  // lineHeight: 1,
-  // },
-  //
-  // impactValue: {
-  // fontSize: 24,
-  // fontWeight: 800,
-  // color: "#111827",
-  // marginTop: 8,
-  // },
-  //
-  // impactSub: {
-  // fontSize: 11.5,
-  // color: "#9ca3af",
-  // minHeight: 16,
-  // },
-  //
-  // impactLabel: {
-  // fontSize: 12.5,
-  // fontWeight: 600,
-  // color: "#374151",
-  // marginTop: 6,
-  // },
-  //
-  // achievementsHeader: {
-  // display: "flex",
-  // alignItems: "center",
-  // justifyContent: "space-between",
-  // gap: 12,
-  // },
-  //
-  // viewMoreButton: {
-  // display: "flex",
-  // alignItems: "center",
-  // gap: 3,
-  // border: "none",
-  // background: "transparent",
-  // color: "#111827",
-  // fontSize: 13.5,
-  // fontWeight: 600,
-  // cursor: "pointer",
-  // padding: 0,
-  // },
-  //
-  // achievementGrid: {
-  // display: "grid",
-  // gridTemplateColumns: "repeat(3, 1fr)",
-  // gap: 16,
-  // marginTop: 16,
-  // },
-  //
-  // achievementCard: {
-  // border: "1px solid #e5e7eb",
-  // borderRadius: 13,
-  // padding: "17px 10px 14px",
-  // textAlign: "center",
-  // minHeight: 135,
-  // boxSizing: "border-box",
-  // },
-  //
-  // achievementIcon: {
-  // fontSize: 32,
-  // lineHeight: 1,
-  // marginBottom: 10,
-  // },
-  //
-  // achievementTitle: {
-  // fontSize: 13.5,
-  // fontWeight: 700,
-  // color: "#111827",
-  // },
-  //
-  // achievementCategory: {
-  // fontSize: 12,
-  // color: "#9ca3af",
-  // marginTop: 3,
-  // },
-  //
-  // achievementDate: {
-  // fontSize: 11.5,
-  // color: "#9ca3af",
-  // marginTop: 8,
-  // },
-  //
-  // emptyAchievement: {
-  // color: "#9ca3af",
-  // fontSize: 14,
-  // padding: "20px 0 5px",
-  // textAlign: "center",
-  // },
-  //
-  // footerTitle: {
-  // fontSize: 18,
-  // fontWeight: 700,
-  // color: "#111827",
-  // },
-  //
-  // footerText: {
-  // marginTop: 6,
-  // fontSize: 14,
-  // color: "#6b7280",
-  // },
+  actionGroup: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+
+  btnDark: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    background: "#111827",
+    color: "#fff",
+    border: "none",
+    fontSize: 14,
+    fontWeight: 600,
+    padding: "12px 22px",
+    borderRadius: 999,
+    cursor: "pointer",
+  },
+
+  reportCapture: {
+    background: "#f3f4f6",
+    borderRadius: 16,
+    overflow: "hidden",
+  },
+
 };

@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, Loader2 } from "lucide-react";
+import {
+  ChevronLeft,
+  Loader2,
+  Utensils,
+  Droplet,
+  Recycle,
+  Trash2,
+  Car,
+  Activity,
+  BedDouble,
+} from "lucide-react";
 
 import {
   ResponsiveContainer,
@@ -14,6 +24,8 @@ import {
 } from "recharts";
 
 import { getTravelHistory } from "../../../firebase/travelHistoryService";
+import { useCurrentUser } from "../../../firebase/useCurrentUser";
+import { getTripWasteImpact } from "../../../firebase/wasteImpactService";
 
 /* ============================================================
    HELPERS
@@ -189,10 +201,259 @@ function ChartTooltip({ active, payload, label }) {
 }
 
 /* ============================================================
+   SUSTAINABILITY BREAKDOWN
+============================================================ */
+
+function SustainabilityBreakdown({ trips, uid }) {
+  const [impact, setImpact] = useState({
+    foodWasteG: 0,
+    waterL: 0,
+    plasticItems: 0,
+    disposables: 0,
+    logCount: 0,
+  });
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [impactError, setImpactError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadImpact() {
+      if (!uid || !trips.length) {
+        if (mounted) {
+          setImpact({
+            foodWasteG: 0,
+            waterL: 0,
+            plasticItems: 0,
+            disposables: 0,
+            logCount: 0,
+          });
+          setImpactError("");
+        }
+        return;
+      }
+
+      try {
+        setImpactLoading(true);
+        setImpactError("");
+
+        const results = await Promise.all(
+          trips
+            .filter((trip) => trip?.id)
+            .map(async (trip) => {
+              try {
+                return await getTripWasteImpact(uid, trip.id);
+              } catch (err) {
+                console.error(
+                  `Failed to load waste impact for trip ${trip.id}:`,
+                  err
+                );
+                return null;
+              }
+            })
+        );
+
+        if (!mounted) return;
+
+        const totals = results.filter(Boolean).reduce(
+          (sum, item) => ({
+            foodWasteG:
+              sum.foodWasteG + Number(item.foodWasteG || 0),
+
+            waterL:
+              sum.waterL + Number(item.waterL || 0),
+
+            plasticItems:
+              sum.plasticItems + Number(item.plasticItems || 0),
+
+            disposables:
+              sum.disposables +
+              Number(
+                item.disposables ??
+                  item.disposableItems ??
+                  0
+              ),
+
+            logCount:
+              sum.logCount + Number(item.logCount || 0),
+          }),
+          {
+            foodWasteG: 0,
+            waterL: 0,
+            plasticItems: 0,
+            disposables: 0,
+            logCount: 0,
+          }
+        );
+
+        setImpact(totals);
+      } catch (err) {
+        console.error(
+          "Failed to load sustainability breakdown:",
+          err
+        );
+
+        if (mounted) {
+          setImpactError(
+            err?.message ||
+              "Unable to load detailed impact data."
+          );
+        }
+      } finally {
+        if (mounted) {
+          setImpactLoading(false);
+        }
+      }
+    }
+
+    loadImpact();
+
+    return () => {
+      mounted = false;
+    };
+  }, [uid, trips]);
+
+  const totalCarbonKg = trips.reduce(
+    (sum, trip) =>
+      sum + Number(trip?.carbonKg || 0),
+    0
+  );
+
+  const cards = [
+    {
+      key: "transport",
+      icon: Car,
+      label: "Transport",
+      value: `${totalCarbonKg.toFixed(1)} kg`,
+      sub: "CO₂ footprint",
+    },
+    {
+      key: "food",
+      icon: Utensils,
+      label: "Food Waste",
+      value: `${impact.foodWasteG.toFixed(0)} g`,
+      sub: "recorded waste",
+    },
+    {
+      key: "plastic",
+      icon: Recycle,
+      label: "Plastic",
+      value: `${impact.plasticItems.toFixed(0)}`,
+      sub: "items",
+    },
+    {
+      key: "water",
+      icon: Droplet,
+      label: "Water",
+      value: `${impact.waterL.toFixed(1)} L`,
+      sub: "recorded usage",
+    },
+    {
+      key: "disposables",
+      icon: Trash2,
+      label: "Disposables",
+      value: `${impact.disposables.toFixed(0)}`,
+      sub: "items",
+    },
+    {
+      key: "activities",
+      icon: Activity,
+      label: "Activities",
+      value: "—",
+      sub: "not recorded",
+    },
+    {
+      key: "lodging",
+      icon: BedDouble,
+      label: "Lodging",
+      value: "—",
+      sub: "not recorded",
+    },
+  ];
+
+  return (
+    <div
+      style={{
+        ...styles.card,
+        marginTop: 20,
+      }}
+    >
+      <div style={styles.cardTitle}>
+        Sustainability Breakdown
+      </div>
+
+      <div style={styles.breakdownIntro}>
+        <span>
+          Detailed impact from your latest{" "}
+          {trips.length} completed{" "}
+          {trips.length === 1 ? "trip" : "trips"}.
+        </span>
+
+        {impactLoading ? (
+          <span style={styles.breakdownStatus}>
+            Loading waste data...
+          </span>
+        ) : impact.logCount > 0 ? (
+          <span style={styles.breakdownStatus}>
+            {impact.logCount} waste{" "}
+            {impact.logCount === 1 ? "log" : "logs"} recorded
+          </span>
+        ) : null}
+      </div>
+
+      {impactError ? (
+        <div style={styles.breakdownError}>
+          {impactError}
+        </div>
+      ) : null}
+
+      <div style={styles.impactGrid}>
+        {cards.map((item) => {
+          const Icon = item.icon;
+
+          return (
+            <div
+              key={item.key}
+              style={styles.impactCard}
+            >
+              <div style={styles.impactIcon}>
+                <Icon size={23} strokeWidth={2} />
+              </div>
+
+              <div style={styles.impactLabel}>
+                {item.label}
+              </div>
+
+              <div style={styles.impactValue}>
+                {item.value}
+              </div>
+
+              <div style={styles.impactSub}>
+                {item.sub}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={styles.breakdownNote}>
+        Food Waste, Plastic, Water and Disposables come from
+        the Waste & Resource logs linked to these trips.
+        Activities and Lodging are shown as unavailable because
+        those impact values are not currently stored in the
+        progress-tracker data source.
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    PROGRESS TRACKER
 ============================================================ */
 
 export default function ProgressTracker({ onBack }) {
+  const { authUser } = useCurrentUser();
+
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -553,31 +814,10 @@ export default function ProgressTracker({ onBack }) {
                 SUSTAINABILITY BREAKDOWN
             ------------------------------------------------ */}
 
-            <div
-              style={{
-                ...styles.card,
-                marginTop: 20,
-              }}
-            >
-              <div style={styles.cardTitle}>
-                Sustainability Breakdown
-              </div>
-
-              <div style={styles.radarEmpty}>
-                <div style={styles.radarEmptyTitle}>
-                  Detailed impact data is not available yet
-                </div>
-
-                <div style={styles.radarEmptyText}>
-                  Your completed trips currently provide
-                  Eco Score and carbon footprint data. The
-                  detailed Transport, Food Waste, Plastic,
-                  Water, Activities and Lodging breakdown
-                  will appear here once those impact values
-                  are stored with the trip.
-                </div>
-              </div>
-            </div>
+            <SustainabilityBreakdown
+              trips={trips}
+              uid={authUser?.uid || null}
+            />
 
             {/* ------------------------------------------------
                 RECENT 4 TRIPS
@@ -664,6 +904,84 @@ const styles = {
     fontSize: 16,
     fontWeight: 700,
     color: "#111827",
+  },
+
+  breakdownIntro: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    flexWrap: "wrap",
+    marginTop: 8,
+    color: "#6b7280",
+    fontSize: 13.5,
+  },
+
+  breakdownStatus: {
+    color: "#16a34a",
+    fontWeight: 600,
+  },
+
+  breakdownError: {
+    marginTop: 12,
+    padding: "10px 12px",
+    borderRadius: 10,
+    background: "#fef2f2",
+    color: "#b91c1c",
+    fontSize: 13,
+  },
+
+  impactGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gap: 14,
+    marginTop: 18,
+  },
+
+  impactCard: {
+    background: "#f8fafc",
+    border: "1px solid #eef2f7",
+    borderRadius: 14,
+    padding: "17px 12px",
+    minHeight: 128,
+    boxSizing: "border-box",
+    textAlign: "center",
+  },
+
+  impactIcon: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#16a34a",
+    marginBottom: 8,
+  },
+
+  impactLabel: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#374151",
+  },
+
+  impactValue: {
+    fontSize: 21,
+    fontWeight: 800,
+    color: "#111827",
+    marginTop: 7,
+  },
+
+  impactSub: {
+    fontSize: 11.5,
+    color: "#9ca3af",
+    marginTop: 4,
+  },
+
+  breakdownNote: {
+    marginTop: 15,
+    paddingTop: 13,
+    borderTop: "1px solid #eef2f7",
+    color: "#9ca3af",
+    fontSize: 12,
+    lineHeight: 1.55,
   },
 
   chartWrapper: {
