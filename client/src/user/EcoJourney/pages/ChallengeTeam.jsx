@@ -9,7 +9,6 @@ import {
   ChevronLeft,
   Clock3,
   MapPin,
-  MessageCircle,
   Search,
   // Target, 
   Trophy,
@@ -385,7 +384,6 @@ function TeamCard({
   currentUid,
   onStart,
   onSubmitRequirement,
-  onChat,
   pendingInvites,
   onCancelInvite,
   onDeleteTeam,
@@ -439,8 +437,8 @@ function TeamCard({
 
   const canDelete =
     isCreator &&
-    team.status === TEAM_STATUS.WAITING &&
-    acceptedCount === 1;
+    (team.status === TEAM_STATUS.WAITING ||
+      team.status === TEAM_STATUS.ACTIVE);
 
   const isWaiting = team.status === TEAM_STATUS.WAITING;
 
@@ -786,18 +784,6 @@ function TeamCard({
             </button>
           )}
 
-          <button
-            type="button"
-            style={styles.btnOutline}
-            onClick={() => onChat(team)}
-          >
-            <MessageCircle size={16} />
-
-            {team.challengeMode ===
-            CHALLENGE_MODE.PARTNER
-              ? "Chat with Partner"
-              : "Team Chat"}
-          </button>
         </div>
 
         {team.status === TEAM_STATUS.COMPLETED && (
@@ -1512,7 +1498,7 @@ export default function ChallengeTeam({
       !window.confirm(
         `Delete "${
           team.teamName || "this team"
-        }"? Any pending invitations will be cancelled.`
+        }"? Pending invitations will be cancelled, and any accepted members will be notified that the team was deleted.`
       )
     ) {
       return;
@@ -1523,7 +1509,9 @@ export default function ChallengeTeam({
 
       await deleteChallengeTeam(team.id);
 
-      setSuccess("Team deleted.");
+      setSuccess(
+        `"${team.teamName || "The challenge team"}" has been deleted. Pending invitations were cancelled and accepted members were notified.`
+      );
     } catch (err) {
       console.error(err);
 
@@ -1584,50 +1572,6 @@ export default function ChallengeTeam({
           "Unable to submit the challenge requirement."
       );
     }
-  }
-
-  function handleChat(team) {
-    /*
-     * Challenge Partner:
-     *
-     * Once accepted, navigate directly to the
-     * partner's 1-to-1 chat.
-     */
-    if (
-      team.challengeMode ===
-      CHALLENGE_MODE.PARTNER
-    ) {
-      const partner = (
-        team.members || []
-      ).find(
-        (member) =>
-          member.uid !== authUser?.uid
-      );
-
-      if (!partner?.uid) {
-        setError(
-          "Your challenge partner has not accepted yet."
-        );
-
-        return;
-      }
-
-      onNavigate?.(
-        "/community/chat",
-        partner.uid
-      );
-
-      return;
-    }
-
-    /*
-     * Normal Team:
-     * Navigate to team/group chat.
-     */
-    onNavigate?.(
-      "/community/chat",
-      team.id
-    );
   }
 
   if (userLoading /* || loading */) {
@@ -2254,7 +2198,6 @@ export default function ChallengeTeam({
                   onSubmitRequirement={
                     handleSubmitRequirement
                   }
-                  onChat={handleChat}
                   pendingInvites={sentInvites.filter(
                     (invite) =>
                       invite.teamId ===
@@ -2311,7 +2254,6 @@ export default function ChallengeTeam({
                   onSubmitRequirement={
                     handleSubmitRequirement
                   }
-                  onChat={handleChat}
                   pendingInvites={[]}
                   onCancelInvite={
                     handleCancelInvite

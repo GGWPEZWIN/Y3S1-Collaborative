@@ -1040,7 +1040,7 @@ export async function acceptChallengeTeamInvite(
 
       if (!teamSnap.exists()) {
         throw new Error(
-          "This challenge team no longer exists."
+          "This invitation's team has been deleted. You can no longer join this team."
         );
       }
 
@@ -2440,16 +2440,23 @@ export async function deleteChallengeTeam(
 ) {
   const uid = currentUid();
 
+  if (!teamId) {
+    throw new Error("Team ID is required.");
+  }
+
   const teamRef = doc(
     db,
     TEAM_COLLECTION,
     teamId
   );
 
-  const snap =
-    await getDoc(teamRef);
+  const snap = await getDoc(teamRef);
 
-  if (!snap.exists()) return;
+  if (!snap.exists()) {
+    throw new Error(
+      "This challenge team has already been deleted."
+    );
+  }
 
   const team = snap.data();
 
@@ -2459,102 +2466,96 @@ export async function deleteChallengeTeam(
     );
   }
 
-  // A team can be deleted only while it is still waiting
-  // and before any invited friend has accepted.
-  const acceptedMemberCount = acceptedMembers(team).length;
-
-  if (team.status !== TEAM_STATUS.WAITING) {
+  if (
+    team.status !== TEAM_STATUS.WAITING &&
+    team.status !== TEAM_STATUS.ACTIVE
+  ) {
     throw new Error(
-      "A team can only be deleted before the challenge starts."
+      "Only a pending or active challenge team can be deleted."
     );
   }
 
-  if (acceptedMemberCount > 1) {
-    throw new Error(
-      "This team cannot be deleted because a friend has already joined."
-    );
-  }
-
-  // Cancel any still-pending invitations.
-  // IMPORTANT: include fromUid in the query.
-  // Firestore security rules cannot use a broad teamId/status query
-  // to prove that every returned invitation belongs to this creator.
-  const inviteQuery =
-    query(
-      collection(
-        db,
-        INVITE_COLLECTION
-      ),
-      where(
-        "teamId",
-        "==",
-        teamId
-      ),
-      where(
-        "fromUid",
-        "==",
-        uid
-      ),
-      where(
-        "status",
-        "==",
-        "pending"
-      )
-    );
-
-  const invites =
-    await getDocs(
-      inviteQuery
-    );
-
-  await Promise.all(
-    invites.docs.map(
-      async (inviteDoc) => {
-        const invite = inviteDoc.data();
-
-        await updateDoc(
-          inviteDoc.ref,
-          {
-            status:
-              "cancelled",
-            respondedAt:
-              serverTimestamp(),
-            updatedAt:
-              serverTimestamp(),
-          }
-        );
-
-        if (invite?.toUid) {
-          try {
-            await createNotification(
-              invite.toUid,
-              {
-                title:
-                  "Challenge Team Deleted",
-                message:
-                  `${invite.fromName || "The team creator"} deleted "${invite.teamName || "the challenge team"}", so your pending invitation was cancelled.`,
-                type:
-                  "challenge-team-deleted",
-                teamId:
-                  invite.teamId || teamId,
-                challengeId:
-                  invite.challengeId || "",
-              }
-            );
-          } catch (notificationError) {
-            console.warn(
-              "Could not notify invitee about deleted team:",
-              notificationError
-            );
-          }
-        }
-      }
-    )
+  // Cancel all pending invitations created for this team.
+  const inviteQuery = query(
+    collection(db, INVITE_COLLECTION),
+    where("teamId", "==", teamId),
+    where("fromUid", "==", uid),
+    where("status", "==", "pending")
   );
 
-  // Now permanently remove the empty waiting team.
-  // This is allowed by the Firestore rule because the creator owns it.
+  const invites = await getDocs(inviteQuery);
+
+  await Promise.all(
+    invites.docs.map(async (inviteDoc) => {
+      const invite = inviteDoc.data();
+
+      await updateDoc(
+        inviteDoc.ref,
+        {
+          status: "cancelled",
+          respondedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }
+      );
+
+      if (invite?.toUid) {
+        try {
+          await createNotification(
+            invite.toUid,
+            {
+              title: "Challenge Team Deleted",
+              message:
+                `${invite.fromName || "The team creator"} deleted "${invite.teamName || "the challenge team"}". Your invitation has been cancelled, so you can no longer join this team.`,
+              type: "challenge-team-deleted",
+              teamId: invite.teamId || teamId,
+              challengeId: invite.challengeId || "",
+            }
+          );
+        } catch (notificationError) {
+          console.warn(
+            "Could not notify invitee about deleted team:",
+            notificationError
+          );
+        }
+      }
+    })
+  );
+
+  // Notify friends who already accepted and joined the waiting team.
+  const acceptedMemberIds = Array.isArray(team.memberIds)
+    ? team.memberIds.filter(
+        (memberUid) =>
+          memberUid && memberUid !== uid
+      )
+    : [];
+
+  await Promise.all(
+    acceptedMemberIds.map(async (memberUid) => {
+      try {
+        await createNotification(
+          memberUid,
+          {
+            title: "Challenge Team Deleted",
+            message:
+              `${team.creatorName || "The team creator"} deleted "${team.teamName || "the challenge team"}". This challenge team is no longer available.`,
+            type: "challenge-team-deleted",
+            teamId,
+            challengeId: team.challengeId || "",
+          }
+        );
+      } catch (notificationError) {
+        console.warn(
+          "Could not notify accepted member about deleted team:",
+          notificationError
+        );
+      }
+    })
+  );
+
+  // Delete the waiting team.
   await deleteDoc(teamRef);
+
+  return true;
 }
 
 // ============================================================
