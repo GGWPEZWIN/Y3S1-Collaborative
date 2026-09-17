@@ -43,35 +43,29 @@ export default function Step3Activities({
     [draft.activityIds, all]
   );
 
-  // Module 1 suggestion: which of the SELECTED activities to do first. Purely a
-  // hint — the traveller still selects and orders activities by hand.
-  const firstActivityRec = useMemo(
-    () =>
-      recommendFirstActivity({
-        selectedActivities,
-        orderedDestinations,
-        dayAssignments,
-      }),
-    [selectedActivities, orderedDestinations, dayAssignments]
-  );
-
-  const recIsAlreadyFirst =
-    firstActivityRec && draft.activityIds[0] === firstActivityRec.activityId;
-
-  const makeRecommendedFirst = () => {
-    if (!firstActivityRec) return;
-    onChange({
-      activityIds: [
-        firstActivityRec.activityId,
-        ...draft.activityIds.filter((id) => id !== firstActivityRec.activityId),
-      ],
-    });
-  };
-
   const visible = useMemo(
     () => (category === "All" ? all : all.filter((a) => a.category === category)),
     [all, category]
   );
+
+  // Group the (already category-filtered) activities under each destination,
+  // in route order, so a Penang activity can never show up under Cameron
+  // Highlands. Destinations that have nothing left in this category still
+  // show, with a small "nothing here" note, so the grouping stays visible.
+  const groups = useMemo(() => {
+    const stops =
+      orderedDestinations.length > 0
+        ? orderedDestinations
+        : destinationIds.map((id) => ({ id, name: "" })).filter((d) => d.id);
+
+    return stops.map((destination) => ({
+      destination,
+      activities: visible.filter((a) => a.destinationId === destination.id),
+      selectedActivities: selectedActivities.filter(
+        (a) => a.destinationId === destination.id
+      ),
+    }));
+  }, [orderedDestinations, destinationIds, visible, selectedActivities]);
 
   const toggle = (activityId) => {
     const selected = draft.activityIds.includes(activityId)
@@ -89,50 +83,10 @@ export default function Step3Activities({
         <div>
           <h2 style={w.stepTitle}>Select Activities</h2>
           <p style={w.stepSub}>
-            Choose eco-friendly activities for your trip
+            Choose eco-friendly activities for each destination on your route
           </p>
         </div>
       </div>
-
-      {selectedActivities.length >= 1 && (
-        <div style={styles.recCard}>
-          <div style={styles.recHead}>
-            <Sparkles size={15} color="#15803d" />
-            <span>Activity Recommendation</span>
-          </div>
-          <p style={styles.recSub}>
-            Suggested: which selected activity to do first
-          </p>
-
-          {firstActivityRec ? (
-            <>
-              <p style={styles.recBody}>
-                Do this first:{" "}
-                <strong>{firstActivityRec.recommendation}</strong>
-              </p>
-              <p style={styles.recReason}>{firstActivityRec.reason}</p>
-              {!recIsAlreadyFirst && (
-                <button
-                  type="button"
-                  onClick={makeRecommendedFirst}
-                  style={styles.recBtn}
-                >
-                  Move to first
-                </button>
-              )}
-              {recIsAlreadyFirst && (
-                <p style={styles.recDone}>
-                  This is already first in your list. You can reorder any time.
-                </p>
-              )}
-            </>
-          ) : (
-            <p style={styles.recBody}>
-              Recommendation unavailable. You can continue manually.
-            </p>
-          )}
-        </div>
-      )}
 
       <div style={{ ...w.card, ...(isPhone ? w.cardPhone : null) }}>
         <div style={{ ...styles.chipRow, ...(isPhone ? styles.chipRowPhone : null) }}>
@@ -151,63 +105,29 @@ export default function Step3Activities({
           })}
         </div>
 
-        {visible.length === 0 ? (
-          <div style={w.emptyState}>
-            No {category.toLowerCase()} activities listed for this destination yet.
-          </div>
-        ) : (
-          <div style={styles.list}>
-            {visible.map((a) => {
-              const isSelected = draft.activityIds.includes(a.id);
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => toggle(a.id)}
-                  aria-pressed={isSelected}
-                  style={{
-                    ...styles.row,
-                    ...(isPhone ? styles.rowPhone : null),
-                    ...(isSelected ? styles.rowActive : {}),
-                  }}
-                >
-                  <span
-                    style={{
-                      ...styles.checkbox,
-                      ...(isSelected ? styles.checkboxOn : {}),
-                    }}
-                  >
-                    {isSelected && <Check size={13} color="#fff" strokeWidth={3} />}
-                  </span>
-
-                  {/* The thumbnail is decoration next to the title and the
-                      eco score; on a phone it costs width those need more. */}
-                  {!isPhone && (
-                    <img src={a.imageUrl} alt={a.title} style={styles.thumb} />
-                  )}
-
-                  <div style={styles.rowText}>
-                    <div style={styles.rowTitle}>{a.title}</div>
-                    <div style={styles.rowDesc}>{a.description}</div>
-                    <div style={styles.rowMeta}>
-                      <span style={styles.metaItem}>
-                        <Clock size={12} /> {a.durationHours}h
-                      </span>
-                      <span style={styles.metaDot}>·</span>
-                      <span style={styles.metaItem}>
-                        {a.priceMyr === 0 ? "Free" : `RM ${a.priceMyr}`}
-                      </span>
-                      <span style={styles.metaDot}>·</span>
-                      <span style={styles.metaItem}>{a.category}</span>
-                    </div>
-                  </div>
-
-                  <EcoScoreBadge score={a.ecoScore} size={isPhone ? "sm" : "md"} />
-                </button>
-              );
-            })}
-          </div>
-        )}
+        {groups.map(({ destination, activities, selectedActivities: destSelected }) => (
+          <DestinationActivityGroup
+            key={destination.id}
+            destination={destination}
+            activities={activities}
+            selectedActivities={destSelected}
+            selectedIds={draft.activityIds}
+            onToggle={toggle}
+            orderedDestinations={orderedDestinations}
+            dayAssignments={dayAssignments}
+            category={category}
+            isPhone={isPhone}
+            onMakeFirst={(activityId) =>
+              onChange({
+                activityIds: [
+                  activityId,
+                  ...draft.activityIds.filter((id) => id !== activityId),
+                ],
+              })
+            }
+            isFirstOverall={draft.activityIds[0]}
+          />
+        ))}
 
         <p style={styles.countLine}>
           {selectedCount === 0
@@ -237,6 +157,141 @@ export default function Step3Activities({
   );
 }
 
+/** One destination's activity section: its own "do this first" suggestion
+ * (Module 1 recommendation, scoped to just this stop's selected activities)
+ * plus its own filtered activity list. */
+function DestinationActivityGroup({
+  destination,
+  activities,
+  selectedActivities,
+  selectedIds,
+  onToggle,
+  orderedDestinations,
+  dayAssignments,
+  category,
+  isPhone,
+  onMakeFirst,
+  isFirstOverall,
+}) {
+  const firstActivityRec = useMemo(
+    () =>
+      recommendFirstActivity({
+        selectedActivities,
+        orderedDestinations,
+        dayAssignments,
+      }),
+    [selectedActivities, orderedDestinations, dayAssignments]
+  );
+
+  const recIsAlreadyFirst =
+    firstActivityRec && isFirstOverall === firstActivityRec.activityId;
+
+  return (
+    <div style={styles.destGroup}>
+      <h3 style={styles.destGroupTitle}>{destination.name}</h3>
+
+      {selectedActivities.length >= 1 && (
+        <div style={styles.recCard}>
+          <div style={styles.recHead}>
+            <Sparkles size={15} color="#15803d" />
+            <span>Activity Recommendation</span>
+          </div>
+          <p style={styles.recSub}>
+            Suggested: which selected {destination.name} activity to do first
+          </p>
+
+          {firstActivityRec ? (
+            <>
+              <p style={styles.recBody}>
+                Do this first:{" "}
+                <strong>{firstActivityRec.recommendation}</strong>
+              </p>
+              <p style={styles.recReason}>{firstActivityRec.reason}</p>
+              {!recIsAlreadyFirst && (
+                <button
+                  type="button"
+                  onClick={() => onMakeFirst(firstActivityRec.activityId)}
+                  style={styles.recBtn}
+                >
+                  Move to first
+                </button>
+              )}
+              {recIsAlreadyFirst && (
+                <p style={styles.recDone}>
+                  This is already first in your list. You can reorder any time.
+                </p>
+              )}
+            </>
+          ) : (
+            <p style={styles.recBody}>
+              Recommendation unavailable. You can continue manually.
+            </p>
+          )}
+        </div>
+      )}
+
+      {activities.length === 0 ? (
+        <div style={w.emptyState}>
+          No {category.toLowerCase()} activities listed for {destination.name}{" "}
+          yet.
+        </div>
+      ) : (
+        <div style={styles.list}>
+          {activities.map((a) => {
+            const isSelected = selectedIds.includes(a.id);
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => onToggle(a.id)}
+                aria-pressed={isSelected}
+                style={{
+                  ...styles.row,
+                  ...(isPhone ? styles.rowPhone : null),
+                  ...(isSelected ? styles.rowActive : {}),
+                }}
+              >
+                <span
+                  style={{
+                    ...styles.checkbox,
+                    ...(isSelected ? styles.checkboxOn : {}),
+                  }}
+                >
+                  {isSelected && <Check size={13} color="#fff" strokeWidth={3} />}
+                </span>
+
+                {/* The thumbnail is decoration next to the title and the
+                    eco score; on a phone it costs width those need more. */}
+                {!isPhone && (
+                  <img src={a.imageUrl} alt={a.title} style={styles.thumb} />
+                )}
+
+                <div style={styles.rowText}>
+                  <div style={styles.rowTitle}>{a.title}</div>
+                  <div style={styles.rowDesc}>{a.description}</div>
+                  <div style={styles.rowMeta}>
+                    <span style={styles.metaItem}>
+                      <Clock size={12} /> {a.durationHours}h
+                    </span>
+                    <span style={styles.metaDot}>·</span>
+                    <span style={styles.metaItem}>
+                      {a.priceMyr === 0 ? "Free" : `RM ${a.priceMyr}`}
+                    </span>
+                    <span style={styles.metaDot}>·</span>
+                    <span style={styles.metaItem}>{a.category}</span>
+                  </div>
+                </div>
+
+                <EcoScoreBadge score={a.ecoScore} size={isPhone ? "sm" : "md"} />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const styles = {
   chipRow: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 },
   // Five category chips wrap to three rows on a phone and push the list far
@@ -261,6 +316,17 @@ const styles = {
     flexShrink: 0,
   },
   chipActive: { background: "#dcfce7", color: "#15803d", borderColor: "#bbf7d0" },
+  destGroup: {
+    marginBottom: 22,
+    paddingBottom: 22,
+    borderBottom: "1px solid #f3f4f6",
+  },
+  destGroupTitle: {
+    fontSize: 15.5,
+    fontWeight: 800,
+    margin: "0 0 12px",
+    color: "#111827",
+  },
   list: { display: "flex", flexDirection: "column", gap: 10 },
   row: {
     display: "flex",

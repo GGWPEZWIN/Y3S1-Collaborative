@@ -111,6 +111,69 @@ function toNumberOrNull(value) {
 
 /*
  * ============================================================
+ * TRAVELLER COUNT
+ * ============================================================
+ *
+ * Module 1 now sends a numeric traveller count (Step 1's +/- counter)
+ * instead of the old fixed dropdown strings. Clamped 1-20 here as a
+ * server-side backstop in case a bypassed/older client sends something
+ * else; non-numeric input is simply omitted rather than guessed at.
+ */
+
+function toTravellerCountOrNull(value) {
+  if (value == null) return null;
+
+  const n = Math.round(Number(value));
+
+  if (!Number.isFinite(n)) {
+    return null;
+  }
+
+  return Math.min(20, Math.max(1, n));
+}
+
+/*
+ * ============================================================
+ * DATE STRING VALIDATION
+ * ============================================================
+ *
+ * A server-side backstop so a corrupted/malformed date (from a bypassed
+ * client, a direct Firestore edit, or old data) can never be written back
+ * out as a "valid" date — it becomes null instead of e.g. "31/10/0002" or
+ * "1970-01-01" landing on a saved itinerary. Deliberately a small inline
+ * check rather than importing the UI's date helpers into this Firebase
+ * layer (see the date-overlap helpers below for the same convention).
+ */
+
+function isPlausibleDateString(value) {
+  if (typeof value !== "string") return false;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+
+  if (y < 1900 || y > 2200) return false;
+  if (m < 1 || m > 12) return false;
+  if (d < 1 || d > 31) return false;
+
+  const rebuilt = new Date(y, m - 1, d);
+
+  return (
+    rebuilt.getFullYear() === y &&
+    rebuilt.getMonth() === m - 1 &&
+    rebuilt.getDate() === d
+  );
+}
+
+function toDateStringOrNull(value) {
+  return isPlausibleDateString(value) ? value : null;
+}
+
+/*
+ * ============================================================
  * EMPTY SUSTAINABILITY
  * ============================================================
  */
@@ -230,7 +293,8 @@ function buildDestination(
  */
 
 function buildAccommodation(
-  accommodation
+  accommodation,
+  { destinationId = null, day = null, nights = null } = {}
 ) {
   if (!accommodation) {
     return null;
@@ -252,6 +316,7 @@ function buildAccommodation(
 
     destinationId:
       accommodation.destinationId ??
+      destinationId ??
       null,
 
     pricePerNight:
@@ -282,7 +347,59 @@ function buildAccommodation(
       );
   }
 
+  if (day != null) {
+    out.day = toNumberOrNull(day);
+  }
+
+  if (nights != null) {
+    out.nights = toNumberOrNull(nights);
+  }
+
   return out;
+}
+
+/*
+ * ============================================================
+ * ACTIVITY (persisted, destination-tagged)
+ * ============================================================
+ *
+ * Mirrors the shape Module 2's itinerary normaliser already reads
+ * (`normalizeActivities` in AIRecommendation/services/itinerary) —
+ * { activityId, name, destinationId, ecoScore, carbonKg }. `activityIds`
+ * (a flat list, no destination tag) is kept alongside this for existing
+ * code that already reads it.
+ */
+
+function buildActivity(activity) {
+  if (!activity) {
+    return null;
+  }
+
+  return {
+    activityId:
+      activity.activityId ??
+      activity.id ??
+      null,
+
+    name:
+      activity.name ??
+      activity.title ??
+      "",
+
+    destinationId:
+      activity.destinationId ??
+      null,
+
+    category:
+      activity.category ??
+      null,
+
+    ecoScore:
+      toNumberOrNull(activity.ecoScore),
+
+    carbonKg:
+      toNumberOrNull(activity.carbonKg),
+  };
 }
 
 /*
@@ -322,6 +439,15 @@ function assertItineraryInput(input) {
   }
 
   if (
+    (startDate && !isPlausibleDateString(startDate)) ||
+    (endDate && !isPlausibleDateString(endDate))
+  ) {
+    throw new Error(
+      "The trip dates are not valid. Please re-enter them."
+    );
+  }
+
+  if (
     startDate &&
     endDate &&
     endDate < startDate
@@ -351,7 +477,14 @@ function buildItineraryCoreFields(
     startLocation,
     orderedDestinations = [],
     dayAssignments = [],
+    // Legacy single-accommodation-for-the-whole-trip input. Still accepted
+    // (and still written back out as `accommodation` for old readers) but
+    // superseded by `destinationAccommodations` below.
     accommodation = null,
+    // One entry per destination: { destinationId, accommodation, day, nights }.
+    // Lets each stop on a multi-destination trip carry its own stay instead
+    // of one accommodation for the entire itinerary.
+    destinationAccommodations = null,
     meta = {},
   } = input || {};
 
@@ -404,16 +537,40 @@ function buildItineraryCoreFields(
       }
     );
 
+  // One accommodation per destination, in route order. Falls back to the
+  // legacy single `accommodation` (attached to the first destination) when a
+  // caller hasn't been updated to send the per-destination form.
+  const accommodations = Array.isArray(destinationAccommodations)
+    ? destinationAccommodations
+        .map((entry) =>
+          buildAccommodation(entry?.accommodation, {
+            destinationId: entry?.destinationId,
+            day: entry?.day,
+            nights: entry?.nights,
+          })
+        )
+        .filter(Boolean)
+    : [buildAccommodation(accommodation, { destinationId: destinations[0]?.destinationId })].filter(
+        Boolean
+      );
+
+  // Destination-tagged activities, mirroring what Module 2's normaliser
+  // already prefers. `activityIds` (below) is kept for existing Module 1
+  // code that only ever needed the flat id list.
+  const activities = Array.isArray(meta.activities)
+    ? meta.activities.map(buildActivity).filter(Boolean)
+    : [];
+
   return {
     title:
       title.trim(),
 
     dates: {
       startDate:
-        startDate || null,
+        toDateStringOrNull(startDate),
 
       endDate:
-        endDate || null,
+        toDateStringOrNull(endDate),
     },
 
     startLocation:
@@ -423,14 +580,19 @@ function buildItineraryCoreFields(
 
     destinations,
 
+    // Legacy single field — kept in sync with the first destination's stay
+    // so any code that hasn't moved to `accommodations` yet keeps working.
     accommodation:
-      buildAccommodation(
-        accommodation
-      ),
+      accommodations[0] ?? null,
+
+    accommodations,
+
+    activities,
 
     travellers:
-      meta.travellers ??
-      null,
+      toTravellerCountOrNull(
+        meta.travellers
+      ),
 
     budget:
       meta.budget != null

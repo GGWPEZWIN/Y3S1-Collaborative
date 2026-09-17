@@ -1039,15 +1039,21 @@ export default function GreenRecommendationPage({
         ) : null}
 
         {surface === RECOMMENDATION_SURFACE.OTHER_TRIP ? (
-          <TripActivationPanel
-            isDemo={false}
-            tripStatus={ACTIVE_TRIP_STATUS.ACTIVE_DIFFERENT}
-            lock={tripSession.lock}
-            lockWarning={tripSession.warning}
-            actionStatus={tripAction.status}
-            actionError={tripAction.error}
-            onResumeActiveTrip={handleResumeActiveTrip}
-          />
+          <>
+            <TripActivationPanel
+              isDemo={false}
+              tripStatus={ACTIVE_TRIP_STATUS.ACTIVE_DIFFERENT}
+              lock={tripSession.lock}
+              lockWarning={tripSession.warning}
+              actionStatus={tripAction.status}
+              actionError={tripAction.error}
+              requestedItinerary={isReady ? context.itinerary : null}
+              onResumeActiveTrip={handleResumeActiveTrip}
+            />
+            {isReady ? (
+              <SavedItineraryPreview itinerary={context.itinerary} />
+            ) : null}
+          </>
         ) : null}
 
         {surface === RECOMMENDATION_SURFACE.START_ITINERARY ? (

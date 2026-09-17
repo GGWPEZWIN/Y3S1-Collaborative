@@ -9,6 +9,54 @@
 
 export const TRAVELLER_STYLES = ["Budget", "Family", "Luxury", "Backpacking"];
 
+/* ------------------------------------------------------------------ */
+/* Traveller count (Step 1 — replaces the old fixed dropdown)          */
+/* ------------------------------------------------------------------ */
+
+export const MIN_TRAVELLERS = 1;
+export const MAX_TRAVELLERS = 20;
+
+/** Clamps any input to a valid integer traveller count (1–20). */
+export function clampTravellerCount(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return 2;
+  return Math.min(MAX_TRAVELLERS, Math.max(MIN_TRAVELLERS, n));
+}
+
+/**
+ * Reads a traveller count out of either the new numeric form or an older
+ * saved string such as "2 Adults" / "Family (2+2)", so existing saved
+ * itineraries keep loading correctly. Never throws.
+ */
+export function parseTravellerCount(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return clampTravellerCount(value);
+  }
+  if (typeof value === "string") {
+    // "Family (2+2)" -> 2 + 2 = 4; "3 Adults" -> 3.
+    const nums = value.match(/\d+/g);
+    if (nums && nums.length > 0) {
+      const total = nums.reduce((sum, n) => sum + Number(n), 0);
+      if (total > 0) return clampTravellerCount(total);
+    }
+  }
+  return 2;
+}
+
+/**
+ * "1 Traveller" / "N Travellers" for the new numeric count. An older saved
+ * string (e.g. a legacy "2 Adults" record) is passed through unchanged so
+ * existing itineraries don't show a re-parsed/renumbered value.
+ */
+export function formatTravellers(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const n = clampTravellerCount(value);
+    return `${n} ${n === 1 ? "Traveller" : "Travellers"}`;
+  }
+  if (typeof value === "string" && value.trim()) return value;
+  return "—";
+}
+
 export const ACTIVITY_CATEGORIES = [
   "All",
   "Nature",
@@ -634,13 +682,36 @@ export function haversineKm(a, b) {
  * it only needs to produce a stable `order` for each destination. Module 2
  * does the real routing later using the coordinates saved on the itinerary.
  */
-export function orderDestinationsByProximity(startLocation, destinations = []) {
-  const remaining = destinations.filter(
-    (d) => Number.isFinite(d?.latitude) && Number.isFinite(d?.longitude)
-  );
-  // Destinations without coordinates can't be ordered — keep them at the end.
-  const noCoords = destinations.filter((d) => !remaining.includes(d));
+// Checking every possible order is only reasonable up to a handful of stops
+// (7! = 5,040 candidates, still instant) — this module never offers more
+// destinations than that, but the nearest-neighbour fallback below keeps
+// things working even if it ever did.
+const EXACT_ORDER_STOP_LIMIT = 7;
 
+function permutationsOf(items) {
+  if (items.length <= 1) return [items];
+  const result = [];
+  items.forEach((item, i) => {
+    const rest = [...items.slice(0, i), ...items.slice(i + 1)];
+    permutationsOf(rest).forEach((tail) => result.push([item, ...tail]));
+  });
+  return result;
+}
+
+function totalRouteDistanceKm(startLocation, orderedStops) {
+  let cursor = startLocation;
+  let total = 0;
+  orderedStops.forEach((stop) => {
+    if (cursor) total += haversineKm(cursor, stop);
+    cursor = stop;
+  });
+  return total;
+}
+
+/** Nearest-neighbour walk from the starting location — the fallback for more
+ * stops than is reasonable to check exhaustively. */
+function nearestNeighbourOrder(startLocation, destinations) {
+  const remaining = [...destinations];
   const ordered = [];
   let cursor = startLocation ?? remaining[0] ?? null;
 
@@ -659,7 +730,43 @@ export function orderDestinationsByProximity(startLocation, destinations = []) {
     cursor = next;
   }
 
-  return [...ordered, ...noCoords];
+  return ordered;
+}
+
+/**
+ * Orders the selected destinations into a sensible visiting sequence
+ * starting from `startLocation`. For a small number of stops (this module's
+ * normal case) every possible order is checked with Haversine great-circle
+ * distance and the shortest total route wins; beyond that it falls back to a
+ * nearest-neighbour walk so the function never gets slow. This is
+ * intentionally simple and destination/coordinate-agnostic — it only needs
+ * to produce a stable `order` for each destination, and works the same way
+ * regardless of which starting location or destinations are chosen. Module 2
+ * does the real routing later using the coordinates saved on the itinerary.
+ */
+export function orderDestinationsByProximity(startLocation, destinations = []) {
+  const withCoords = destinations.filter(
+    (d) => Number.isFinite(d?.latitude) && Number.isFinite(d?.longitude)
+  );
+  // Destinations without coordinates can't be ordered — keep them at the end.
+  const noCoords = destinations.filter((d) => !withCoords.includes(d));
+
+  if (withCoords.length === 0) return [...noCoords];
+
+  if (withCoords.length <= EXACT_ORDER_STOP_LIMIT) {
+    let best = withCoords;
+    let bestDistance = Infinity;
+    permutationsOf(withCoords).forEach((candidate) => {
+      const distance = totalRouteDistanceKm(startLocation, candidate);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = candidate;
+      }
+    });
+    return [...best, ...noCoords];
+  }
+
+  return [...nearestNeighbourOrder(startLocation, withCoords), ...noCoords];
 }
 
 /**
@@ -673,6 +780,38 @@ export function assignDays(count, tripDays) {
   return Array.from({ length: count }, (_, i) =>
     Math.min(days, Math.floor(i / perDay) + 1)
   );
+}
+
+/**
+ * Splits the trip's whole days into one contiguous block per ordered
+ * destination (as evenly as possible) — a "Day range" per stop, and how many
+ * nights are (roughly) spent there. Callers are expected to only reach this
+ * with `count <= tripDays` (Step 2 blocks continuing otherwise); the
+ * defensive branch below just keeps this from ever crashing if that changes.
+ */
+export function assignDayRanges(count, tripDays) {
+  const days = Math.max(1, Number(tripDays) || 1);
+  if (count <= 0) return [];
+
+  if (count > days) {
+    return Array.from({ length: count }, (_, i) => ({
+      startDay: i + 1,
+      endDay: i + 1,
+      nights: 1,
+    }));
+  }
+
+  const base = Math.floor(days / count);
+  const extra = days % count;
+  let cursor = 1;
+
+  return Array.from({ length: count }, (_, i) => {
+    const span = base + (i < extra ? 1 : 0);
+    const startDay = cursor;
+    const endDay = cursor + span - 1;
+    cursor = endDay + 1;
+    return { startDay, endDay, nights: span };
+  });
 }
 
 /** Whole days a trip spans (inclusive). 1 day minimum. */
@@ -690,11 +829,23 @@ export function nightsBetween(startDate, endDate) {
 
 /**
  * Trip eco score = average of the chosen activities' scores and the
- * accommodation's score. Empty selection scores 0 rather than NaN.
+ * accommodation's score(s). `accommodation` may be a single stay (legacy,
+ * one destination) or an array of stays (one per destination on a
+ * multi-destination trip) — either way every score counts once. Empty
+ * selection scores 0 rather than NaN.
  */
 export function calcEcoScore(activities, accommodation) {
   const scores = activities.map((a) => a.ecoScore);
-  if (accommodation) scores.push(accommodation.ecoScore);
+  const stays = Array.isArray(accommodation)
+    ? accommodation
+    : accommodation
+    ? [accommodation]
+    : [];
+  stays.forEach((stay) => {
+    if (stay && Number.isFinite(Number(stay.ecoScore))) {
+      scores.push(Number(stay.ecoScore));
+    }
+  });
   if (scores.length === 0) return 0;
   return Math.round(scores.reduce((sum, n) => sum + n, 0) / scores.length);
 }
@@ -719,21 +870,39 @@ export function calcCarbon(activities, nights) {
  *
  * @param {object}  args
  * @param {Array}   [args.activities]     objects with a numeric `priceMyr`
- * @param {object}  [args.accommodation]  object with a numeric `pricePerNight`
- * @param {number}  [args.nights]         number of nights stayed
+ * @param {object}  [args.accommodation]  a single stay, with a numeric
+ *   `pricePerNight` (legacy / one-destination trips)
+ * @param {Array}   [args.accommodations] one stay per destination, each with
+ *   a numeric `pricePerNight` and (optionally) its own `nights`; when given,
+ *   this is used instead of `accommodation` and each stay is billed for its
+ *   own nights (falling back to `nights` below when a stay has none set)
+ * @param {number}  [args.nights]         number of nights stayed (trip-wide
+ *   fallback, and the value used for the legacy single-`accommodation` form)
  * @returns {{ activityCost: number, stayCost: number, total: number }}
  */
 export function estimateItineraryCost({
   activities = [],
   accommodation = null,
+  accommodations = null,
   nights = 0,
 } = {}) {
   const activityCost = (activities || []).reduce(
     (sum, a) => sum + (Number(a?.priceMyr) || 0),
     0
   );
-  const nightlyRate = Number(accommodation?.pricePerNight) || 0;
-  const stayCost = nightlyRate * Math.max(0, Number(nights) || 0);
+
+  let stayCost;
+  if (Array.isArray(accommodations)) {
+    stayCost = accommodations.reduce((sum, stay) => {
+      const rate = Number(stay?.pricePerNight) || 0;
+      const stayNights = Number(stay?.nights ?? nights) || 0;
+      return sum + rate * Math.max(0, stayNights);
+    }, 0);
+  } else {
+    const nightlyRate = Number(accommodation?.pricePerNight) || 0;
+    stayCost = nightlyRate * Math.max(0, Number(nights) || 0);
+  }
+
   return { activityCost, stayCost, total: activityCost + stayCost };
 }
 
@@ -813,10 +982,145 @@ export function findDateConflict(
   );
 }
 
-/** Formats yyyy-mm-dd as dd/mm/yyyy for display, matching the mockups. */
+/* ------------------------------------------------------------------ */
+/* Date validation (Step 1 — no past/nonsensical trips, no crashes)    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Today as a yyyy-mm-dd string in the browser's LOCAL time. Deliberately
+ * built from local getters rather than `toISOString()` (which is UTC-based
+ * and can land on the wrong side of midnight depending on the traveller's
+ * timezone) so the "no past dates" rule always compares against the date the
+ * user actually sees on their calendar.
+ */
+export function todayLocalDateString() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * True for a real, plausible yyyy-mm-dd calendar date. Rejects malformed
+ * strings, out-of-range calendar days (e.g. 2026-02-30), and implausible
+ * years — the kind of corrupted/legacy value that used to reach the UI as
+ * "31/10/0002" or similar. Never throws.
+ */
+export function isValidDateString(value) {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (y < 1900 || y > 2200) return false;
+  if (m < 1 || m > 12) return false;
+  if (d < 1 || d > 31) return false;
+
+  // Round-trip through a local Date to catch e.g. 31 February rolling over.
+  const rebuilt = new Date(y, m - 1, d);
+  return (
+    rebuilt.getFullYear() === y &&
+    rebuilt.getMonth() === m - 1 &&
+    rebuilt.getDate() === d
+  );
+}
+
+/** True when `startDate` is today (local) or later. An empty value is not
+ * treated as "in the past" — that's simply "not entered yet". */
+export function isStartDateNotPast(startDate, today = todayLocalDateString()) {
+  if (!startDate) return true;
+  if (!isValidDateString(startDate)) return false;
+  return startDate >= today;
+}
+
+/**
+ * Formats a stored date for display as dd/mm/yyyy. Primarily handles the
+ * normal yyyy-mm-dd string, but also reads a Firestore Timestamp-like object
+ * (`.toDate()`) or a JS `Date` so an older/corrupted record can't crash the
+ * itinerary dashboard or details page — anything that isn't a plausible date
+ * becomes "—" instead of a nonsense value like "04/01/1970".
+ */
 export function formatDate(value) {
   if (!value) return "—";
+
+  if (typeof value === "object" && typeof value.toDate === "function") {
+    try {
+      value = value.toDate();
+    } catch {
+      return "—";
+    }
+  }
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "—";
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
+    value = `${y}-${m}-${d}`;
+  }
+
+  if (typeof value !== "string" || !isValidDateString(value)) return "—";
+
   const [y, m, d] = value.split("-");
-  if (!y || !m || !d) return value;
   return `${d}/${m}/${y}`;
+}
+
+export const TRIP_NAME_MIN_LENGTH = 3;
+export const TRIP_NAME_MAX_LENGTH = 60;
+
+/**
+ * Validates a trip name (Step 1's free-text title, which becomes the saved
+ * itinerary's `title`). Trims surrounding whitespace before checking length,
+ * requires at least one letter, and flags input that's overwhelmingly one
+ * repeated character (e.g. "gggggggggg" or "hudsygfyugfggggggggg…") as not
+ * meaningful, without being strict about punctuation so names like
+ * "Trip 1 - Penang" or "KL to Penang & Ipoh" still pass.
+ *
+ * Returns { valid, error } — `error` is a user-facing message, or null when valid.
+ */
+export function validateTripName(rawName) {
+  const name = typeof rawName === "string" ? rawName.trim() : "";
+
+  if (name === "") {
+    return { valid: false, error: "Please enter a trip name." };
+  }
+
+  if (name.length < TRIP_NAME_MIN_LENGTH) {
+    return {
+      valid: false,
+      error: `Trip name must be at least ${TRIP_NAME_MIN_LENGTH} characters.`,
+    };
+  }
+
+  if (name.length > TRIP_NAME_MAX_LENGTH) {
+    return {
+      valid: false,
+      error: `Trip name must be ${TRIP_NAME_MAX_LENGTH} characters or fewer.`,
+    };
+  }
+
+  if (!/\p{L}/u.test(name)) {
+    return { valid: false, error: "Please enter a meaningful trip name." };
+  }
+
+  // Reject input dominated by a single repeated character (ignoring spaces),
+  // e.g. "ggggggggggggggggggg" or "hudsygfyugfgggggggggggggggggggg" — a real
+  // trip name doesn't have one character making up half of it or more.
+  const compact = name.replace(/\s+/g, "").toLowerCase();
+  if (compact.length > 0) {
+    const counts = {};
+    let maxCount = 0;
+    for (const ch of compact) {
+      counts[ch] = (counts[ch] || 0) + 1;
+      if (counts[ch] > maxCount) maxCount = counts[ch];
+    }
+    if (maxCount / compact.length >= 0.5) {
+      return { valid: false, error: "Please enter a meaningful trip name." };
+    }
+  }
+
+  return { valid: true, error: null };
 }

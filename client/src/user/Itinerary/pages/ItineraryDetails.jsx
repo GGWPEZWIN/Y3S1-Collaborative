@@ -31,6 +31,7 @@ import {
   getActivitiesForMany,
   nightsBetween,
   formatDate,
+  formatTravellers,
   estimateItineraryCost,
   evaluateBudget,
 } from "../constants/itineraryData";
@@ -699,6 +700,39 @@ export default function ItineraryDetails({
   );
 }
 
+/**
+ * Reconstructs a { [destinationId]: accommodation } map for display,
+ * preferring the new per-destination `accommodations` array and falling
+ * back to the legacy single `accommodation` field for an older saved
+ * itinerary. Never throws.
+ */
+function buildAccommodationsByDestinationMap(doc, destinationIds) {
+  const map = {};
+
+  const list =
+    Array.isArray(doc.accommodations) && doc.accommodations.length > 0
+      ? doc.accommodations
+      : doc.accommodation
+      ? [doc.accommodation]
+      : [];
+
+  list.forEach((entry, index) => {
+    if (!entry) return;
+
+    const destinationId =
+      entry.destinationId &&
+      destinationIds.includes(entry.destinationId)
+        ? entry.destinationId
+        : destinationIds[index] ?? destinationIds[0] ?? null;
+
+    if (!destinationId) return;
+
+    map[destinationId] = entry;
+  });
+
+  return map;
+}
+
 /*
  * ============================================================
  * FIREBASE SAVED ITINERARY VIEW
@@ -918,11 +952,39 @@ function SavedItineraryView({
         : false
     );
 
+  // One accommodation entry per destination, in route order. Prefers the
+  // new `accommodations` array; falls back to the legacy single
+  // `accommodation` field (attached to whichever destination it actually
+  // names, or the first/only destination on an older single-destination
+  // itinerary) so an older saved doc still renders instead of crashing or
+  // showing one stay for the whole multi-destination trip.
+  const accommodationsByDestination =
+    buildAccommodationsByDestinationMap(
+      doc,
+      destinationIds
+    );
+
+  const accommodationsForCost =
+    destinations
+      .map((d) => {
+        const stay =
+          accommodationsByDestination[
+            d.destinationId
+          ];
+        if (!stay) return null;
+        return {
+          ...stay,
+          nights:
+            stay.nights ?? nights,
+        };
+      })
+      .filter(Boolean);
+
   const cost =
     estimateItineraryCost({
       activities,
-      accommodation:
-        doc.accommodation,
+      accommodations:
+        accommodationsForCost,
       nights,
     });
 
@@ -1021,10 +1083,9 @@ function SavedItineraryView({
             <Meta
               icon={Users}
               label="Travelers"
-              value={
-                doc.travellers ??
-                "—"
-              }
+              value={formatTravellers(
+                doc.travellers
+              )}
             />
 
             <Meta
@@ -1478,6 +1539,33 @@ function SavedItineraryView({
                       d.longitude
                     )}
                   </div>
+
+                  <div
+                    style={
+                      styles.rowSubMeta
+                    }
+                  >
+                    Activities:{" "}
+                    {activities.filter(
+                      (a) =>
+                        a.destinationId ===
+                        d.destinationId
+                    ).length > 0
+                      ? activities
+                          .filter(
+                            (a) =>
+                              a.destinationId ===
+                              d.destinationId
+                          )
+                          .map(
+                            (a) =>
+                              a.title
+                          )
+                          .join(
+                            ", "
+                          )
+                      : "None selected"}
+                  </div>
                 </div>
               </div>
             )
@@ -1486,10 +1574,11 @@ function SavedItineraryView({
       </div>
 
       {/* =====================================================
-          ACCOMMODATION
+          ACCOMMODATION — grouped by destination, in route order.
+          Never mixes one destination's stay into another's section.
           ===================================================== */}
 
-      {doc.accommodation && (
+      {destinations.length > 0 && (
         <div
           style={{
             ...styles.card,
@@ -1504,53 +1593,88 @@ function SavedItineraryView({
             Accommodation
           </h3>
 
-          <div
-            style={styles.row}
-          >
-            <span
-              style={
-                styles.tickDot
-              }
-            >
-              <BedDouble
-                size={12}
-                color="#15803d"
-              />
-            </span>
+          <div style={styles.list}>
+            {destinations.map((d) => {
+              const stay =
+                accommodationsByDestination[
+                  d.destinationId
+                ];
 
-            <div
-              style={{
-                flex: 1,
-                minWidth: 0,
-              }}
-            >
-              <div
-                style={
-                  styles.rowTitle
-                }
-              >
-                {
-                  doc.accommodation
-                    .name
-                }
-              </div>
+              return (
+                <div
+                  key={
+                    d.destinationId ||
+                    d.order
+                  }
+                >
+                  <div
+                    style={
+                      styles.stopSummaryTitle
+                    }
+                  >
+                    {d.name}
+                  </div>
 
-              <div
-                style={
-                  styles.rowMeta
-                }
-              >
-                {doc.accommodation
-                  .type ||
-                  "Stay"}
+                  {stay ? (
+                    <div
+                      style={
+                        styles.row
+                      }
+                    >
+                      <span
+                        style={
+                          styles.tickDot
+                        }
+                      >
+                        <BedDouble
+                          size={12}
+                          color="#15803d"
+                        />
+                      </span>
 
-                {doc.accommodation
-                  .pricePerNight !=
-                null
-                  ? ` · RM ${doc.accommodation.pricePerNight} / night`
-                  : ""}
-              </div>
-            </div>
+                      <div
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        <div
+                          style={
+                            styles.rowTitle
+                          }
+                        >
+                          {stay.name}
+                        </div>
+
+                        <div
+                          style={
+                            styles.rowMeta
+                          }
+                        >
+                          {stay.type ||
+                            "Stay"}
+
+                          {stay.pricePerNight !=
+                          null
+                            ? ` · RM ${stay.pricePerNight} / night`
+                            : ""}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p
+                      style={
+                        styles.muted
+                      }
+                    >
+                      No stay selected
+                      for this
+                      destination.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -2002,6 +2126,20 @@ const styles = {
     color: "#6b7280",
     fontSize: 13,
     marginTop: 2,
+  },
+
+  rowSubMeta: {
+    marginTop: 4,
+    color: "#9ca3af",
+    fontSize: 11.5,
+    lineHeight: 1.5,
+  },
+
+  stopSummaryTitle: {
+    fontWeight: 800,
+    fontSize: 13,
+    color: "#374151",
+    margin: "10px 0 6px",
   },
 
   rowMeta: {

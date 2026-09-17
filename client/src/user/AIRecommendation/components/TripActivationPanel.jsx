@@ -43,6 +43,7 @@ export default function TripActivationPanel({
   actionStatus = "idle",
   actionError = null,
   confirmingCancel = false,
+  requestedItinerary = null,
   onStart,
   onResumeNavigation,
   onResumeActiveTrip,
@@ -84,10 +85,20 @@ export default function TripActivationPanel({
       <article className="m2-card m2-activation-panel" aria-label="Trip activation">
         <h3>Another trip is currently active</h3>
         <p className="m2-muted">
+          {requestedItinerary?.title
+            ? `You opened "${requestedItinerary.title}", but `
+            : "Another itinerary is open, but "}
           {lock?.itineraryTitle
-            ? `${lock.itineraryTitle} is already in progress. Live comparison and navigation stay on that trip until it is cancelled.`
-            : "Another itinerary already has an active trip. Live comparison and navigation stay on that trip until it is cancelled."}
+            ? `"${lock.itineraryTitle}" is already in progress. Live comparison and navigation stay on that trip until it is cancelled.`
+            : "another itinerary already has an active trip. Live comparison and navigation stay on that trip until it is cancelled."}
         </p>
+        {requestedItinerary?.title ? (
+          <p className="m2-muted">
+            Resume the active trip below, then cancel it from its Active Trip
+            page if you want to start &quot;{requestedItinerary.title}&quot;
+            instead.
+          </p>
+        ) : null}
         <div className="m2-actions">
           <button
             type="button"

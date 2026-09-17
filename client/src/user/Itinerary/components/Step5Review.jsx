@@ -15,12 +15,12 @@ import {
   AlertCircle,
 } from "lucide-react";
 import {
-  getAccommodationsForMany,
   getActivitiesForMany,
   nightsBetween,
   calcEcoScore,
   calcCarbon,
   formatDate,
+  formatTravellers,
   estimateItineraryCost,
   evaluateBudget,
 } from "../constants/itineraryData";
@@ -39,7 +39,7 @@ import * as w from "./wizardStyles";
  * with "Get Green Recommendation" once the itinerary has an id.
  *
  * Props:
- * - draft, startLocation, orderedDestinations, dayAssignments
+ * - draft, startLocation, orderedDestinations, dayAssignments, dayRanges
  * - onMoveDestination(index, direction)
  * - onSave({ ecoScore }), onBack
  * - saveState: { status: "idle"|"saving"|"saved"|"error", id, error }
@@ -53,6 +53,7 @@ export default function Step5Review({
   startLocation,
   orderedDestinations = [],
   dayAssignments = [],
+  dayRanges = [],
   onMoveDestination,
   onSave,
   onBack,
@@ -70,6 +71,11 @@ export default function Step5Review({
     [draft.destinationIds]
   );
 
+  const accommodationByDestination = useMemo(
+    () => draft.accommodationByDestination ?? {},
+    [draft.accommodationByDestination]
+  );
+
   const activities = useMemo(
     () =>
       getActivitiesForMany(destinationIds).filter((a) =>
@@ -78,27 +84,43 @@ export default function Step5Review({
     [destinationIds, draft.activityIds]
   );
 
-  const accommodation = useMemo(() => {
-    if (draft.accommodationId == null) return null;
-    // A selected Firebase hotel is carried on the draft — it isn't in the
-    // static catalogue this list searches.
-    if (draft.accommodation && draft.accommodation.id === draft.accommodationId) {
-      return draft.accommodation;
-    }
-    return (
-      getAccommodationsForMany(destinationIds).find(
-        (a) => a.id === draft.accommodationId
-      ) ?? null
-    );
-  }, [destinationIds, draft.accommodationId, draft.accommodation]);
+  // One stop per ordered destination — its own activities and its own
+  // accommodation, never another destination's. This is what the route below
+  // actually renders, and what gets saved.
+  const stops = useMemo(
+    () =>
+      orderedDestinations.map((destination, index) => ({
+        destination,
+        day: dayAssignments[index] ?? 1,
+        dayRange: dayRanges[index] ?? null,
+        activities: activities.filter(
+          (a) => a.destinationId === destination.id
+        ),
+        accommodation: accommodationByDestination[destination.id] ?? null,
+      })),
+    [orderedDestinations, dayAssignments, dayRanges, activities, accommodationByDestination]
+  );
+
+  // Every selected stay, each tagged with the nights actually spent at its
+  // own destination — used for the cost/eco totals below.
+  const accommodationsForTotals = useMemo(
+    () =>
+      stops
+        .filter((s) => s.accommodation)
+        .map((s) => ({
+          ...s.accommodation,
+          nights: s.dayRange?.nights ?? nights,
+        })),
+    [stops, nights]
+  );
 
   // Activity / accommodation estimates only. Transport is not part of Module 1.
-  const ecoScore = calcEcoScore(activities, accommodation);
+  const ecoScore = calcEcoScore(activities, accommodationsForTotals);
   const carbonKg = calcCarbon(activities, nights);
 
-  const { stayCost, total: totalCost } = estimateItineraryCost({
+  const { total: totalCost } = estimateItineraryCost({
     activities,
-    accommodation,
+    accommodations: accommodationsForTotals,
     nights,
   });
   const budgetStatus = evaluateBudget(totalCost, draft.budget);
@@ -119,7 +141,8 @@ export default function Step5Review({
         </div>
       </div>
 
-      {/* Route order — the Module 1 deliverable. */}
+      {/* Route order — the Module 1 deliverable. Each stop carries its OWN
+          activities and accommodation, never another destination's. */}
       <div style={{ ...w.card, ...(isPhone ? w.cardPhone : null) }}>
         <h3 style={styles.blockTitle}>Route Order</h3>
         <p style={styles.helpText}>
@@ -140,14 +163,35 @@ export default function Step5Review({
             </div>
           </div>
 
-          {orderedDestinations.map((d, index) => (
+          {stops.map(({ destination: d, day, dayRange, activities: stopActivities, accommodation: stopAccommodation }, index) => (
             <div key={d.id} style={styles.routeRow}>
               <span style={styles.orderDot}>{index + 1}</span>
               <div style={styles.routeText}>
-                <div style={styles.routeName}>{d.name}</div>
+                <div style={styles.routeName}>
+                  Stop {index + 1} · {d.name}
+                </div>
                 <div style={styles.routeMeta}>
-                  Day {dayAssignments[index] ?? 1} ·{" "}
-                  {Number(d.latitude).toFixed(4)}, {Number(d.longitude).toFixed(4)}
+                  {dayRange && dayRange.endDay > dayRange.startDay
+                    ? `Day ${dayRange.startDay}–${dayRange.endDay}`
+                    : `Day ${day}`}{" "}
+                  · {Number(d.latitude).toFixed(4)}, {Number(d.longitude).toFixed(4)}
+                </div>
+
+                <div style={styles.routeDetailLine}>
+                  <Sparkles size={11} color="#9ca3af" />
+                  <span>
+                    Activities:{" "}
+                    {stopActivities.length > 0
+                      ? stopActivities.map((a) => a.title).join(", ")
+                      : "None selected"}
+                  </span>
+                </div>
+                <div style={styles.routeDetailLine}>
+                  <BedDouble size={11} color="#9ca3af" />
+                  <span>
+                    Accommodation:{" "}
+                    {stopAccommodation ? stopAccommodation.name : "None selected"}
+                  </span>
                 </div>
               </div>
               <div style={styles.orderBtns}>
@@ -293,43 +337,65 @@ export default function Step5Review({
             label="Dates"
             value={`${formatDate(draft.startDate)} – ${formatDate(draft.endDate)}`}
           />
-          <Detail icon={Users} label="Travelers" value={draft.travellers} />
+          <Detail
+            icon={Users}
+            label="Travelers"
+            value={formatTravellers(draft.travellers)}
+          />
           <Detail icon={Leaf} label="Style" value={draft.travellerStyle} />
         </div>
 
-        <h4 style={styles.sectionHead}>Activities ({activities.length})</h4>
-        <div style={styles.summaryList}>
-          {activities.map((a) => (
-            <div key={a.id} style={styles.summaryRow}>
-              <span style={styles.tick}>
-                <Check size={12} color="#15803d" strokeWidth={3} />
-              </span>
-              <span style={styles.summaryName}>{a.title}</span>
-              <span style={styles.summaryMeta}>
-                {a.priceMyr === 0 ? "Free" : `RM ${a.priceMyr}`}
-              </span>
+        <h4 style={styles.sectionHead}>
+          Activities &amp; Accommodation by Stop
+        </h4>
+        <div style={styles.stopSummaryList}>
+          {stops.map(({ destination: d, activities: stopActivities, accommodation: stopAccommodation, dayRange }) => (
+            <div key={d.id} style={styles.stopSummaryBlock}>
+              <div style={styles.stopSummaryTitle}>{d.name}</div>
+
+              {stopActivities.length > 0 ? (
+                stopActivities.map((a) => (
+                  <div key={a.id} style={styles.summaryRow}>
+                    <span style={styles.tick}>
+                      <Check size={12} color="#15803d" strokeWidth={3} />
+                    </span>
+                    <span style={styles.summaryName}>{a.title}</span>
+                    <span style={styles.summaryMeta}>
+                      {a.priceMyr === 0 ? "Free" : `RM ${a.priceMyr}`}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div style={styles.summarySub}>No activities selected.</div>
+              )}
+
+              {stopAccommodation ? (
+                <div style={styles.summaryRow}>
+                  <span style={styles.tick}>
+                    <BedDouble size={12} color="#15803d" />
+                  </span>
+                  <span style={styles.summaryName}>
+                    {stopAccommodation.name}
+                    {dayRange?.nights ? (
+                      <span style={styles.summarySub}>
+                        {" "}
+                        · {dayRange.nights}{" "}
+                        {dayRange.nights === 1 ? "night" : "nights"}
+                      </span>
+                    ) : null}
+                  </span>
+                  {stopAccommodation.pricePerNight != null && (
+                    <span style={styles.summaryMeta}>
+                      RM {stopAccommodation.pricePerNight * (dayRange?.nights ?? nights)}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div style={styles.summarySub}>No stay selected.</div>
+              )}
             </div>
           ))}
         </div>
-
-        <h4 style={styles.sectionHead}>Accommodation</h4>
-        {accommodation ? (
-          <div style={styles.summaryRow}>
-            <span style={styles.tick}>
-              <BedDouble size={12} color="#15803d" />
-            </span>
-            <span style={styles.summaryName}>
-              {accommodation.name}
-              <span style={styles.summarySub}>
-                {" "}
-                · {nights} {nights === 1 ? "night" : "nights"}
-              </span>
-            </span>
-            <span style={styles.summaryMeta}>RM {stayCost}</span>
-          </div>
-        ) : (
-          <div style={styles.summarySub}>No stay selected.</div>
-        )}
       </div>
 
       {saveState.status === "error" && (
@@ -448,12 +514,21 @@ const styles = {
   routeList: { display: "flex", flexDirection: "column", gap: 8 },
   routeRow: {
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 12,
     padding: "10px 12px",
     borderRadius: 12,
     border: "1px solid #e5e7eb",
     background: "#fff",
+  },
+  routeDetailLine: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 5,
+    color: "#6b7280",
+    fontSize: 12,
+    lineHeight: 1.4,
   },
   orderDot: {
     width: 26,
@@ -505,6 +580,15 @@ const styles = {
   },
   detailValue: { fontWeight: 700, fontSize: 14.5, marginTop: 4 },
   sectionHead: { fontSize: 14, fontWeight: 800, margin: "18px 0 10px" },
+  stopSummaryList: { display: "flex", flexDirection: "column", gap: 16 },
+  stopSummaryBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    paddingBottom: 14,
+    borderBottom: "1px solid #f3f4f6",
+  },
+  stopSummaryTitle: { fontWeight: 800, fontSize: 13.5, color: "#374151" },
   summaryList: { display: "flex", flexDirection: "column", gap: 8 },
   summaryRow: { display: "flex", alignItems: "center", gap: 10, fontSize: 13.5 },
   tick: {

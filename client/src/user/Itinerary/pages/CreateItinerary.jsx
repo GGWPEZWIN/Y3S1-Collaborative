@@ -11,14 +11,17 @@ import Step4Accommodation from "../components/Step4Accommodation";
 import Step5Review from "../components/Step5Review";
 
 import {
-  getAccommodationsForMany,
   getActivitiesForMany,
   getDestination,
   getStartLocation,
   orderDestinationsByProximity,
   assignDays,
+  assignDayRanges,
   tripDayCount,
   findDateConflict,
+  parseTravellerCount,
+  isStartDateNotPast,
+  validateTripName,
 } from "../constants/itineraryData";
 
 import {
@@ -36,7 +39,10 @@ function emptyDraft() {
     name: "",
     startDate: "",
     endDate: "",
-    travellers: "2 Adults",
+    // Numeric traveller count from Step 1's +/- counter (was a fixed
+    // dropdown string like "2 Adults" — see parseTravellerCount for how an
+    // older saved value is read back).
+    travellers: 2,
     budget: 800,
     travellerStyle: "Budget",
 
@@ -44,19 +50,19 @@ function emptyDraft() {
     startLocationId: null,
     destinationIds: [],
 
-    // Kept in sync with destinationIds[0] so the Activities / Accommodation
-    // steps, which were built around a single destination, keep working.
+    // Kept in sync with destinationIds[0] so any older code reading a single
+    // destination off the draft keeps working.
     destinationId: null,
     destinationName: "",
 
     activityIds: [],
-    accommodationId: null,
 
-    // The full selected stay object
-    // (static catalogue entry OR an approved Firebase hotel).
-    accommodation: null,
+    // One selected stay PER destination: { [destinationId]: accommodationObject }.
+    // Each value is the full stay object (static catalogue entry OR an
+    // approved Firebase hotel) with an `id` matching its catalogue/document id.
+    accommodationByDestination: {},
 
-    // null => auto nearest-neighbour order;
+    // null => auto nearest-neighbour/shortest-route order;
     // an array of destinationIds once the traveller has nudged the order by hand in step 5.
     destinationOrder: null,
   };
@@ -85,7 +91,9 @@ function savedDocToDraft(docData) {
     name: docData.title ?? "",
     startDate: docData.dates?.startDate ?? "",
     endDate: docData.dates?.endDate ?? "",
-    travellers: docData.travellers ?? base.travellers,
+    travellers: parseTravellerCount(
+      docData.travellers ?? base.travellers
+    ),
 
     budget:
       docData.budget != null
@@ -110,17 +118,15 @@ function savedDocToDraft(docData) {
       ? docData.activityIds
       : [],
 
-    accommodationId:
-      docData.accommodation?.accommodationId ?? null,
-
-    accommodation: docData.accommodation
-      ? {
-          ...docData.accommodation,
-          id:
-            docData.accommodation.accommodationId ??
-            null,
-        }
-      : null,
+    // Prefer the new per-destination `accommodations` array; fall back to
+    // the legacy single `accommodation` field (attached to whichever
+    // destination it actually names, or the first/only destination on an
+    // older single-destination itinerary) so an older saved doc still loads
+    // instead of losing its stay or crashing the edit flow.
+    accommodationByDestination: buildAccommodationByDestinationFromDoc(
+      docData,
+      destinationIds
+    ),
 
     // Keep the saved visiting order so the review step doesn't reshuffle it.
     destinationOrder:
@@ -128,6 +134,37 @@ function savedDocToDraft(docData) {
         ? destinationIds
         : null,
   };
+}
+
+/** See `savedDocToDraft` above — reconstructs the per-destination
+ * accommodation map from either schema without ever throwing. */
+function buildAccommodationByDestinationFromDoc(docData, destinationIds) {
+  const map = {};
+
+  const list =
+    Array.isArray(docData.accommodations) && docData.accommodations.length > 0
+      ? docData.accommodations
+      : docData.accommodation
+      ? [docData.accommodation]
+      : [];
+
+  list.forEach((entry, index) => {
+    if (!entry) return;
+
+    const destinationId =
+      entry.destinationId && destinationIds.includes(entry.destinationId)
+        ? entry.destinationId
+        : destinationIds[index] ?? destinationIds[0] ?? null;
+
+    if (!destinationId) return;
+
+    map[destinationId] = {
+      ...entry,
+      id: entry.accommodationId ?? entry.id ?? null,
+    };
+  });
+
+  return map;
 }
 
 /**
@@ -189,6 +226,12 @@ export default function CreateItinerary({
     error: null,
   });
 
+  // The start date this itinerary was loaded with, when editing. The
+  // "start date can't be in the past" rule only applies when the traveller
+  // actually changes the date — an already-past-dated Active/Completed trip
+  // must stay editable without being forced onto a new date.
+  const [originalStartDate, setOriginalStartDate] = useState(null);
+
   // ============================================================
   // EDIT MODE
   // ============================================================
@@ -215,6 +258,7 @@ export default function CreateItinerary({
         }
 
         setDraft(savedDocToDraft(docData));
+        setOriginalStartDate(docData.dates?.startDate ?? null);
 
         setLoadState({
           status: "ready",
@@ -302,23 +346,16 @@ export default function CreateItinerary({
             validActivityIds.has(id)
           );
 
-        // A manually chosen Firebase hotel stays selected across
-        // a destination change; only a stale static-catalogue pick is dropped.
-        const accommodationStillValid =
-          (next.accommodation &&
-            next.accommodation.id ===
-              next.accommodationId) ||
-          getAccommodationsForMany(
-            next.destinationIds
-          ).some(
-            (a) =>
-              a.id === next.accommodationId
-          );
-
-        if (!accommodationStillValid) {
-          next.accommodationId = null;
-          next.accommodation = null;
-        }
+        // Each accommodation pick is already keyed by its own destination —
+        // just drop any destination that's no longer selected.
+        const nextAccommodationByDestination = {};
+        next.destinationIds.forEach((destId) => {
+          if (prev.accommodationByDestination?.[destId]) {
+            nextAccommodationByDestination[destId] =
+              prev.accommodationByDestination[destId];
+          }
+        });
+        next.accommodationByDestination = nextAccommodationByDestination;
 
         // The chosen set changed — drop any hand-tuned ordering.
         next.destinationOrder = null;
@@ -428,6 +465,28 @@ export default function CreateItinerary({
     ]
   );
 
+  // One contiguous day range (and a nights estimate) per ordered
+  // destination — used for the Step 5 "Day range" display and to split
+  // accommodation cost across each stop instead of billing every night to
+  // one trip-wide stay.
+  const dayRanges = useMemo(
+    () =>
+      assignDayRanges(
+        orderedDestinations.length,
+        tripDays
+      ),
+    [
+      orderedDestinations.length,
+      tripDays,
+    ]
+  );
+
+  // Requirement: more destinations than trip days must block continuing.
+  const tooManyDestinations =
+    orderedDestinations.length > 0 &&
+    tripDays > 0 &&
+    orderedDestinations.length > tripDays;
+
   // ============================================================
   // DESTINATION ORDERING
   // ============================================================
@@ -482,6 +541,69 @@ export default function CreateItinerary({
     });
 
     try {
+      // Final trip name check — must hold before saving even if Step 1 was
+      // somehow bypassed (e.g. jumping steps while editing).
+      const nameValidation = validateTripName(draft.name);
+      if (!nameValidation.valid) {
+        setStep(1);
+
+        setSaveState({
+          status: "error",
+          id: null,
+          error: nameValidation.error,
+        });
+
+        return;
+      }
+
+      // Final "no past start date" check. Only enforced on create, or on
+      // edit when the traveller actually changed the start date — an
+      // already-past-dated Active/Completed trip must stay editable.
+      const startDateChanged =
+        !isEditing || draft.startDate !== originalStartDate;
+
+      if (
+        startDateChanged &&
+        !isStartDateNotPast(draft.startDate)
+      ) {
+        setStep(1);
+
+        setSaveState({
+          status: "error",
+          id: null,
+          error:
+            "The start date can't be in the past. Please choose today or a later date.",
+        });
+
+        return;
+      }
+
+      if (draft.endDate && draft.endDate < draft.startDate) {
+        setStep(1);
+
+        setSaveState({
+          status: "error",
+          id: null,
+          error: "The end date must be on or after the start date.",
+        });
+
+        return;
+      }
+
+      // Final "not more destinations than trip days" check.
+      if (tooManyDestinations) {
+        setStep(2);
+
+        setSaveState({
+          status: "error",
+          id: null,
+          error:
+            "You have more destinations than trip days. Increase your trip duration or remove a destination.",
+        });
+
+        return;
+      }
+
       // Re-check the date overlap against fresh Firestore data at save time.
       try {
         const freshRanges =
@@ -529,34 +651,35 @@ export default function CreateItinerary({
         }
       }
 
-      // Prefer the stored object.
-      // This covers approved Firebase hotels.
-      // Fall back to the static catalogue for older drafts.
-      const accommodation =
-        draft.accommodationId == null
-          ? null
-          : (draft.accommodation &&
-              draft.accommodation.id ===
-                draft.accommodationId
-              ? draft.accommodation
-              : null) ??
-            getAccommodationsForMany(
-              draft.destinationIds
-            ).find(
-              (a) =>
-                a.id ===
-                draft.accommodationId
-            ) ??
-            null;
+      // One accommodation entry per ordered destination — each pick was
+      // already stored keyed by its own destinationId in Step 4, so there's
+      // no cross-destination lookup/guessing needed here.
+      const destinationAccommodations = orderedDestinations.map(
+        (destination, index) => ({
+          destinationId: destination.id,
+          accommodation:
+            draft.accommodationByDestination[destination.id] ?? null,
+          day: dayAssignments[index] ?? 1,
+          nights: dayRanges[index]?.nights ?? null,
+        })
+      );
+
+      // The selected activities, resolved to full objects (each already
+      // carries its own destinationId) so they're saved destination-tagged
+      // rather than as bare ids only.
+      const allActivities = getActivitiesForMany(draft.destinationIds);
+      const selectedActivities = draft.activityIds
+        .map((id) => allActivities.find((a) => a.id === id))
+        .filter(Boolean);
 
       const input = {
-        title: draft.name,
+        title: draft.name.trim(),
         startDate: draft.startDate,
         endDate: draft.endDate,
         startLocation,
         orderedDestinations,
         dayAssignments,
-        accommodation,
+        destinationAccommodations,
 
         meta: {
           travellers: draft.travellers,
@@ -566,6 +689,7 @@ export default function CreateItinerary({
 
           activityIds:
             draft.activityIds,
+          activities: selectedActivities,
 
           // Plan-level Eco Score already computed by Step5Review.
           ecoScore:
@@ -732,6 +856,9 @@ export default function CreateItinerary({
             dateConflict={
               dateConflict
             }
+            originalStartDate={
+              isEditing ? originalStartDate : null
+            }
           />
         )}
 
@@ -741,6 +868,8 @@ export default function CreateItinerary({
             onChange={update}
             onNext={goNext}
             onBack={goBack}
+            tripDays={tripDays}
+            tooManyDestinations={tooManyDestinations}
           />
         )}
 
@@ -765,6 +894,13 @@ export default function CreateItinerary({
             onChange={update}
             onNext={goNext}
             onBack={goBack}
+            orderedDestinations={
+              orderedDestinations
+            }
+            dayAssignments={
+              dayAssignments
+            }
+            dayRanges={dayRanges}
           />
         )}
 
@@ -780,6 +916,7 @@ export default function CreateItinerary({
             dayAssignments={
               dayAssignments
             }
+            dayRanges={dayRanges}
             onMoveDestination={
               moveDestination
             }

@@ -1,11 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Check, BedDouble, Sparkles, Star } from "lucide-react";
-import {
-  getAccommodationsForMany,
-  getDestination,
-  nightsBetween,
-} from "../constants/itineraryData";
-import { listApprovedHotels, normaliseState } from "../services/recommendationService";
+import { getAccommodationsFor } from "../constants/itineraryData";
+import { listApprovedHotels } from "../services/recommendationService";
 import EcoScoreBadge from "./EcoScoreBadge";
 import useMediaQuery, { BREAKPOINTS } from "../hooks/useMediaQuery";
 import * as w from "./wizardStyles";
@@ -13,21 +9,23 @@ import * as w from "./wizardStyles";
 /**
  * Step 4 — Select Accommodation
  *
- * Single-select list of certified eco-stays for the chosen destinations.
+ * One selectable stay PER destination, grouped and ordered exactly like the
+ * route (Step 5 / the saved itinerary). A hotel that belongs to Cameron
+ * Highlands can never show up — let alone be selectable — under Penang.
  *
- * Primary source is the live `hotel_applications` Firestore collection
- * (approved hotels only, safe fields only — see recommendationService). One of
- * those is flagged as the recommendation for this trip, but every hotel in the
- * list is selectable and the recommendation never auto-selects anything.
+ * For each destination: the primary source is the live `hotel_applications`
+ * Firestore collection (approved hotels only, safe fields only — see
+ * recommendationService), queried and ranked separately per destination so
+ * the "Recommended" pick is destination-specific. If Firestore can't be read
+ * (rules, offline, no approved hotels there) that destination falls back to
+ * the built-in ACCOMMODATIONS list so the wizard never stalls.
  *
- * If Firestore can't be read (rules, offline, no approved hotels) the step
- * falls back to the built-in ACCOMMODATIONS list so the wizard never stalls.
+ * Selecting a hotel stores both its id and the hotel object itself, keyed by
+ * destinationId, in `draft.accommodationByDestination` — the review step and
+ * the save layer use it directly without re-querying.
  *
- * Selecting a hotel stores both its id (draft.accommodationId) and the hotel
- * object itself (draft.accommodation) so the review step and the save layer can
- * use it without re-querying — a Firebase hotel isn't in the static catalogue.
- *
- * Props: draft, onChange(patch), onNext, onBack
+ * Props: draft, onChange(patch), onNext, onBack, orderedDestinations,
+ *        dayAssignments, dayRanges
  */
 
 // Clean inline placeholder — hotel_applications documents carry no image, and
@@ -36,125 +34,73 @@ import * as w from "./wizardStyles";
 const HOTEL_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='90' viewBox='0 0 120 90'%3E%3Crect width='120' height='90' fill='%23ecfdf5'/%3E%3Crect x='30' y='40' width='60' height='26' rx='3' fill='%2315803d' fill-opacity='0.18'/%3E%3Crect x='36' y='44' width='16' height='12' rx='2' fill='%2315803d' fill-opacity='0.35'/%3E%3Crect x='68' y='44' width='16' height='12' rx='2' fill='%2315803d' fill-opacity='0.35'/%3E%3Crect x='26' y='62' width='68' height='6' rx='3' fill='%2315803d' fill-opacity='0.55'/%3E%3C/svg%3E";
 
-export default function Step4Accommodation({ draft, onChange, onNext, onBack }) {
+export default function Step4Accommodation({
+  draft,
+  onChange,
+  onNext,
+  onBack,
+  orderedDestinations = [],
+  dayAssignments = [],
+  dayRanges = [],
+}) {
   const isPhone = useMediaQuery(BREAKPOINTS.phone);
 
-  const destinationIds = useMemo(
-    () => draft.destinationIds ?? [],
-    [draft.destinationIds]
-  );
-  const options = useMemo(
-    () => getAccommodationsForMany(destinationIds),
-    [destinationIds]
-  );
-  const nights = nightsBetween(draft.startDate, draft.endDate);
+  const accommodationByDestination = draft.accommodationByDestination ?? {};
 
-  const destinations = useMemo(
-    () => destinationIds.map((id) => getDestination(id)).filter(Boolean),
-    [destinationIds]
-  );
-
-  // The set of states the chosen destinations are in, normalised with the exact
-  // same mapping the recommendation service uses ("Penang" / "Pulau Pinang" →
-  // "penang"). A certified hotel is only shown when its own normalised state is
-  // in here.
-  const allowedStates = useMemo(
-    () =>
-      new Set(
-        destinations.map((d) => normaliseState(d.state)).filter(Boolean)
-      ),
-    [destinations]
-  );
-
-  // Local accommodation image to borrow for a Firebase hotel with no image of
-  // its own — first pick one whose destination state matches, else any.
-  const staticImageForState = useMemo(() => {
-    const byState = new Map();
-    options.forEach((o) => {
-      const dest = getDestination(o.destinationId);
-      const key = String(dest?.state || "").trim().toLowerCase();
-      if (key && o.imageUrl && !byState.has(key)) byState.set(key, o.imageUrl);
-    });
-    return byState;
-  }, [options]);
-
-  const hotelImage = (hotel) => {
-    if (hotel.imageUrl) return hotel.imageUrl;
-    const key = String(hotel.state || "").trim().toLowerCase();
-    return staticImageForState.get(key) || options[0]?.imageUrl || HOTEL_PLACEHOLDER;
-  };
-
-  // Certified-hotel list from Firestore. status: loading | ready | error.
-  // "error" also covers "read succeeded but there are no approved hotels".
-  // State is only ever updated from the async callbacks below.
-  const [fb, setFb] = useState({ status: "loading", data: null });
+  // Certified Firestore hotels, fetched and ranked separately PER
+  // destination — status: loading | ready | error, keyed by destinationId.
+  const [fbByDestination, setFbByDestination] = useState({});
 
   useEffect(() => {
-    if (destinations.length === 0) return undefined;
-
     let active = true;
 
-    listApprovedHotels({ destinations })
-      .then((result) => {
-        if (!active) return;
-        setFb(
-          !result || result.error || !result.hotels || result.hotels.length === 0
-            ? { status: "error", data: null }
-            : { status: "ready", data: result }
-        );
-      })
-      .catch(() => {
-        if (active) setFb({ status: "error", data: null });
-      });
+    // Unset destinations already read as "loading" at render time below —
+    // no need to prime that state here too.
+    orderedDestinations.forEach((destination) => {
+      listApprovedHotels({ destinations: [destination] })
+        .then((result) => {
+          if (!active) return;
+          setFbByDestination((prev) => ({
+            ...prev,
+            [destination.id]:
+              !result || result.error || !result.hotels || result.hotels.length === 0
+                ? { status: "error", data: null }
+                : { status: "ready", data: result },
+          }));
+        })
+        .catch(() => {
+          if (!active) return;
+          setFbByDestination((prev) => ({
+            ...prev,
+            [destination.id]: { status: "error", data: null },
+          }));
+        });
+    });
 
     return () => {
       active = false;
     };
-  }, [destinations]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderedDestinations.map((d) => d.id).join(",")]);
 
-  const noDestinations = destinations.length === 0;
-  const fbReady = fb.status === "ready" && !noDestinations;
+  const selectOption = (destinationId, option) => {
+    const current = accommodationByDestination[destinationId];
+    const isSelected = current && current.id === option.id;
 
-  // Guard: only ever show certified hotels whose normalised state is one of the
-  // chosen destinations' states, never certified hotels from other states/
-  // cities. The service already filters to these; this is a defensive second
-  // pass using the same normalisation so a data quirk can't leak a hotel through.
-  const destinationHotels = fbReady
-    ? fb.data.hotels.filter(
-        (h) => h.stateMatch && allowedStates.has(normaliseState(h.state))
-      )
-    : [];
-
-  const recommended =
-    destinationHotels.find((h) => h.id === fb.data.recommendedId) ?? null;
-  const otherHotels = destinationHotels.filter(
-    (h) => h.id !== fb.data.recommendedId
-  );
-
-  // Only show the Firestore list once it's ready AND it has at least one hotel
-  // for a chosen destination.
-  const showFirebaseHotels = fbReady && destinationHotels.length > 0;
-
-  // Fall back to the built-in list when Firestore failed / is blocked / empty,
-  // when there are no certified hotels at the chosen destination, or when there
-  // is no destination to query hotels for.
-  const showStatic =
-    noDestinations ||
-    fb.status === "error" ||
-    (fbReady && destinationHotels.length === 0);
-  const showLoading = !noDestinations && fb.status === "loading";
-
-  const selectOption = (option) => {
-    const isSelected = option.id === draft.accommodationId;
-    // Re-clicking the chosen stay clears it, so a traveller can undo without a
-    // separate "none" option. Store the object too — a Firebase hotel is not in
-    // the static catalogue the review / save steps look through.
-    onChange(
-      isSelected
-        ? { accommodationId: null, accommodation: null }
-        : { accommodationId: option.id, accommodation: option }
-    );
+    // Re-clicking the chosen stay clears it, so a traveller can undo without
+    // a separate "none" option.
+    const next = { ...accommodationByDestination };
+    if (isSelected) {
+      delete next[destinationId];
+    } else {
+      next[destinationId] = option;
+    }
+    onChange({ accommodationByDestination: next });
   };
+
+  const allSelected =
+    orderedDestinations.length > 0 &&
+    orderedDestinations.every((d) => accommodationByDestination[d.id]);
 
   return (
     <>
@@ -163,11 +109,95 @@ export default function Step4Accommodation({ draft, onChange, onNext, onBack }) 
         <div>
           <h2 style={w.stepTitle}>Select Accommodation</h2>
           <p style={w.stepSub}>
-            Certified eco-stays across your destinations
-            {nights > 0 ? ` · ${nights} ${nights === 1 ? "night" : "nights"}` : ""}
+            Pick a certified eco-stay for each destination on your route
           </p>
         </div>
       </div>
+
+      {orderedDestinations.length === 0 ? (
+        <div style={{ ...w.card, ...(isPhone ? w.cardPhone : null) }}>
+          <div style={w.emptyState}>
+            No destinations selected yet — go back to Step 2.
+          </div>
+        </div>
+      ) : (
+        orderedDestinations.map((destination, index) => (
+          <DestinationAccommodationGroup
+            key={destination.id}
+            destination={destination}
+            day={dayAssignments[index] ?? 1}
+            nights={dayRanges[index]?.nights ?? null}
+            fb={fbByDestination[destination.id] ?? { status: "loading", data: null }}
+            selectedId={accommodationByDestination[destination.id]?.id ?? null}
+            onSelect={(option) => selectOption(destination.id, option)}
+            isPhone={isPhone}
+          />
+        ))
+      )}
+
+      <div style={{ ...w.footer, ...(isPhone ? w.footerPhone : null) }}>
+        <button type="button" onClick={onBack} style={{ ...w.backBtn, ...(isPhone ? w.btnPhone : null) }}>
+          Back
+        </button>
+        <button
+          type="button"
+          disabled={!allSelected}
+          onClick={onNext}
+          style={{
+            ...w.nextBtn,
+            ...(isPhone ? w.btnPhone : null),
+            ...(allSelected ? {} : w.nextBtnDisabled),
+          }}
+        >
+          Next: Review <ArrowRight size={16} />
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** One destination's accommodation section: its own recommended stay (if
+ * any), its own certified-hotel list, and its own static-catalogue fallback
+ * — never mixed with any other destination's options. */
+function DestinationAccommodationGroup({
+  destination,
+  day,
+  nights,
+  fb,
+  selectedId,
+  onSelect,
+  isPhone,
+}) {
+  const staticOptions = useMemo(
+    () => getAccommodationsFor(destination.id),
+    [destination.id]
+  );
+
+  const hotelImage = (hotel) =>
+    hotel.imageUrl || staticOptions[0]?.imageUrl || HOTEL_PLACEHOLDER;
+
+  const fbReady = fb.status === "ready";
+  const destinationHotels = fbReady ? fb.data.hotels : [];
+
+  const recommended =
+    destinationHotels.find((h) => h.id === fb.data?.recommendedId) ?? null;
+  const otherHotels = destinationHotels.filter(
+    (h) => h.id !== fb.data?.recommendedId
+  );
+
+  const showFirebaseHotels = fbReady && destinationHotels.length > 0;
+  const showStatic = fb.status === "error" || (fbReady && destinationHotels.length === 0);
+  const showLoading = fb.status === "loading";
+
+  return (
+    <div style={styles.destGroup}>
+      <h3 style={styles.destGroupTitle}>
+        {destination.name}
+        <span style={styles.destGroupMeta}>
+          Day {day}
+          {nights ? ` · ${nights} ${nights === 1 ? "night" : "nights"}` : ""}
+        </span>
+      </h3>
 
       {showLoading && (
         <div style={{ ...w.card, ...(isPhone ? w.cardPhone : null) }}>
@@ -175,7 +205,7 @@ export default function Step4Accommodation({ draft, onChange, onNext, onBack }) 
         </div>
       )}
 
-      {/* Recommended certified hotel (suggestion only). */}
+      {/* Recommended certified hotel for THIS destination (suggestion only). */}
       {showFirebaseHotels && recommended && (
         <div style={styles.recCard}>
           <div style={styles.recHead}>
@@ -183,15 +213,15 @@ export default function Step4Accommodation({ draft, onChange, onNext, onBack }) 
             <span>Hotel Recommendation</span>
           </div>
           <div style={styles.recBadge}>
-            <Star size={12} fill="#f59e0b" color="#f59e0b" /> Recommended for your
-            trip
+            <Star size={12} fill="#f59e0b" color="#f59e0b" /> Recommended for{" "}
+            {destination.name}
           </div>
 
           <div style={styles.list}>
             <AccommodationRow
               option={recommended}
-              isSelected={recommended.id === draft.accommodationId}
-              onToggle={() => selectOption(recommended)}
+              isSelected={recommended.id === selectedId}
+              onToggle={() => onSelect(recommended)}
               isPhone={isPhone}
               nights={nights}
               image={hotelImage(recommended)}
@@ -207,10 +237,12 @@ export default function Step4Accommodation({ draft, onChange, onNext, onBack }) 
         </div>
       )}
 
-      {/* Every other approved certified hotel. */}
+      {/* Every other approved certified hotel at this destination. */}
       {showFirebaseHotels && (
         <div style={{ ...w.card, ...(isPhone ? w.cardPhone : null) }}>
-          <h3 style={styles.blockTitle}>Available Certified Hotels</h3>
+          <h4 style={styles.blockTitle}>
+            Available Certified Hotels — {destination.name}
+          </h4>
           {otherHotels.length === 0 ? (
             <div style={w.emptyState}>
               No other approved certified hotels to show right now.
@@ -221,8 +253,8 @@ export default function Step4Accommodation({ draft, onChange, onNext, onBack }) 
                 <AccommodationRow
                   key={h.id}
                   option={h}
-                  isSelected={h.id === draft.accommodationId}
-                  onToggle={() => selectOption(h)}
+                  isSelected={h.id === selectedId}
+                  onToggle={() => onSelect(h)}
                   isPhone={isPhone}
                   nights={nights}
                   image={hotelImage(h)}
@@ -233,21 +265,19 @@ export default function Step4Accommodation({ draft, onChange, onNext, onBack }) 
         </div>
       )}
 
-      {/* Existing general accommodation options for the same destinations.
-          Shown alongside the certified hotels so a traveller always has the
-          full local catalogue to choose from, not just certified stays. These
-          come from the built-in ACCOMMODATIONS list via getAccommodationsForMany,
-          which is already scoped to the chosen destinations only. */}
-      {showFirebaseHotels && options.length > 0 && (
+      {/* Existing general accommodation options for this destination only. */}
+      {showFirebaseHotels && staticOptions.length > 0 && (
         <div style={{ ...w.card, ...(isPhone ? w.cardPhone : null) }}>
-          <h3 style={styles.blockTitle}>More Accommodation Options</h3>
+          <h4 style={styles.blockTitle}>
+            More {destination.name} Accommodation Options
+          </h4>
           <div style={styles.list}>
-            {options.map((a) => (
+            {staticOptions.map((a) => (
               <AccommodationRow
                 key={a.id}
-                option={a}
-                isSelected={a.id === draft.accommodationId}
-                onToggle={() => selectOption(a)}
+                option={{ ...a, destinationId: destination.id }}
+                isSelected={a.id === selectedId}
+                onToggle={() => onSelect({ ...a, destinationId: destination.id })}
                 isPhone={isPhone}
                 nights={nights}
                 image={a.imageUrl || HOTEL_PLACEHOLDER}
@@ -257,26 +287,27 @@ export default function Step4Accommodation({ draft, onChange, onNext, onBack }) 
         </div>
       )}
 
-      {/* Fallback: Firestore unavailable / blocked / empty. */}
+      {/* Fallback: Firestore unavailable / blocked / empty for this destination. */}
       {showStatic && (
         <div style={{ ...w.card, ...(isPhone ? w.cardPhone : null) }}>
           <div style={styles.fallbackNote}>
-            Certified hotel recommendations are currently unavailable. You can
-            continue with the available accommodation options.
+            Certified hotel recommendations are currently unavailable for{" "}
+            {destination.name}. You can continue with the available
+            accommodation options.
           </div>
 
-          {options.length === 0 ? (
+          {staticOptions.length === 0 ? (
             <div style={w.emptyState}>
-              No eco-certified stays listed for this destination yet.
+              No eco-certified stays listed for {destination.name} yet.
             </div>
           ) : (
             <div style={styles.list}>
-              {options.map((a) => (
+              {staticOptions.map((a) => (
                 <AccommodationRow
                   key={a.id}
-                  option={a}
-                  isSelected={a.id === draft.accommodationId}
-                  onToggle={() => selectOption(a)}
+                  option={{ ...a, destinationId: destination.id }}
+                  isSelected={a.id === selectedId}
+                  onToggle={() => onSelect({ ...a, destinationId: destination.id })}
                   isPhone={isPhone}
                   nights={nights}
                   image={a.imageUrl || HOTEL_PLACEHOLDER}
@@ -286,25 +317,7 @@ export default function Step4Accommodation({ draft, onChange, onNext, onBack }) 
           )}
         </div>
       )}
-
-      <div style={{ ...w.footer, ...(isPhone ? w.footerPhone : null) }}>
-        <button type="button" onClick={onBack} style={{ ...w.backBtn, ...(isPhone ? w.btnPhone : null) }}>
-          Back
-        </button>
-        <button
-          type="button"
-          disabled={!draft.accommodationId}
-          onClick={onNext}
-          style={{
-            ...w.nextBtn,
-            ...(isPhone ? w.btnPhone : null),
-            ...(draft.accommodationId ? {} : w.nextBtnDisabled),
-          }}
-        >
-          Next: Review <ArrowRight size={16} />
-        </button>
-      </div>
-    </>
+    </div>
   );
 }
 
@@ -422,6 +435,24 @@ function AccommodationRow({
 }
 
 const styles = {
+  destGroup: {
+    marginBottom: 22,
+  },
+  destGroupTitle: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: 10,
+    fontSize: 17,
+    fontWeight: 800,
+    margin: "0 0 12px",
+    color: "#111827",
+  },
+  destGroupMeta: {
+    fontSize: 12.5,
+    fontWeight: 600,
+    color: "#9ca3af",
+  },
+
   recCard: {
     background: "#f0fdf4",
     border: "1px solid #bbf7d0",

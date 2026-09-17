@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Search, ArrowRight, Check } from "lucide-react";
+import { Search, ArrowRight, Check, AlertCircle } from "lucide-react";
 import { DESTINATIONS } from "../constants/itineraryData";
 import useMediaQuery, { BREAKPOINTS } from "../hooks/useMediaQuery";
 import * as w from "./wizardStyles";
@@ -11,9 +11,16 @@ import * as w from "./wizardStyles";
  * picked; step 5 orders them into a route and steps 3–4 load their options
  * from whichever destinations are chosen.
  *
- * Props: draft, onChange(patch), onNext, onBack
+ * Props: draft, onChange(patch), onNext, onBack, tripDays, tooManyDestinations
  */
-export default function Step2Destination({ draft, onChange, onNext, onBack }) {
+export default function Step2Destination({
+  draft,
+  onChange,
+  onNext,
+  onBack,
+  tripDays = 0,
+  tooManyDestinations = false,
+}) {
   const [search, setSearch] = useState("");
   const isPhone = useMediaQuery(BREAKPOINTS.phone);
 
@@ -105,18 +112,32 @@ export default function Step2Destination({ draft, onChange, onNext, onBack }) {
         )}
       </div>
 
+      {tooManyDestinations && (
+        <div style={styles.blockBox}>
+          <AlertCircle size={16} color="#b91c1c" />
+          <span>
+            You&apos;ve selected {selectedIds.length} destinations but your
+            trip is only {tripDays} {tripDays === 1 ? "day" : "days"} long.
+            Increase your trip duration on Step 1 or remove a destination to
+            continue.
+          </span>
+        </div>
+      )}
+
       <div style={{ ...w.footer, ...(isPhone ? w.footerPhone : null) }}>
         <button type="button" onClick={onBack} style={{ ...w.backBtn, ...(isPhone ? w.btnPhone : null) }}>
           Back
         </button>
         <button
           type="button"
-          disabled={selectedIds.length === 0}
+          disabled={selectedIds.length === 0 || tooManyDestinations}
           onClick={onNext}
           style={{
             ...w.nextBtn,
             ...(isPhone ? w.btnPhone : null),
-            ...(selectedIds.length > 0 ? {} : w.nextBtnDisabled),
+            ...(selectedIds.length > 0 && !tooManyDestinations
+              ? {}
+              : w.nextBtnDisabled),
           }}
         >
           Next: Activities <ArrowRight size={16} />
@@ -164,4 +185,16 @@ const styles = {
   destBody: { padding: "10px 12px 12px" },
   destName: { fontWeight: 700, fontSize: 14 },
   destState: { color: "#9ca3af", fontSize: 12, marginTop: 2 },
+  blockBox: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    background: "#fef2f2",
+    border: "1px solid #fecaca",
+    borderRadius: 10,
+    padding: "12px 14px",
+    color: "#b91c1c",
+    fontSize: 13,
+    marginTop: 16,
+  },
 };
